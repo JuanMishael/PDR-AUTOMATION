@@ -25,6 +25,9 @@ function buildRecordedParams(p) {
   if (p.action === 'selectOption') return { ...params, selector: p.selector, value: p.value ?? '' }
   if (p.action === 'pressKey')     return { ...params, selector: p.selector, key: p.key }
   if (p.action === 'navigate')     return { ...params, url: p.url ?? '' }
+  // Smart wait inferred during recording — a real wait-for-visible, not a sleep.
+  // Flagged _smart so the card shows it was auto-suggested (the tester can delete it).
+  if (p.action === 'waitForSelector') return { ...params, selector: p.selector, state: p.state || 'visible', _smart: !!p.smart }
   return params
 }
 
@@ -350,6 +353,13 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
         }}>
           <span style={{ color: 'var(--text-muted)', fontSize: 10, flexShrink: 0, width: 10 }}>{expanded ? '▾' : '▸'}</span>
           <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)', flexShrink: 0 }}>{def.label}</span>
+          {params._smart && (
+            <span title="Auto-suggested while recording — a smart wait inserted because this appeared during your pause. Delete it if not needed."
+              style={{ fontSize: 10, fontWeight: 700, color: '#A78BFA', background: 'rgba(167,139,250,0.12)',
+                border: '1px solid rgba(167,139,250,0.3)', borderRadius: 999, padding: '1px 7px', flexShrink: 0 }}>
+              ✨ auto
+            </span>
+          )}
           {!expanded && summary && (
             <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary}</span>

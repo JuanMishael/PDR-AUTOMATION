@@ -1,186 +1,262 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* =========================================================================
+   PDR-AUTOMATION — Sketchbook theme
+   "Tidy notebook": warm paper, soft-ink borders, solid offset shadows,
+   hand-drawn headings (Patrick Hand / Caveat) but readable body + mono.
+   Old token names are aliased to the new palette at the bottom of :root so
+   the existing inline styles across every screen recolor automatically.
+   ========================================================================= */
 :root {
-  --bg:           #0d0d1a;
-  --surface:      #13131f;
-  --surface2:     #1a1a2e;
-  --surface3:     #202038;
-  --border:       #2a2a4a;
-  --border-light: #333360;
-  --accent:       #6c63ff;
-  --accent-dim:   rgba(108, 99, 255, 0.15);
-  --accent-hover: #5a52e0;
-  --success:      #22c55e;
-  --success-dim:  rgba(34, 197, 94, 0.12);
-  --error:        #ef4444;
-  --error-dim:    rgba(239, 68, 68, 0.12);
-  --warning:      #f59e0b;
-  --warning-dim:  rgba(245, 158, 11, 0.12);
-  --text:         #e2e8f0;
-  --text-muted:   #64748b;
-  --text-soft:    #94a3b8;
-  --radius:       10px;
-  --radius-sm:    6px;
-  --radius-lg:    14px;
-  --font:         'Segoe UI', system-ui, -apple-system, sans-serif;
-  --font-mono:    'Cascadia Code', 'Consolas', monospace;
-  --shadow:       0 4px 24px rgba(0,0,0,0.4);
-  --shadow-sm:    0 2px 8px rgba(0,0,0,0.25);
+  /* ---- Paper & ink --------------------------------------------------- */
+  --paper:        #fbf7ef;   /* app background — warm off-white */
+  --paper-sunk:   #f1ead9;   /* insets, grooves, track wells */
+  --surface:      #fffdf8;   /* card / panel surface */
+  --surface-2:    #f7f1e6;   /* secondary surface, hovered rows */
+
+  --ink:          #2b2b2b;   /* primary text — soft black, never #000 */
+  --ink-soft:     #6f6a60;   /* secondary text, captions */
+  --ink-faint:    #a59f93;   /* placeholders, disabled */
+  --line:         #2b2b2b;   /* border ink */
+  --line-soft:    rgba(43,43,43,.18); /* hairlines, dividers */
+  --line-mid:     rgba(43,43,43,.30); /* outline borders */
+
+  /* ---- Marker accent ------------------------------------------------- */
+  --accent:       #7c5cce;   /* violet marker */
+  --accent-ink:   #4a3692;   /* accent text on light */
+  --accent-soft:  #ece5fb;   /* accent wash / selected row */
+  --marker:       rgba(124,92,206,.30); /* highlighter swash */
+
+  /* ---- Pastel status (paper-friendly) -------------------------------- */
+  --ok:    #3a8a5f;  --ok-bg:   #e6f1e8;  --ok-line:  #a9cdb6;
+  --bad:   #c0492f;  --bad-bg:  #fbe7e0;  --bad-line: #e3a895;
+  --warn:  #a9750f;  --warn-bg: #fbf0d6;  --warn-line:#e2c885;
+  --busy:  #2f6fb0;  --busy-bg: #e6eef7;  --busy-line:#a8c2df;
+
+  /* ---- Geometry ------------------------------------------------------ */
+  --bw:    2px;
+  --r:     10px;
+  --r-sm:  7px;
+  --r-lg:  14px;
+
+  /* ---- Offset shadows (solid, no blur) ------------------------------- */
+  --shadow:        4px 4px 0 rgba(43,43,43,.82);
+  --shadow-sm:     3px 3px 0 rgba(43,43,43,.78);
+  --shadow-xs:     2px 2px 0 rgba(43,43,43,.70);
+  --shadow-accent: 4px 4px 0 var(--accent-ink);
+
+  /* ---- Type ---------------------------------------------------------- */
+  --font-hand:   "Patrick Hand", "Comic Sans MS", cursive;
+  --font-marker: "Caveat", "Patrick Hand", cursive;
+  --font-body:   -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  --font-mono:   "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
+
+  /* ======================================================================
+     Aliases — old token names mapped onto the sketchbook palette so legacy
+     inline styles (var(--text), var(--surface2), var(--border) …) adopt the
+     new theme with no per-file edits.
+     ====================================================================== */
+  --bg:           var(--paper);
+  --surface2:     var(--surface-2);
+  --surface3:     var(--paper-sunk);
+  --border:       var(--line-mid);
+  --border-light: rgba(43,43,43,.42);
+  --accent-dim:   var(--accent-soft);
+  --accent-hover: var(--accent-ink);
+  --success:      var(--ok);     --success-dim: var(--ok-bg);
+  --error:        var(--bad);    --error-dim:   var(--bad-bg);
+  --warning:      var(--warn);   --warning-dim: var(--warn-bg);
+  --text:         var(--ink);
+  --text-muted:   var(--ink-soft);
+  --text-soft:    var(--ink-soft);
+  --radius:       var(--r);
+  --radius-sm:    var(--r-sm);
+  --radius-lg:    var(--r-lg);
+  --font:         var(--font-body);
+  --shadow-soft:  var(--shadow-sm);
 }
 
 html, body, #root {
   height: 100%;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font);
+  background: var(--paper);
+  /* faint desk grain */
+  background-image: radial-gradient(rgba(43,43,43,.035) 1px, transparent 1px);
+  background-size: 4px 4px;
+  color: var(--ink);
+  font-family: var(--font-body);
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 
-/* --- Buttons --- */
-button {
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 13px;
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 8px 16px;
-  font-weight: 600;
-  transition: background 0.15s, opacity 0.15s, border-color 0.15s, color 0.15s;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+h1, h2, h3 { font-family: var(--font-hand); font-weight: 400; color: var(--ink); letter-spacing: .2px; }
+
+/* =========================================================================
+   Handdrawn border utility — wobble lives on a filtered pseudo-element so
+   TEXT stays crisp and the solid offset shadow stays sharp. Requires the
+   inline <svg> filter (id="sketch") to be present once (see SketchDefs).
+   ========================================================================= */
+.sketch { position: relative; background: var(--surface); border-radius: var(--r); box-shadow: var(--shadow-sm); }
+.sketch::before {
+  content: ""; position: absolute; inset: 0;
+  border: var(--bw) solid var(--line); border-radius: inherit;
+  filter: url(#sketch); pointer-events: none;
 }
+.sketch--rough::before  { filter: url(#sketch-rough); }
+.sketch--accent::before { border-color: var(--accent); }
+
+/* Highlighter swash behind inline text */
+.marker-hl {
+  background: linear-gradient(180deg, transparent 55%, var(--marker) 55%, var(--marker) 92%, transparent 92%);
+  padding: 0 .12em;
+}
+
+/* Handdrawn section label */
+.eyebrow {
+  font-family: var(--font-hand); font-size: 13px; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--ink-soft);
+}
+
+/* =========================================================================
+   Buttons
+   ========================================================================= */
+button { cursor: pointer; font-family: var(--font-hand); font-size: 15px; color: var(--ink); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.btn-primary {
-  background: var(--accent);
-  color: #fff;
-  box-shadow: 0 2px 12px rgba(108,99,255,0.35);
+.btn {
+  font-family: var(--font-hand); font-size: 16px; line-height: 1; letter-spacing: .2px;
+  color: var(--ink); background: var(--surface);
+  border: var(--bw) solid var(--line); border-radius: var(--r);
+  padding: 9px 16px 7px; display: inline-flex; align-items: center; gap: 8px;
+  white-space: nowrap; box-shadow: var(--shadow-sm);
+  transition: transform .06s ease, box-shadow .06s ease, background .12s ease;
 }
-.btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  box-shadow: 0 4px 18px rgba(108,99,255,0.45);
-}
-.btn-ghost {
-  background: transparent;
-  color: var(--text-soft);
-  border: 1px solid var(--border);
-}
-.btn-ghost:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-dim);
-}
-.btn-success {
-  background: var(--success-dim);
-  color: var(--success);
-  border: 1px solid rgba(34,197,94,0.25);
-}
-.btn-danger {
-  background: transparent;
-  color: var(--error);
-  border: 1px solid transparent;
-}
-.btn-danger:hover:not(:disabled) {
-  background: var(--error-dim);
-  border-color: rgba(239,68,68,0.3);
-}
+.btn:hover:not(:disabled)  { transform: translate(-1px,-1px); box-shadow: 4px 5px 0 rgba(43,43,43,.82); }
+.btn:active:not(:disabled) { transform: translate(2px,2px);   box-shadow: 1px 1px 0 rgba(43,43,43,.82); }
+.btn:focus-visible { outline: none; box-shadow: var(--shadow-sm), 0 0 0 3px var(--accent-soft); }
+.btn-sm { font-size: 14px; padding: 6px 11px 5px; }
 
-/* --- Inputs --- */
+.btn-primary {
+  font-family: var(--font-hand); font-size: 16px; line-height: 1;
+  background: var(--accent); border: var(--bw) solid var(--accent-ink); border-radius: var(--r);
+  color: #fff; padding: 9px 16px 7px; display: inline-flex; align-items: center; gap: 8px;
+  box-shadow: 4px 4px 0 var(--accent-ink);
+  transition: transform .06s ease, box-shadow .06s ease;
+}
+.btn-primary:hover:not(:disabled)  { transform: translate(-1px,-1px); box-shadow: 4px 5px 0 var(--accent-ink); }
+.btn-primary:active:not(:disabled) { transform: translate(2px,2px);   box-shadow: 1px 1px 0 var(--accent-ink); }
+.btn-primary:disabled { box-shadow: var(--shadow-xs); transform: none; }
+
+.btn-ghost {
+  background: transparent; box-shadow: none; border: var(--bw) solid var(--line-soft);
+  color: var(--ink); border-radius: var(--r); padding: 9px 16px 7px;
+}
+.btn-ghost:hover:not(:disabled) { background: var(--surface-2); box-shadow: var(--shadow-xs); border-color: var(--line); }
+
+.btn-success { background: var(--ok-bg);  border: var(--bw) solid var(--ok-line);  color: var(--ok);  box-shadow: var(--shadow-xs); }
+.btn-danger  { background: var(--bad-bg); border: var(--bw) solid var(--bad-line); color: var(--bad); box-shadow: var(--shadow-xs); }
+
+/* =========================================================================
+   Inputs
+   ========================================================================= */
 input, select, textarea {
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  font-family: inherit;
-  font-size: 13px;
-  padding: 8px 11px;
-  width: 100%;
-  outline: none;
-  transition: border-color 0.15s, background 0.15s;
+  font-family: var(--font-body); font-size: 13px; color: var(--ink); width: 100%;
+  background: var(--surface); border: var(--bw) solid var(--line); border-radius: var(--r-sm);
+  padding: 8px 11px; outline: none;
+  box-shadow: inset 2px 2px 0 rgba(43,43,43,.05);
+  transition: border-color .12s, box-shadow .12s;
 }
 input:focus, select:focus, textarea:focus {
   border-color: var(--accent);
-  background: var(--surface3);
+  box-shadow: inset 2px 2px 0 rgba(124,92,206,.08), 0 0 0 3px var(--accent-soft);
 }
-input::placeholder, textarea::placeholder { color: var(--text-muted); }
-select option { background: var(--surface2); }
+input::placeholder, textarea::placeholder { color: var(--ink-faint); }
+select option { background: var(--surface); }
+
+select {
+  appearance: none; padding-right: 30px; background-repeat: no-repeat; background-position: right 10px center;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'><path d='M3 5l4 4 4-4' fill='none' stroke='%232b2b2b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
 
 label {
-  display: block;
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-bottom: 5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  display: block; font-family: var(--font-hand); font-size: 14px;
+  color: var(--ink-soft); margin-bottom: 5px; font-weight: 400;
+  text-transform: none; letter-spacing: 0;
 }
 
-/* --- Cards --- */
+/* =========================================================================
+   Cards — fold the wobbly sketch border in so existing .card markup gets it
+   ========================================================================= */
 .card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-  transition: border-color 0.15s;
+  position: relative; background: var(--surface);
+  border-radius: var(--r); box-shadow: var(--shadow-sm); padding: 20px;
 }
-.card:hover { border-color: var(--border-light); }
+.card::before {
+  content: ""; position: absolute; inset: 0;
+  border: var(--bw) solid var(--line); border-radius: inherit;
+  filter: url(#sketch); pointer-events: none;
+}
+.card:hover::before { border-color: var(--line); }
+.card-title { font-family: var(--font-hand); font-size: 20px; color: var(--ink); margin: 0 0 2px; }
+.card-sub   { font-size: 13px; color: var(--ink-soft); margin: 0; }
 
-/* --- Badges --- */
+/* =========================================================================
+   Badges / status pills
+   ========================================================================= */
 .badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 9px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: .3px;
+  padding: 3px 9px 2px; border-radius: 999px;
+  border: 1.5px solid var(--line-soft); background: var(--surface-2); color: var(--ink-soft);
+  text-transform: none;
 }
-.badge-success { background: rgba(34,197,94,0.15);  color: #4ade80; border: 1px solid rgba(34,197,94,0.2); }
-.badge-error   { background: rgba(239,68,68,0.15);  color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
-.badge-warning { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.2); }
-.badge-info    { background: rgba(108,99,255,0.15); color: #a78bfa; border: 1px solid rgba(108,99,255,0.2); }
+.badge .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.badge-ok,      .badge-success { color: var(--ok);   background: var(--ok-bg);   border-color: var(--ok-line); }
+.badge-bad,     .badge-error   { color: var(--bad);  background: var(--bad-bg);  border-color: var(--bad-line); }
+.badge-warn,    .badge-warning { color: var(--warn); background: var(--warn-bg); border-color: var(--warn-line); }
+.badge-busy,    .badge-info    { color: var(--busy); background: var(--busy-bg); border-color: var(--busy-line); }
 
-/* --- Divider --- */
-.divider {
-  height: 1px;
-  background: var(--border);
-  margin: 20px 0;
+/* Action-type tag on step cards (mono = readable) */
+.tag {
+  font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
+  padding: 2px 7px; border-radius: var(--r-sm);
+  background: var(--accent-soft); color: var(--accent-ink);
+  border: 1.5px solid color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-/* --- Page header --- */
+/* Toggle */
+.toggle { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; user-select: none; }
+.toggle .track { width: 42px; height: 24px; border-radius: 999px; background: var(--paper-sunk); border: var(--bw) solid var(--line); position: relative; transition: background .15s; }
+.toggle .knob  { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); border: 1.5px solid var(--line); transition: transform .15s; }
+.toggle input { position: absolute; opacity: 0; }
+.toggle input:checked + .track { background: var(--accent-soft); }
+.toggle input:checked + .track .knob { transform: translateX(18px); background: var(--accent); border-color: var(--accent-ink); }
+
+/* Handdrawn icon sprite (see SketchDefs) */
+.ic      { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: middle; }
+.ic-fill { fill: currentColor; stroke: none; }
+
+/* =========================================================================
+   Misc
+   ========================================================================= */
+.divider { height: 0; border-top: 1.5px dashed var(--line-soft); margin: 20px 0; }
+
 .page-header { margin-bottom: 28px; }
-.page-header h1 { font-size: 20px; font-weight: 800; color: var(--text); }
-.page-header p  { color: var(--text-muted); margin-top: 3px; font-size: 13px; }
+.page-header h1 { font-family: var(--font-hand); font-size: 26px; color: var(--ink); }
+.page-header p  { color: var(--ink-soft); margin-top: 3px; font-size: 13px; }
 
-/* --- Empty state --- */
-.empty-state {
-  text-align: center;
-  padding: 56px 32px;
-  color: var(--text-muted);
-}
+.empty-state { text-align: center; padding: 56px 32px; color: var(--ink-soft); }
 .empty-state .empty-icon { font-size: 36px; margin-bottom: 14px; opacity: 0.5; }
 .empty-state p { margin-bottom: 18px; font-size: 13px; }
 
-/* --- Scrollbar --- */
-::-webkit-scrollbar { width: 5px; height: 5px; }
+/* Scrollbar */
+::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+::-webkit-scrollbar-thumb { background: rgba(43,43,43,.22); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(43,43,43,.40); }
 
-/* --- Animations --- */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
+/* Animations */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 .fade-in { animation: fadeIn 0.2s ease; }
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 .pulse { animation: pulse 1.4s ease-in-out infinite; }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 const DEFAULTS = {
-  app_name: 'AutomationTool', browser: 'chromium', headless: '0',
+  app_name: 'PDR-AUTOMATION', browser: 'chromium', headless: '0',
   default_timeout: '30000', history_retention_days: '30',
   screenshot_on_fail: '1', trace_on_fail: '1'
 }

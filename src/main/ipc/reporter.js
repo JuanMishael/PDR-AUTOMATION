@@ -1,9 +1,18 @@
 import { ipcMain, shell } from 'electron'
 import { app } from 'electron'
 import { join } from 'path'
-import { writeFileSync, mkdirSync } from 'fs'
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs'
 import { getDb } from '../core/db'
-import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, HeadingLevel } from 'docx'
+import {
+  Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+  WidthType, HeadingLevel, ImageRun, AlignmentType, BorderStyle, ShadingType
+} from 'docx'
+
+const ACCENT = '4F46E5'
+const PASS_BG = 'D1FAE5'
+const FAIL_BG = 'FEE2E2'
+const PASS_FG = '065F46'
+const FAIL_FG = '991B1B'
 
 export function registerReporterHandlers() {
   ipcMain.handle('reporter:export', async (_, runId, format) => {
@@ -12,17 +21,33 @@ export function registerReporterHandlers() {
     if (!run) return { error: 'Run not found' }
 
     const results = JSON.parse(run.log || '[]')
-    const reportsDir = join(app.getPath('documents'), 'Botchi', 'Reports')
-    mkdirSync(reportsDir, { recursive: true })
+    const reportsDir = reportsDirectory()
 
-    const timestamp = new Date(run.started_at).toISOString().replace(/[:.]/g, '-')
-    const baseName = `${run.profile_name}-${timestamp}`
+    const timestamp = new Date(run.started_at).toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const baseName = sanitize(`${run.profile_name}-${timestamp}`)
 
     if (format === 'csv') return exportCsv(run, results, reportsDir, baseName)
     if (format === 'html') return exportHtml(run, results, reportsDir, baseName)
-    if (format === 'docx') return exportDocx(run, results, reportsDir, baseName)
+    if (format === 'docx') return exportRunDocx(run, results, reportsDir, baseName)
 
     return { error: `Unknown format: ${format}` }
+  })
+
+  ipcMain.handle('reporter:exportSteps', async (_, profileId, scenarioId) => {
+    const db = getDb()
+    const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
+    if (!profile) return { error: 'Profile not found' }
+
+    const scenario = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(scenarioId)
+    if (!scenario) return { error: 'Scenario not found' }
+
+    const steps = db.prepare('SELECT * FROM steps WHERE scenario_id = ? ORDER BY sort_order').all(scenarioId)
+
+    const dir = reportsDirectory()
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const baseName = sanitize(`${profile.name}-${scenario.name}-TestCase-${timestamp}`)
+
+    return exportStepsDocx(profile, scenario, steps, dir, baseName)
   })
 
   ipcMain.handle('reporter:openTrace', async (_, tracePath) => {
@@ -31,6 +56,37 @@ export function registerReporterHandlers() {
     return { ok: true }
   })
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function reportsDirectory() {
+  const dir = join(app.getPath('documents'), 'AutomationTool', 'Reports')
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+function sanitize(s) {
+  return s.replace(/[^a-zA-Z0-9\-_]/g, '_')
+}
+
+function formatAction(action) {
+  return action.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()).trim()
+}
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+function fmtDuration(ms) {
+  if (!ms) return '0s'
+  return ms < 60000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60000)}m ${((ms % 60000) / 1000).toFixed(0)}s`
+}
+
+// ---------------------------------------------------------------------------
+// CSV
+// ---------------------------------------------------------------------------
 
 function exportCsv(run, results, dir, baseName) {
   const rows = [
@@ -44,26 +100,39 @@ function exportCsv(run, results, dir, baseName) {
   return { ok: true, path }
 }
 
+// ---------------------------------------------------------------------------
+// HTML
+// ---------------------------------------------------------------------------
+
 function exportHtml(run, results, dir, baseName) {
+  const appName = (() => {
+    try {
+      const db = getDb()
+      const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('app_name')
+      return row?.value || 'AutomationTool'
+    } catch { return 'AutomationTool' }
+  })()
+
   const rows = results.map((r, i) => `
     <tr class="${r.status}">
       <td>${i + 1}</td>
-      <td>${esc(r.label)}</td>
+      <td>${esc(r.label || '')}</td>
       <td><span class="badge">${r.status}</span></td>
       <td>${esc(r.error || '')}</td>
+      ${r.screenshot && existsSync(r.screenshot) ? `<td><img src="file://${r.screenshot.replace(/\\/g, '/')}" style="max-width:300px;border-radius:4px"/></td>` : '<td>—</td>'}
     </tr>`).join('')
 
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <title>Botchi Report — ${esc(run.profile_name)}</title>
+  <title>${esc(appName)} Report — ${esc(run.profile_name)}</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; color: #1a1a2e; }
+    body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 40px auto; color: #1a1a2e; }
     h1 { font-size: 1.5rem; margin-bottom: 4px; }
     .meta { color: #666; font-size: 0.875rem; margin-bottom: 24px; }
     table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #e5e7eb; }
+    th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
     th { background: #f3f4f6; font-weight: 600; }
     tr.failed td { background: #fef2f2; }
     tr.passed td { background: #f0fdf4; }
@@ -73,16 +142,16 @@ function exportHtml(run, results, dir, baseName) {
   </style>
 </head>
 <body>
-  <h1>Botchi Test Report</h1>
+  <h1>${esc(appName)} — Test Run Report</h1>
   <div class="meta">
     Profile: <strong>${esc(run.profile_name)}</strong> &nbsp;|&nbsp;
     Status: <strong>${run.status}</strong> &nbsp;|&nbsp;
     Started: ${run.started_at} &nbsp;|&nbsp;
-    Duration: ${((run.duration_ms || 0) / 1000).toFixed(1)}s &nbsp;|&nbsp;
+    Duration: ${fmtDuration(run.duration_ms)} &nbsp;|&nbsp;
     Passed: ${run.steps_passed} / ${run.steps_total}
   </div>
   <table>
-    <thead><tr><th>#</th><th>Step</th><th>Status</th><th>Error</th></tr></thead>
+    <thead><tr><th>#</th><th>Step</th><th>Status</th><th>Error</th><th>Screenshot</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
 </body>
@@ -94,32 +163,163 @@ function exportHtml(run, results, dir, baseName) {
   return { ok: true, path }
 }
 
-async function exportDocx(run, results, dir, baseName) {
-  const tableRows = [
-    new TableRow({
-      children: ['#', 'Step', 'Status', 'Error'].map(h =>
-        new TableCell({ children: [new Paragraph({ text: h, heading: HeadingLevel.HEADING_3 })] })
-      )
+// ---------------------------------------------------------------------------
+// DOCX — Run Report (section per step, screenshots embedded)
+// ---------------------------------------------------------------------------
+
+async function exportRunDocx(run, results, dir, baseName) {
+  const children = [
+    new Paragraph({
+      text: 'Test Run Report',
+      heading: HeadingLevel.HEADING_1
     }),
-    ...results.map((r, i) =>
-      new TableRow({
+    new Paragraph({
+      children: [
+        new TextRun({ text: 'Profile: ', bold: true }),
+        new TextRun(run.profile_name + '   '),
+        new TextRun({ text: 'Status: ', bold: true }),
+        new TextRun(run.status.toUpperCase() + '   '),
+        new TextRun({ text: 'Duration: ', bold: true }),
+        new TextRun(fmtDuration(run.duration_ms) + '   '),
+        new TextRun({ text: 'Result: ', bold: true }),
+        new TextRun(`${run.steps_passed} passed / ${run.steps_failed} failed of ${run.steps_total}`)
+      ]
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({ text: 'Started: ', bold: true }),
+        new TextRun(run.started_at)
+      ]
+    }),
+    new Paragraph({ text: '' }),
+  ]
+
+  for (const [i, r] of results.entries()) {
+    const isPassed = r.status === 'passed'
+    const statusText = isPassed ? '✓ PASSED' : '✗ FAILED'
+
+    children.push(
+      new Paragraph({
         children: [
-          new TableCell({ children: [new Paragraph(String(i + 1))] }),
-          new TableCell({ children: [new Paragraph(r.label || '')] }),
-          new TableCell({ children: [new Paragraph(r.status)] }),
-          new TableCell({ children: [new Paragraph(r.error || '')] })
-        ]
+          new TextRun({ text: `Step ${i + 1}  `, bold: true, size: 24 }),
+          new TextRun({ text: `${formatAction(r.action || '')}  `, color: ACCENT, bold: true, size: 24 }),
+          new TextRun({
+            text: statusText,
+            bold: true,
+            size: 24,
+            color: isPassed ? PASS_FG : FAIL_FG
+          })
+        ],
+        border: {
+          bottom: { style: BorderStyle.SINGLE, size: 1, color: 'E5E7EB' }
+        },
+        spacing: { before: 240, after: 80 }
       })
     )
-  ]
+
+    if (r.label) {
+      children.push(new Paragraph({
+        children: [new TextRun({ text: r.label, size: 22 })]
+      }))
+    }
+
+    if (!isPassed && r.error) {
+      children.push(new Paragraph({
+        children: [
+          new TextRun({ text: 'Error: ', bold: true, color: FAIL_FG }),
+          new TextRun({ text: r.error, color: FAIL_FG })
+        ],
+        spacing: { before: 60 }
+      }))
+    }
+
+    if (r.screenshot && existsSync(r.screenshot)) {
+      try {
+        const imgData = readFileSync(r.screenshot)
+        children.push(
+          new Paragraph({ text: 'Screenshot:', spacing: { before: 80 } }),
+          new Paragraph({
+            children: [
+              new ImageRun({
+                type: 'png',
+                data: imgData,
+                transformation: { width: 560, height: 350 }
+              })
+            ],
+            spacing: { after: 120 }
+          })
+        )
+      } catch { /* screenshot unreadable, skip */ }
+    }
+  }
+
+  const doc = new Document({ sections: [{ children }] })
+  const buffer = await Packer.toBuffer(doc)
+  const path = join(dir, `${baseName}.docx`)
+  writeFileSync(path, buffer)
+  shell.showItemInFolder(path)
+  return { ok: true, path }
+}
+
+// ---------------------------------------------------------------------------
+// DOCX — Test Case / Procedure Document (steps only, no run needed)
+// ---------------------------------------------------------------------------
+
+async function exportStepsDocx(profile, scenario, steps, dir, baseName) {
+  const headerCells = ['#', 'Action', 'Label', 'Parameters', 'Notes', 'Expected Result'].map(h =>
+    new TableCell({
+      shading: { type: ShadingType.SOLID, fill: ACCENT },
+      children: [new Paragraph({
+        children: [new TextRun({ text: h, bold: true, color: 'FFFFFF', size: 20 })]
+      })]
+    })
+  )
+
+  const stepRows = steps.map((step, i) => {
+    const params = typeof step.params === 'string' ? JSON.parse(step.params) : (step.params || {})
+    const notes = params._notes || ''
+    const expected = params._expected || ''
+    const paramText = Object.entries(params)
+      .filter(([k]) => !k.startsWith('_') && params[k] !== '' && params[k] !== false)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join('\n')
+
+    return new TableRow({
+      children: [
+        new TableCell({ children: [new Paragraph(String(i + 1))] }),
+        new TableCell({ children: [new Paragraph(formatAction(step.action))] }),
+        new TableCell({ children: [new Paragraph(step.label || '')] }),
+        new TableCell({ children: [new Paragraph(paramText)] }),
+        new TableCell({ children: [new Paragraph(notes)] }),
+        new TableCell({ children: [new Paragraph(expected)] })
+      ]
+    })
+  })
 
   const doc = new Document({
     sections: [{
       children: [
-        new Paragraph({ text: 'Botchi Test Report', heading: HeadingLevel.HEADING_1 }),
-        new Paragraph({ children: [new TextRun(`Profile: ${run.profile_name} | Status: ${run.status} | Started: ${run.started_at}`)] }),
-        new Paragraph(''),
-        new Table({ rows: tableRows, width: { size: 100, type: WidthType.PERCENTAGE } })
+        new Paragraph({ text: scenario.name, heading: HeadingLevel.HEADING_1 }),
+        new Paragraph({
+          children: [
+            new TextRun({ text: 'Profile: ', bold: true }),
+            new TextRun(profile.name + '   '),
+            new TextRun({ text: 'Date: ', bold: true }),
+            new TextRun(new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) + '   '),
+            new TextRun({ text: 'Total Steps: ', bold: true }),
+            new TextRun(String(steps.length))
+          ]
+        }),
+        new Paragraph({ text: '' }),
+        new Table({
+          rows: [new TableRow({ tableHeader: true, children: headerCells }), ...stepRows],
+          width: { size: 100, type: WidthType.PERCENTAGE }
+        }),
+        new Paragraph({ text: '' }),
+        new Paragraph({
+          alignment: AlignmentType.RIGHT,
+          children: [new TextRun({ text: 'Generated by AutomationTool', color: '9CA3AF', size: 18 })]
+        })
       ]
     }]
   })
@@ -129,8 +329,4 @@ async function exportDocx(run, results, dir, baseName) {
   writeFileSync(path, buffer)
   shell.showItemInFolder(path)
   return { ok: true, path }
-}
-
-function esc(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }

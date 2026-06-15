@@ -6,6 +6,9 @@ import { registerRunnerHandlers } from './ipc/runner'
 import { registerStorageHandlers } from './ipc/storage'
 import { registerReporterHandlers } from './ipc/reporter'
 import { registerHealthHandlers } from './ipc/health'
+import { registerSelectorTesterHandlers } from './ipc/selectorTester'
+import { registerElementPickerHandlers } from './ipc/elementPicker'
+import { registerRecorderHandlers } from './ipc/recorder'
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -36,7 +39,7 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.pldt.botchi')
+  electronApp.setAppUserModelId('com.pdr.pdr-automation')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -47,6 +50,9 @@ app.whenReady().then(async () => {
   registerStorageHandlers()
   registerReporterHandlers()
   registerHealthHandlers()
+  registerSelectorTesterHandlers()
+  registerElementPickerHandlers()
+  registerRecorderHandlers()
 
   createWindow()
 

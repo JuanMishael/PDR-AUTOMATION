@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ACTION_DEFS } from './actionDefs'
 
-export default function StepCard({ step, index, total, onChange, onDelete, onMove }) {
+export default function StepCard({ step, index, total, onChange, onDelete, onMove, onDuplicate }) {
   const [expanded, setExpanded] = useState(false)
   const def = ACTION_DEFS[step.action] || { label: step.action, params: [] }
   const params = typeof step.params === 'string' ? JSON.parse(step.params) : (step.params || {})
@@ -37,17 +37,23 @@ export default function StepCard({ step, index, total, onChange, onDelete, onMov
             style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '2px 6px' }}>↑</button>
           <button onClick={e => { e.stopPropagation(); onMove(step.id, 'down') }} disabled={index === total - 1}
             style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '2px 6px' }}>↓</button>
+          {onDuplicate && (
+            <button onClick={e => { e.stopPropagation(); onDuplicate(step.id) }}
+              title="Duplicate step"
+              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '2px 6px', fontSize: 14 }}>⎘</button>
+          )}
           <button onClick={e => { e.stopPropagation(); onDelete(step.id) }}
             style={{ background: 'none', border: 'none', color: 'var(--error)', padding: '2px 8px', fontSize: 16 }}>×</button>
         </div>
       </div>
 
       {expanded && (
-        <div style={{ padding: '0 16px 16px', borderTop: '1px solid var(--border)', marginTop: 0 }}>
+        <div style={{ padding: '0 16px 16px', borderTop: '1px solid var(--border)' }}>
           <div style={{ marginTop: 12, marginBottom: 12 }}>
             <label>Step Label (optional)</label>
-            <input value={step.label || ''} onChange={e => updateLabel(e.target.value)} placeholder="Describe this step" />
+            <input value={step.label || ''} onChange={e => updateLabel(e.target.value)} placeholder="Short name for this step" />
           </div>
+
           {def.params.map(p => (
             <div key={p.key} style={{ marginBottom: 10 }}>
               <label>{p.label}</label>
@@ -71,6 +77,21 @@ export default function StepCard({ step, index, total, onChange, onDelete, onMov
               )}
             </div>
           ))}
+
+          <div style={{ borderTop: '1px solid var(--border)', marginTop: 14, paddingTop: 14, display: 'grid', gap: 10 }}>
+            <div>
+              <label style={{ color: 'var(--text-muted)' }}>Notes / Description</label>
+              <textarea rows={2} value={params._notes || ''}
+                placeholder="Describe what this step does (appears in test case document)"
+                onChange={e => updateParam('_notes', e.target.value)} />
+            </div>
+            <div>
+              <label style={{ color: 'var(--text-muted)' }}>Expected Result</label>
+              <input value={params._expected || ''}
+                placeholder="What should happen after this step runs"
+                onChange={e => updateParam('_expected', e.target.value)} />
+            </div>
+          </div>
         </div>
       )}
     </div>

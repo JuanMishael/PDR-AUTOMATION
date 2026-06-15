@@ -23,7 +23,7 @@ const SCREENS = {
 export default function App() {
   const [screen, setScreen] = useState('dashboard')
   const [ctx, setCtx] = useState({})
-  const [appName, setAppName] = useState('AutomationTool')
+  const [appName, setAppName] = useState('PDR-AUTOMATION')
 
   useEffect(() => {
     window.api.getSettings().then(s => { if (s.app_name) setAppName(s.app_name) })

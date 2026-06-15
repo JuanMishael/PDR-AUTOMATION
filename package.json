@@ -1,9 +1,9 @@
 {
-  "name": "botchi-v2",
+  "name": "pdr-automation",
   "version": "2.0.0",
-  "description": "Botchi V2 — Visual QA Automation Runner powered by Playwright",
+  "description": "PDR-AUTOMATION — Visual QA Automation Runner powered by Playwright",
   "main": "./out/main/index.js",
-  "author": "PLDT PDR QA Team",
+  "author": "PDR QA Team",
   "private": true,
   "scripts": {
     "dev": "electron-vite dev",
@@ -28,8 +28,8 @@
     "vite": "^5.3.4"
   },
   "build": {
-    "appId": "com.pldt.botchi",
-    "productName": "Botchi",
+    "appId": "com.pdr-automation",
+    "productName": "PDR-AUTOMATION",
     "directories": {
       "output": "release"
     },

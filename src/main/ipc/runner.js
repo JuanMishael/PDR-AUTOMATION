@@ -3,73 +3,110 @@ import { randomUUID } from 'crypto'
 import { getDb } from '../core/db'
 import { runWeb, stopRun } from '../core/webRunner'
 
+// Build a single scenario's full step list for an ISOLATED run: its prerequisite chain
+// (e.g. Login) first, then its own steps — all in one browser. sort_order is
+// re-sequenced so prerequisite steps stay ahead of the scenario's own. Cycle-guarded.
+function collectSteps(db, scenario, seen = new Set()) {
+  if (seen.has(scenario.id)) return []
+  seen.add(scenario.id)
+
+  let prereqSteps = []
+  if (scenario.prerequisite_id) {
+    const pre = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(scenario.prerequisite_id)
+    if (pre) prereqSteps = collectSteps(db, pre, seen)
+  }
+
+  const own = db.prepare('SELECT * FROM steps WHERE scenario_id = ? ORDER BY sort_order').all(scenario.id)
+  const combined = [...prereqSteps, ...own]
+  combined.forEach((s, i) => { s.sort_order = i })
+  return combined
+}
+
+// Runs the given scenario groups in ONE browser session and records history.
+// scenarioMeta is optional { scenarioId, scenarioName } for isolated single-scenario runs.
+async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, send }) {
+  const runId = randomUUID()
+  const startedAt = new Date().toISOString()
+
+  const { status, results, fatalError, tracePath } = await runWeb({
+    runId,
+    profile,
+    scenarios,
+    settings,
+    onLog: (data) => send('runner:log', data),
+    onComplete: () => {}
+  })
+
+  if (fatalError) send('runner:log', { type: 'error', text: `✗ ${fatalError}` })
+  if (tracePath)  send('runner:log', { type: 'info', text: `📎 Trace saved: ${tracePath}` })
+
+  const finishedAt = new Date().toISOString()
+  const passed = results.filter(r => r.status === 'passed').length
+  const failed = results.filter(r => r.status === 'failed').length
+  const overallStatus = fatalError || failed > 0 ? 'failed' : 'passed'
+  const durationMs = new Date(finishedAt) - new Date(startedAt)
+
+  const historyId = randomUUID()
+  getDb().prepare(`
+    INSERT INTO history (id, profile_id, profile_name, scenario_id, scenario_name, status,
+      started_at, finished_at, duration_ms, steps_total, steps_passed, steps_failed, log, trace_path)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    historyId, profile.id, profile.name,
+    scenarioMeta.scenarioId || null, scenarioMeta.scenarioName || null,
+    overallStatus, startedAt, finishedAt, durationMs,
+    results.length, passed, failed, JSON.stringify(results), tracePath || null
+  )
+
+  const summary = { runId: historyId, status: overallStatus, passed, failed, durationMs }
+  send('runner:complete', summary)
+  return summary
+}
+
 export function registerRunnerHandlers() {
-  ipcMain.handle('runner:run', async (event, profileId) => {
+  const sender = () => {
+    const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+    return (channel, data) => win?.webContents.send(channel, data)
+  }
+
+  const loadSettings = (db) => {
+    const rows = db.prepare('SELECT key, value FROM settings').all()
+    return Object.fromEntries(rows.map(r => [r.key, r.value]))
+  }
+
+  // Continuous run: every scenario in the profile, in order, in ONE browser session.
+  ipcMain.handle('runner:run', async (_event, profileId) => {
     const db = getDb()
     const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
     if (!profile) return { error: 'Profile not found' }
 
-    const scenarios = db
-      .prepare('SELECT * FROM scenarios WHERE profile_id = ? ORDER BY sort_order')
-      .all(profileId)
+    const scenarioRows = db.prepare('SELECT * FROM scenarios WHERE profile_id = ? ORDER BY sort_order').all(profileId)
+    if (!scenarioRows.length) return { error: 'No scenarios configured for this profile' }
 
-    if (!scenarios.length) return { error: 'No scenarios configured for this profile' }
+    const scenarios = scenarioRows.map(s => ({
+      id: s.id,
+      name: s.name,
+      steps: db.prepare('SELECT * FROM steps WHERE scenario_id = ? ORDER BY sort_order').all(s.id)
+    }))
 
-    const runId = randomUUID()
-    const startedAt = new Date().toISOString()
+    return executeRun({ profile, scenarios, settings: loadSettings(db), send: sender() })
+  })
 
-    const win = BrowserWindow.getFocusedWindow()
-    const send = (channel, data) => win?.webContents.send(channel, data)
+  // Isolated run: a single scenario (plus its prerequisite chain) in a fresh browser.
+  ipcMain.handle('runner:runScenario', async (_event, { profileId, scenarioId }) => {
+    const db = getDb()
+    const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
+    if (!profile) return { error: 'Profile not found' }
+    const scenario = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(scenarioId)
+    if (!scenario) return { error: 'Scenario not found' }
 
-    const allResults = []
+    const scenarios = [{ id: scenario.id, name: scenario.name, steps: collectSteps(db, scenario) }]
 
-    for (const scenario of scenarios) {
-      const steps = db
-        .prepare('SELECT * FROM steps WHERE scenario_id = ? ORDER BY sort_order')
-        .all(scenario.id)
-
-      send('runner:log', { type: 'info', text: `▶ Running scenario: ${scenario.name}` })
-
-      const { status, results, fatalError } = await runWeb({
-        runId,
-        profile,
-        scenario,
-        steps,
-        onLog: (data) => send('runner:log', data),
-        onComplete: () => {}
-      })
-
-      allResults.push(...results)
-
-      if (status === 'failed') {
-        send('runner:log', { type: 'error', text: `✗ Scenario failed: ${scenario.name}${fatalError ? ` — ${fatalError}` : ''}` })
-        break
-      } else {
-        send('runner:log', { type: 'success', text: `✓ Scenario passed: ${scenario.name}` })
-      }
-    }
-
-    const finishedAt = new Date().toISOString()
-    const passed = allResults.filter(r => r.status === 'passed').length
-    const failed = allResults.filter(r => r.status === 'failed').length
-    const overallStatus = failed > 0 ? 'failed' : 'passed'
-    const durationMs = new Date(finishedAt) - new Date(startedAt)
-
-    const historyId = randomUUID()
-    db.prepare(`
-      INSERT INTO history (id, profile_id, profile_name, status, started_at, finished_at,
-        duration_ms, steps_total, steps_passed, steps_failed, log)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      historyId, profileId, profile.name, overallStatus,
-      startedAt, finishedAt, durationMs,
-      allResults.length, passed, failed,
-      JSON.stringify(allResults)
-    )
-
-    const summary = { runId: historyId, status: overallStatus, passed, failed, durationMs }
-    send('runner:complete', summary)
-    return summary
+    return executeRun({
+      profile, scenarios, settings: loadSettings(db),
+      scenarioMeta: { scenarioId: scenario.id, scenarioName: scenario.name },
+      send: sender()
+    })
   })
 
   ipcMain.handle('runner:stop', async (_, runId) => {

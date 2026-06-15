@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 contextBridge.exposeInMainWorld('api', {
   // Runner
   runProfile: (profileId) => ipcRenderer.invoke('runner:run', profileId),
+  runScenario: (profileId, scenarioId) => ipcRenderer.invoke('runner:runScenario', { profileId, scenarioId }),
   stopRun: (runId) => ipcRenderer.invoke('runner:stop', runId),
   onRunLog: (cb) => ipcRenderer.on('runner:log', (_, data) => cb(data)),
   onRunComplete: (cb) => ipcRenderer.on('runner:complete', (_, data) => cb(data)),
@@ -13,6 +14,8 @@ contextBridge.exposeInMainWorld('api', {
   getProfiles: () => ipcRenderer.invoke('storage:getProfiles'),
   saveProfile: (profile) => ipcRenderer.invoke('storage:saveProfile', profile),
   deleteProfile: (id) => ipcRenderer.invoke('storage:deleteProfile', id),
+  duplicateProfile: (profileId, newName) => ipcRenderer.invoke('storage:duplicateProfile', profileId, newName),
+  copyScenarios: (scenarioIds, targetProfileId) => ipcRenderer.invoke('storage:copyScenarios', scenarioIds, targetProfileId),
 
   // Storage — Scenarios
   getScenarios: (profileId) => ipcRenderer.invoke('storage:getScenarios', profileId),
@@ -36,7 +39,19 @@ contextBridge.exposeInMainWorld('api', {
 
   // Reporter
   exportReport: (runId, format) => ipcRenderer.invoke('reporter:export', runId, format),
+  exportSteps: (profileId, scenarioId) => ipcRenderer.invoke('reporter:exportSteps', profileId, scenarioId),
   openTraceViewer: (tracePath) => ipcRenderer.invoke('reporter:openTrace', tracePath),
+
+  // Selector tester — opts: { url, selector, browser, steps, baseUrl, runSteps }
+  testSelector: (opts) => ipcRenderer.invoke('selector:test', opts),
+
+  // Element picker — opts: { url, browser, steps, baseUrl, runSteps }
+  pickElement: (opts) => ipcRenderer.invoke('picker:pick', opts),
+
+  // Recorder — opts: { url, browser, steps, baseUrl, runSteps }; resolves when stopped
+  startRecording: (opts) => ipcRenderer.invoke('recorder:start', opts),
+  onRecorderStep: (cb) => ipcRenderer.on('recorder:step', (_, data) => cb(data)),
+  offRecorderStep: () => ipcRenderer.removeAllListeners('recorder:step'),
 
   // Health
   checkHealth: () => ipcRenderer.invoke('health:check'),

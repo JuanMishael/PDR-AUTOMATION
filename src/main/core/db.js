@@ -72,9 +72,9 @@ export function getDb() {
 }
 
 export async function initDb() {
-  const dataDir = join(app.getPath('userData'), 'botchi-data')
+  const dataDir = join(app.getPath('userData'), 'pdr-automation-data')
   mkdirSync(dataDir, { recursive: true })
-  _dbPath = join(dataDir, 'botchi.db')
+  _dbPath = join(dataDir, 'pdr-automation.db')
 
   const initSqlJs = (await import('sql.js')).default
   const SQL = await initSqlJs()
@@ -147,6 +147,9 @@ export async function initDb() {
     );
   `)
 
+  // --- migrations (idempotent: sql.js throws on duplicate column, which we ignore) ---
+  try { _db.run('ALTER TABLE scenarios ADD COLUMN prerequisite_id TEXT') } catch { /* already migrated */ }
+
   persist()
   seedDefaultSettings()
 }
@@ -155,7 +158,7 @@ function seedDefaultSettings() {
   const db = getDb()
   const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)')
   for (const [k, v] of [
-    ['app_name', 'Botchi'],
+    ['app_name', 'PDR-AUTOMATION'],
     ['browser', 'chromium'],
     ['headless', '0'],
     ['default_timeout', '30000'],

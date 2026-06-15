@@ -18,22 +18,37 @@ export const ACTION_DEFS = {
   click: {
     label: 'Click', category: 'Interaction',
     summary: p => p.selector,
-    params: [{ key: 'selector', label: 'Selector (CSS or text)', placeholder: '#submit-btn or text=Login' }]
+    params: [
+      { key: 'selector', label: 'Selector (CSS or text)', placeholder: '#submit-btn or text=Login' },
+      { key: 'selector2', label: 'Alt Selector (fallback)', placeholder: 'button.login-btn (optional)' },
+      { key: 'waitBefore', label: 'Wait before click (ms)', placeholder: '0 — e.g. 500 for modal animations', type: 'number' }
+    ]
   },
   dblclick: {
     label: 'Double Click', category: 'Interaction',
     summary: p => p.selector,
-    params: [{ key: 'selector', label: 'Selector', placeholder: '.item' }]
+    params: [
+      { key: 'selector', label: 'Selector', placeholder: '.item' },
+      { key: 'selector2', label: 'Alt Selector (fallback)', placeholder: 'optional fallback' },
+      { key: 'waitBefore', label: 'Wait before click (ms)', placeholder: '0 — e.g. 500 for modal animations', type: 'number' }
+    ]
   },
   rightClick: {
     label: 'Right Click', category: 'Interaction',
     summary: p => p.selector,
-    params: [{ key: 'selector', label: 'Selector', placeholder: '.item' }]
+    params: [
+      { key: 'selector', label: 'Selector', placeholder: '.item' },
+      { key: 'selector2', label: 'Alt Selector (fallback)', placeholder: 'optional fallback' },
+      { key: 'waitBefore', label: 'Wait before click (ms)', placeholder: '0 — e.g. 500 for modal animations', type: 'number' }
+    ]
   },
   hover: {
     label: 'Hover', category: 'Interaction',
     summary: p => p.selector,
-    params: [{ key: 'selector', label: 'Selector', placeholder: '.menu-item' }]
+    params: [
+      { key: 'selector', label: 'Selector', placeholder: '.menu-item' },
+      { key: 'selector2', label: 'Alt Selector (fallback)', placeholder: 'optional fallback' }
+    ]
   },
   focus: {
     label: 'Focus', category: 'Interaction',

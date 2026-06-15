@@ -56,22 +56,91 @@ export function registerStorageHandlers() {
   ipcMain.handle('storage:saveScenario', (_, scenario) => {
     if (scenario.id) {
       db().prepare(`
-        UPDATE scenarios SET name=?, description=?, sort_order=?, updated_at=datetime('now')
+        UPDATE scenarios SET name=?, description=?, sort_order=?, prerequisite_id=?, updated_at=datetime('now')
         WHERE id=?
-      `).run(scenario.name, scenario.description || '', scenario.sort_order ?? 0, scenario.id)
+      `).run(scenario.name, scenario.description || '', scenario.sort_order ?? 0,
+          scenario.prerequisite_id || null, scenario.id)
       return { id: scenario.id }
     }
     const id = randomUUID()
     db().prepare(`
-      INSERT INTO scenarios (id, profile_id, name, description, sort_order)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, scenario.profile_id, scenario.name, scenario.description || '', scenario.sort_order ?? 0)
+      INSERT INTO scenarios (id, profile_id, name, description, sort_order, prerequisite_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, scenario.profile_id, scenario.name, scenario.description || '',
+        scenario.sort_order ?? 0, scenario.prerequisite_id || null)
     return { id }
   })
 
   ipcMain.handle('storage:deleteScenario', (_, id) => {
-    db().prepare('DELETE FROM scenarios WHERE id = ?').run(id)
+    const d = db()
+    // Clear any prerequisite links pointing at the scenario being deleted.
+    d.prepare('UPDATE scenarios SET prerequisite_id = NULL WHERE prerequisite_id = ?').run(id)
+    d.prepare('DELETE FROM scenarios WHERE id = ?').run(id)
     return { ok: true }
+  })
+
+  // Deep-copy one scenario (+ its steps) into a target profile. Returns the new id.
+  // prereq is remapped only if the prerequisite is also part of the copied set.
+  function cloneScenario(d, src, targetProfileId, sortOrder, idMap) {
+    const newId = idMap[src.id]
+    const prereq = src.prerequisite_id && idMap[src.prerequisite_id] ? idMap[src.prerequisite_id] : null
+    d.prepare(`
+      INSERT INTO scenarios (id, profile_id, name, description, sort_order, prerequisite_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(newId, targetProfileId, src.name, src.description || '', sortOrder, prereq)
+    const steps = d.prepare('SELECT * FROM steps WHERE scenario_id = ? ORDER BY sort_order').all(src.id)
+    for (const st of steps) {
+      d.prepare(`
+        INSERT INTO steps (id, scenario_id, action, params, label, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(randomUUID(), newId, st.action, st.params, st.label || '', st.sort_order)
+    }
+  }
+
+  // Duplicate a whole profile + all its scenarios/steps (prereq links remapped).
+  ipcMain.handle('storage:duplicateProfile', (_, profileId, newName) => {
+    const d = db()
+    const prof = d.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
+    if (!prof) return { error: 'Profile not found' }
+
+    const newProfileId = randomUUID()
+    const scenarios = d.prepare('SELECT * FROM scenarios WHERE profile_id = ? ORDER BY sort_order').all(profileId)
+    const idMap = {}
+    scenarios.forEach(s => { idMap[s.id] = randomUUID() })
+
+    const tx = d.transaction(() => {
+      d.prepare(`
+        INSERT INTO profiles (id, name, type, base_url, browser, headless, timeout)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(newProfileId, (newName && newName.trim()) || `${prof.name} (copy)`,
+          prof.type, prof.base_url, prof.browser, prof.headless, prof.timeout)
+      scenarios.forEach((s, i) => cloneScenario(d, s, newProfileId, i, idMap))
+    })
+    tx()
+    return { id: newProfileId }
+  })
+
+  // Copy selected scenarios into an existing target profile (appended after its current ones).
+  ipcMain.handle('storage:copyScenarios', (_, scenarioIds, targetProfileId) => {
+    const d = db()
+    const target = d.prepare('SELECT * FROM profiles WHERE id = ?').get(targetProfileId)
+    if (!target) return { error: 'Target profile not found' }
+
+    const src = (scenarioIds || [])
+      .map(id => d.prepare('SELECT * FROM scenarios WHERE id = ?').get(id))
+      .filter(Boolean)
+    if (!src.length) return { error: 'No scenarios to copy' }
+
+    const idMap = {}
+    src.forEach(s => { idMap[s.id] = randomUUID() })
+    const existing = d.prepare('SELECT COUNT(*) AS c FROM scenarios WHERE profile_id = ?').get(targetProfileId)
+    let order = existing?.c || 0
+
+    const tx = d.transaction(() => {
+      src.forEach(s => cloneScenario(d, s, targetProfileId, order++, idMap))
+    })
+    tx()
+    return { ok: true, count: src.length }
   })
 
   // --- Steps ---

@@ -6,9 +6,31 @@ let _db       // sql.js Database instance
 let _dbPath   // path to the .db file on disk
 let _inTx = false  // suppress mid-transaction persists
 
+// Persistence is debounced: sql.js has no incremental write — every save serializes the
+// WHOLE database. Writing synchronously on each run() froze the UI during live recording
+// (one full rewrite per captured step). We coalesce bursts into a single write, and always
+// flush on app quit (see flushDb) so nothing is lost.
+const FLUSH_DELAY_MS = 200
+let _dirty = false
+let _flushTimer = null
+
+function writeNow() {
+  _flushTimer = null
+  if (!_dirty || !_db) return
+  _dirty = false
+  writeFileSync(_dbPath, Buffer.from(_db.export()))
+}
+
 function persist() {
   if (_inTx) return
-  writeFileSync(_dbPath, Buffer.from(_db.export()))
+  _dirty = true
+  if (!_flushTimer) _flushTimer = setTimeout(writeNow, FLUSH_DELAY_MS)
+}
+
+// Synchronous flush of any pending write — call before the app exits.
+export function flushDb() {
+  if (_flushTimer) { clearTimeout(_flushTimer); _flushTimer = null }
+  writeNow()
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +171,12 @@ export async function initDb() {
 
   // --- migrations (idempotent: sql.js throws on duplicate column, which we ignore) ---
   try { _db.run('ALTER TABLE scenarios ADD COLUMN prerequisite_id TEXT') } catch { /* already migrated */ }
+  // Per-scenario run outcomes: a Run All now continues past a failing scenario and
+  // records each scenario's own pass/fail (see runner.js / webRunner.js).
+  try { _db.run('ALTER TABLE history ADD COLUMN scenarios_total  INTEGER NOT NULL DEFAULT 0') } catch { /* already migrated */ }
+  try { _db.run('ALTER TABLE history ADD COLUMN scenarios_passed INTEGER NOT NULL DEFAULT 0') } catch { /* already migrated */ }
+  try { _db.run('ALTER TABLE history ADD COLUMN scenarios_failed INTEGER NOT NULL DEFAULT 0') } catch { /* already migrated */ }
+  try { _db.run('ALTER TABLE history ADD COLUMN scenario_results TEXT') } catch { /* already migrated */ }
 
   persist()
   seedDefaultSettings()

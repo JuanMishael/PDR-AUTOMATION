@@ -15,9 +15,10 @@ Build and run browser automation scripts through a point-and-click UI — no cod
 - **🎯 Element picker** — click "Pick", then click the real element in a live browser; a robust selector is generated for you (no CSS knowledge needed)
 - **● Recorder** — open the site, hit Start, and just *use it* — your clicks, typing, and dropdowns become step cards live. Recording survives navigations (e.g. a login redirect)
 - **Selector tester (from the top)** — test a selector after replaying the steps above it, so mid-flow elements (modals, post-login content) actually match instead of misreporting "0 found"
-- **Continuous runs** — "Run All" runs every scenario in order in **one browser session**; state carries over (stay logged in, keep created records)
+- **Continuous runs** — "Run All" runs every scenario in order in **one browser session**; state carries over (stay logged in, keep created records). A failing scenario doesn't stop the rest — each gets its **own pass/fail** (see [How a run works](#how-a-run-works))
 - **Per-scenario isolated run** — run a single scenario in a fresh browser, optionally re-running a prerequisite (e.g. Login) first, for debugging
 - **Replicate environments** — duplicate a whole profile (e.g. staging → prebau) or copy scenarios into another profile; just change the Base URL
+- **Dashboard** — a card per profile showing scenario count, last-run status & time, the last run's "X/Y scenarios passed" breakdown, and a recent-runs streak
 - **Live run view** — real-time step-by-step log with pass/fail status
 - **Reports** — export results as HTML, CSV, or Word (.docx)
 - **Run history** — browse past runs and re-open results at any time
@@ -88,6 +89,20 @@ Key shared modules:
 
 - **Run All** generates **one** script for the whole profile and runs every scenario in order, in a single browser — so login and created state carry from one scenario to the next.
 - **Per-scenario ▶ Run** runs just that scenario (plus an optional prerequisite) in a fresh browser.
+
+### Pass/fail (per scenario)
+
+A run records **a pass/fail verdict for each scenario**, not just one verdict for the whole run:
+
+- **Within a scenario**, execution stops at the **first failed step** (the rest of that scenario is meaningless) and the scenario is marked **failed**.
+- **Between scenarios**, the run **continues** — a failing scenario does *not* abort the ones after it. Each scenario gets its own pass/fail, stored as `scenarios_total / scenarios_passed / scenarios_failed` on the run's history row.
+- The overall run is **passed** only if every scenario passed.
+
+> **Heads-up on shared state:** because Run All uses one browser session, scenarios depend
+> on each other's state (e.g. a Login scenario logs everything in). If an early scenario like
+> Login fails, later scenarios that rely on it will likely fail too — so one root cause can
+> show as several red scenarios. That cascade is intentional (honest signal); a future
+> refinement may mark dependent scenarios as "blocked" using each scenario's `prerequisite_id`.
 
 ## Phase 2 (planned)
 

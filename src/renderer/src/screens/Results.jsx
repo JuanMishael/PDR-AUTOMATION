@@ -14,13 +14,19 @@ export default function Results({ ctx, navigate }) {
         setRun(r)
         setResults(JSON.parse(r.log || '[]'))
       }
-    })
+    }).catch(e => alert('Could not load this run: ' + (e?.message || 'unknown error')))
   }, [runId])
 
   async function exportReport(format) {
     setExporting(format)
-    await window.api.exportReport(runId, format)
-    setExporting(null)
+    try {
+      const res = await window.api.exportReport(runId, format)
+      if (res?.error) alert('Export failed: ' + res.error)
+    } catch (e) {
+      alert('Export failed: ' + (e?.message || 'unknown error'))
+    } finally {
+      setExporting(null)   // always clears the spinner, even on failure
+    }
   }
 
   if (!runId) return (

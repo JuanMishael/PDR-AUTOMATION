@@ -28,7 +28,7 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, sen
   const runId = randomUUID()
   const startedAt = new Date().toISOString()
 
-  const { status, results, fatalError, tracePath } = await runWeb({
+  const { status, results, scenarioResults = [], fatalError, tracePath } = await runWeb({
     runId,
     profile,
     scenarios,
@@ -43,22 +43,30 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, sen
   const finishedAt = new Date().toISOString()
   const passed = results.filter(r => r.status === 'passed').length
   const failed = results.filter(r => r.status === 'failed').length
+  const scenariosPassed = scenarioResults.filter(s => s.status === 'passed').length
+  const scenariosFailed = scenarioResults.filter(s => s.status === 'failed').length
   const overallStatus = fatalError || failed > 0 ? 'failed' : 'passed'
   const durationMs = new Date(finishedAt) - new Date(startedAt)
 
   const historyId = randomUUID()
   getDb().prepare(`
     INSERT INTO history (id, profile_id, profile_name, scenario_id, scenario_name, status,
-      started_at, finished_at, duration_ms, steps_total, steps_passed, steps_failed, log, trace_path)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      started_at, finished_at, duration_ms, steps_total, steps_passed, steps_failed,
+      scenarios_total, scenarios_passed, scenarios_failed, scenario_results, log, trace_path)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     historyId, profile.id, profile.name,
     scenarioMeta.scenarioId || null, scenarioMeta.scenarioName || null,
     overallStatus, startedAt, finishedAt, durationMs,
-    results.length, passed, failed, JSON.stringify(results), tracePath || null
+    results.length, passed, failed,
+    scenarioResults.length, scenariosPassed, scenariosFailed, JSON.stringify(scenarioResults),
+    JSON.stringify(results), tracePath || null
   )
 
-  const summary = { runId: historyId, status: overallStatus, passed, failed, durationMs }
+  const summary = {
+    runId: historyId, status: overallStatus, passed, failed, durationMs,
+    scenariosTotal: scenarioResults.length, scenariosPassed, scenariosFailed, scenarioResults
+  }
   send('runner:complete', summary)
   return summary
 }

@@ -1,101 +1,151 @@
 import { useEffect, useState } from 'react'
+import { Icon } from '../components/SketchDefs'
+
+function timeAgo(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const s = (Date.now() - d.getTime()) / 1000
+  if (s < 60)      return 'just now'
+  if (s < 3600)    return `${Math.floor(s / 60)}m ago`
+  if (s < 86400)   return `${Math.floor(s / 3600)}h ago`
+  if (s < 604800)  return `${Math.floor(s / 86400)}d ago`
+  return d.toLocaleDateString()
+}
+
+// last ~5 runs as colored dots, oldest → newest (left → right)
+function Streak({ runs }) {
+  const recent = runs.slice(0, 5).reverse()
+  if (!recent.length) return <span style={{ fontSize: 12, color: 'var(--ink-faint)' }}>No runs yet</span>
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} title="Recent runs (oldest → newest)">
+      {recent.map((r, i) => (
+        <span key={i} style={{
+          width: 9, height: 9, borderRadius: '50%',
+          background: r.status === 'passed' ? 'var(--ok)' : 'var(--bad)',
+          border: `1.5px solid ${r.status === 'passed' ? 'var(--ok-line)' : 'var(--bad-line)'}`
+        }} />
+      ))}
+    </div>
+  )
+}
+
+function ProfileCard({ profile, scenarioCount, runs, navigate }) {
+  const last = runs[0]
+  // Prefer the per-scenario breakdown; fall back to steps for runs recorded before that existed.
+  const hasScenarioBreakdown = last && last.scenarios_total > 0
+  const breakdown = last
+    ? (hasScenarioBreakdown
+        ? `${last.scenarios_passed}/${last.scenarios_total} scenarios passed`
+        : `${last.steps_passed}/${last.steps_total} steps passed`)
+    : null
+
+  return (
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: 18 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{
+          width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+          background: 'var(--accent-soft)', border: '2px solid var(--accent)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontFamily: 'var(--font-hand)', fontSize: 17, color: 'var(--accent-ink)'
+        }}>
+          {profile.name.slice(0, 2).toUpperCase()}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: 'var(--font-hand)', fontSize: 19, color: 'var(--ink)', lineHeight: 1.1 }}>
+            {profile.name}
+          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-soft)', marginTop: 2,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {profile.browser} · {profile.base_url}
+          </div>
+        </div>
+        {last && (
+          <span className={`badge ${last.status === 'passed' ? 'badge-ok' : 'badge-bad'}`}>
+            <span className="dot" />{last.status}
+          </span>
+        )}
+      </div>
+
+      {/* Meta */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+        <span style={{ fontFamily: 'var(--font-hand)', fontSize: 15, color: 'var(--ink-soft)' }}>
+          {scenarioCount} scenario{scenarioCount !== 1 ? 's' : ''}
+        </span>
+        <span style={{ color: 'var(--line-soft)' }}>·</span>
+        {last ? (
+          <span style={{ fontSize: 13, color: 'var(--ink-soft)' }}>
+            {breakdown} <span style={{ color: 'var(--ink-faint)' }}>· {timeAgo(last.started_at)}</span>
+          </span>
+        ) : (
+          <span style={{ fontSize: 13, color: 'var(--ink-faint)' }}>Never run</span>
+        )}
+        <div style={{ marginLeft: 'auto' }}><Streak runs={runs} /></div>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+        <button className="btn btn-sm" style={{ flex: 1, justifyContent: 'center' }}
+          onClick={() => navigate('scenarios', { profileId: profile.id, profileName: profile.name })}>
+          <Icon name="builder" size={16} /> Edit Scenarios
+        </button>
+        <button className="btn-primary btn-sm" style={{ flex: 1, justifyContent: 'center' }}
+          onClick={() => navigate('run', { profileId: profile.id })}>
+          <Icon name="run" size={15} fill /> Run
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export default function Dashboard({ navigate }) {
   const [profiles, setProfiles] = useState([])
   const [history, setHistory] = useState([])
-  const [appName, setAppName] = useState('PDR-AUTOMATION')
+  const [counts, setCounts] = useState({})   // profileId -> scenario count
 
   useEffect(() => {
-    window.api.getProfiles().then(setProfiles)
-    window.api.getHistory().then(h => setHistory(h.slice(0, 6)))
-    window.api.getSettings().then(s => { if (s.app_name) setAppName(s.app_name) })
+    window.api.getProfiles().then(async (ps) => {
+      setProfiles(ps)
+      const entries = await Promise.all(
+        ps.map(async p => [p.id, (await window.api.getScenarios(p.id)).length])
+      )
+      setCounts(Object.fromEntries(entries))
+    })
+    window.api.getHistory().then(setHistory)
   }, [])
 
-  const totalRuns   = history.length
-  const totalPassed = history.filter(h => h.status === 'passed').length
-  const totalFailed = history.filter(h => h.status === 'failed').length
+  // history is returned newest-first; group by profile keeping that order.
+  const runsByProfile = {}
+  for (const h of history) (runsByProfile[h.profile_id] ||= []).push(h)
 
   return (
     <div className="fade-in">
-      {/* Header */}
       <div className="page-header">
         <h1>Dashboard</h1>
         <p>Welcome back — {profiles.length} profile{profiles.length !== 1 ? 's' : ''} configured</p>
       </div>
 
-      {/* Stats row */}
-      {history.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 28 }}>
-          {[
-            { label: 'Total Runs', value: totalRuns, color: 'var(--text)', icon: '▶' },
-            { label: 'Passed',     value: totalPassed, color: 'var(--success)', icon: '✓' },
-            { label: 'Failed',     value: totalFailed, color: 'var(--error)', icon: '✗' }
-          ].map(stat => (
-            <div key={stat.label} style={{
-              background: 'var(--surface)',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--radius)',
-              padding: '16px 20px',
-              display: 'flex', alignItems: 'center', gap: 14
-            }}>
-              <div style={{
-                width: 38, height: 38, borderRadius: 8,
-                background: stat.color === 'var(--text)' ? 'var(--surface2)' : `${stat.color}22`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 16, color: stat.color, fontWeight: 700, flexShrink: 0
-              }}>{stat.icon}</div>
-              <div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: stat.color, lineHeight: 1 }}>{stat.value}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{stat.label}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Profiles */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-        <h2 style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-          Profiles
-        </h2>
-        <button className="btn-ghost" style={{ padding: '5px 12px', fontSize: 12 }} onClick={() => navigate('profile')}>
-          + New Profile
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <h2 className="eyebrow">Profiles</h2>
+        <button className="btn btn-sm" onClick={() => navigate('profile')}>
+          <Icon name="plus" size={15} /> New Profile
         </button>
       </div>
 
       {profiles.length === 0 ? (
         <div className="card empty-state">
-          <div className="empty-icon">⊡</div>
+          <div className="empty-icon"><Icon name="profile" size={36} /></div>
           <p>No profiles yet. Create one to get started.</p>
           <button className="btn-primary" onClick={() => navigate('profile')}>+ Create Profile</button>
         </div>
       ) : (
-        <div style={{ display: 'grid', gap: 10, marginBottom: 32 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', gap: 14, marginBottom: 34 }}>
           {profiles.map(p => (
-            <div key={p.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 18px' }}>
-              <div style={{
-                width: 36, height: 36, borderRadius: 8, flexShrink: 0,
-                background: 'var(--accent-dim)', border: '1px solid rgba(108,99,255,0.2)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 13, fontWeight: 800, color: 'var(--accent)'
-              }}>
-                {p.name.slice(0, 2).toUpperCase()}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {p.browser} · {p.base_url}
-                </div>
-              </div>
-              <button className="btn-ghost" style={{ padding: '6px 12px', fontSize: 12, flexShrink: 0 }}
-                onClick={() => navigate('scenarios', { profileId: p.id, profileName: p.name })}>
-                Edit Scenarios
-              </button>
-              <button className="btn-primary" style={{ padding: '6px 14px', fontSize: 12, flexShrink: 0 }}
-                onClick={() => navigate('run', { profileId: p.id })}>
-                ▶ Run
-              </button>
-            </div>
+            <ProfileCard key={p.id} profile={p}
+              scenarioCount={counts[p.id] ?? 0}
+              runs={runsByProfile[p.id] || []}
+              navigate={navigate} />
           ))}
         </div>
       )}
@@ -104,36 +154,26 @@ export default function Dashboard({ navigate }) {
       {history.length > 0 && (
         <div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <h2 style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-              Recent Runs
-            </h2>
-            <button className="btn-ghost" style={{ padding: '5px 12px', fontSize: 12 }} onClick={() => navigate('history')}>
-              View All →
-            </button>
+            <h2 className="eyebrow">Recent Runs</h2>
+            <button className="btn btn-sm" onClick={() => navigate('history')}>View All →</button>
           </div>
           <div style={{ display: 'grid', gap: 6 }}>
-            {history.map(h => (
-              <div key={h.id}
-                onClick={() => navigate('results', { runId: h.id })}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
-                  background: 'var(--surface)', border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-                  transition: 'border-color 0.15s'
-                }}
-                onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--border-light)'}
-                onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border)'}
-              >
-                <span className={`badge badge-${h.status === 'passed' ? 'success' : 'error'}`}>{h.status}</span>
-                <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}>{h.profile_name}</span>
-                <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-                  {h.steps_passed}/{h.steps_total} steps
-                </span>
-                <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
-                  {new Date(h.started_at).toLocaleString()}
-                </span>
-              </div>
-            ))}
+            {history.slice(0, 6).map(h => {
+              const detail = h.scenarios_total > 0
+                ? `${h.scenarios_passed}/${h.scenarios_total} scenarios`
+                : `${h.steps_passed}/${h.steps_total} steps`
+              return (
+                <div key={h.id} className="sketch" onClick={() => navigate('results', { runId: h.id })}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 14px', cursor: 'pointer' }}>
+                  <span className={`badge ${h.status === 'passed' ? 'badge-ok' : 'badge-bad'}`}>
+                    <span className="dot" />{h.status}
+                  </span>
+                  <span style={{ flex: 1, fontWeight: 600, fontSize: 13 }}>{h.profile_name}</span>
+                  <span style={{ color: 'var(--ink-soft)', fontSize: 11 }}>{detail}</span>
+                  <span style={{ color: 'var(--ink-faint)', fontSize: 11 }}>{timeAgo(h.started_at)}</span>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}

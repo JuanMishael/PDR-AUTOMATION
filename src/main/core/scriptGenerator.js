@@ -19,17 +19,30 @@ export function generateScript({ profile, scenarios = [], settings = {}, outputD
   const screenshotOnFail = settings.screenshot_on_fail === '1'
 
   // One browser session for the whole run. Scenarios execute in order, carrying state
-  // (cookies, login, created records) from one to the next — a "scenario" marker is
+  // (cookies, login, created records) from one to the next. A "scenario" marker is
   // emitted before each so the live log and results can attribute steps.
+  //
+  // Each scenario's steps are wrapped in their own try/catch so a failure ends THAT
+  // scenario (its remaining steps are skipped) but the run CONTINUES to the next
+  // scenario — every scenario gets its own pass/fail. A within-scenario step failure
+  // still stops that scenario (the failing step rethrows); only the per-scenario
+  // boundary is caught here. Browser-setup failures still hit the outer try → fatal.
   let globalIndex = 0
   const blocks = []
   for (const sc of scenarios) {
-    blocks.push(`process.stdout.write(JSON.stringify({ type: 'scenario', name: ${JSON.stringify(sc.name || 'Scenario')} }) + '\\n');`)
     const orderedSteps = [...(sc.steps || [])].sort((a, b) => a.sort_order - b.sort_order)
-    for (const step of orderedSteps) {
-      blocks.push(generateStep(step, globalIndex, baseUrl, { screenshotOnFail, outputDir }))
+    const stepCode = orderedSteps.map(step => {
+      const code = generateStep(step, globalIndex, baseUrl, { screenshotOnFail, outputDir })
       globalIndex++
-    }
+      return code
+    }).join('\n\n')
+    blocks.push(
+`process.stdout.write(JSON.stringify({ type: 'scenario', id: ${JSON.stringify(sc.id || null)}, name: ${JSON.stringify(sc.name || 'Scenario')} }) + '\\n');
+try {
+${indent(stepCode, 2)}
+} catch (_scErr) {
+  // Scenario failed — the failing step already reported its status. Continue to the next scenario.
+}`)
   }
   const stepBlocks = blocks.join('\n\n')
 
@@ -238,7 +251,10 @@ function actionToCode(action, p, baseUrl) {
       return `await page.screenshot({ path: ${JSON.stringify(p.path || 'screenshot.png')}, fullPage: ${p.fullPage === true} });`
 
     case 'executeScript':
-      return `await page.evaluate(${p.script});`
+      // Run the user's JS inside the PAGE context only — pass it as data (JSON.stringify)
+      // so it can never break out into the Node runner. eval keeps the expression behaviour
+      // of the old raw interpolation; if it evaluates to a function (e.g. `() => ...`) we call it.
+      return `await page.evaluate((__s) => { const __r = eval(__s); return typeof __r === 'function' ? __r() : __r; }, ${JSON.stringify(p.script ?? '')});`
 
     default:
       return `// Unknown action: ${action}`

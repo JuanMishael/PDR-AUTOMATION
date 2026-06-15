@@ -11,7 +11,8 @@
 PDR-AUTOMATION (Electron desktop app)
 │
 ├── RENDERER (React UI — what the QA tester sees)
-│   ├── Dashboard            → pick a profile, run it, see status
+│   ├── Dashboard            → a card per profile: scenario count, last-run status/time,
+│   │                          "X/Y scenarios passed" breakdown, recent-runs streak
 │   ├── ProfileConfig        → define a "site under test" (base URL, browser, headless, timeout)
 │   ├── ScenarioBuilder      → THE CORE: build a test visually
 │   │     ├── Step Library (left)   — 28 actions in 5 categories
@@ -59,7 +60,8 @@ Profile  (a site/app under test: base URL + browser config)
         └── Step  (one action: Navigate, Fill, Click, Assert…)
               └── params (JSON: selector, value, waits, etc.)
 
-History  (a record of each run: status, duration, steps passed/failed, logs)
+History  (a record of each run: overall status, duration, steps passed/failed,
+          PER-SCENARIO passed/failed + a scenario_results breakdown, logs)
 Custom Steps  (user-defined reusable action templates — extensibility hook)
 ```
 
@@ -97,6 +99,18 @@ profile, or copy scenarios into an existing one) — handy for staging → preba
 - **Per-scenario ▶ Run (isolated)** — runs one scenario in a fresh browser, first replaying
   its **prerequisite** chain (e.g. Login) if set. For debugging a single scenario.
 
+**Pass/fail is PER SCENARIO** (`scriptGenerator.js` wraps each scenario in its own try/catch):
+
+- Within a scenario, the first failed step stops that scenario (its remaining steps are skipped)
+  and marks it **failed**.
+- Between scenarios, the run **continues** — a failing scenario does not abort the rest; each
+  gets its own verdict. `webRunner.js` attributes every step to the in-progress scenario and
+  rolls up `scenario_results`; `runner.js` stores `scenarios_total/passed/failed`.
+- Overall run status is **passed** only if every scenario passed.
+- *Shared-state caveat:* one browser session means scenarios depend on each other — a failed
+  Login can cascade into several red scenarios (intentional, honest signal). A future refinement
+  may mark dependents as "blocked" via `prerequisite_id`.
+
 **Demonstrate-don't-declare tooling** (all share `stepReplay.js` + `injectedScripts.js`):
 
 - **🎯 Picker** — opens a headful browser (replaying steps above so you can pick mid-flow
@@ -131,6 +145,7 @@ Each step card also has: **Gherkin keyword badge** (Given/When/Then), screenshot
 | **Step-card list, not n8n-style node graph** | Sequential UX is cleaner for non-technical QA; a test is a straight line |
 | **In-memory script generation** | No script files litter the disk; built fresh from step data each run |
 | **One browser per RUN, not per scenario** | Scenarios form a module journey — state (login, created records) must carry over |
+| **Continue past a failing scenario; verdict PER scenario** | A run reports which scenarios passed/failed, not just one overall result — far more actionable on the dashboard. Within a scenario it still stops at the first failed step |
 | **Picker/recorder over typing selectors** | "Demonstrate, don't declare" — clicking the real element beats hand-writing CSS |
 | **One shared in-page selector generator** | `injectedScripts.js` keeps picker + recorder selector logic identical |
 | **Own lightweight recorder, not `playwright codegen`** | Codegen emits code; we need step-card data. Parsing generated code is brittle |
@@ -164,13 +179,20 @@ Each step card also has: **Gherkin keyword badge** (Given/When/Then), screenshot
 ## 8. Status
 
 **Phase 1 (done):** All screens built, full backend, end-to-end flow confirmed
-(navigate → fill → click modal → assert). Dark theme only; basic UI polish.
+(navigate → fill → click modal → assert).
+
+**UI (done):** Hand-drawn **"Sketchbook"** theme (warm paper, ink borders, offset shadows,
+hand fonts) — friendlier for non-technical QA. See [docs/DESIGN.md](docs/DESIGN.md) before any
+UI change. Dashboard rebuilt as profile cards (scenario count, last run, per-scenario
+breakdown, recent-runs streak).
 
 **"Demonstrate, don't declare" layer (done):**
 - 🎯 Element picker — click the real element, get a robust selector
 - ● Recorder — record clicks/typing into step cards live (survives navigations)
 - ⊙ Selector tester "from the top" — replay steps above before testing a selector
 - Continuous run model — Run All shares one browser session across scenarios
+- **Per-scenario pass/fail** — Run All continues past a failing scenario; each scenario gets
+  its own verdict (`scenarios_total/passed/failed` in history)
 - Per-scenario isolated run + prerequisite link
 - Replicate: duplicate profile / copy scenarios to another environment
 - Collapsible step cards for an at-a-glance scenario overview
@@ -178,7 +200,8 @@ Each step card also has: **Gherkin keyword badge** (Given/When/Then), screenshot
 **Setup gotcha:** `npx playwright install chromium` must be run once per machine.
 
 **Phase 2 (future):** Mobile/Appium runner, tag filtering, assert-mode recording
-(mark what to verify), smart waits, self-healing selector fallbacks.
+(mark what to verify), smart waits, self-healing selector fallbacks, "blocked" scenario
+marking (skip/flag scenarios that depend on an already-failed one via `prerequisite_id`).
 
 > **Known notes:** in a continuous Run All, a scenario that starts with its own *Navigate*
 > step will reload the page (you stay logged in via cookies, but in-memory SPA state resets) —

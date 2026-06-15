@@ -7,14 +7,22 @@ export default function History({ navigate }) {
   useEffect(() => { load() }, [])
 
   async function load() {
-    setHistory(await window.api.getHistory())
+    try {
+      setHistory(await window.api.getHistory())
+    } catch (e) {
+      alert('Could not load history: ' + (e?.message || 'unknown error'))
+    }
   }
 
   async function del(id, e) {
     e.stopPropagation()
     if (!confirm('Delete this run from history?')) return
-    await window.api.deleteHistory(id)
-    load()
+    try {
+      await window.api.deleteHistory(id)
+      await load()
+    } catch (e) {
+      alert('Could not delete run: ' + (e?.message || 'unknown error'))
+    }
   }
 
   const filtered = filter === 'all' ? history : history.filter(h => h.status === filter)

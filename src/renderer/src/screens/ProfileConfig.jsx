@@ -11,7 +11,11 @@ export default function ProfileConfig({ navigate }) {
   useEffect(() => { load() }, [])
 
   async function load() {
-    setProfiles(await window.api.getProfiles())
+    try {
+      setProfiles(await window.api.getProfiles())
+    } catch (e) {
+      alert('Could not load profiles: ' + (e?.message || 'unknown error'))
+    }
   }
 
   function edit(p) {
@@ -28,17 +32,26 @@ export default function ProfileConfig({ navigate }) {
   async function save() {
     if (!form.name || !form.base_url) return
     setSaving(true)
-    await window.api.saveProfile(editing ? { ...form, id: editing } : form)
-    setSaving(false)
-    reset()
-    load()
+    try {
+      await window.api.saveProfile(editing ? { ...form, id: editing } : form)
+      reset()
+      await load()
+    } catch (e) {
+      alert('Could not save profile: ' + (e?.message || 'unknown error'))
+    } finally {
+      setSaving(false)   // always clears, even on failure
+    }
   }
 
   async function del(id) {
     if (!confirm('Delete this profile and all its scenarios?')) return
-    await window.api.deleteProfile(id)
-    if (editing === id) reset()
-    load()
+    try {
+      await window.api.deleteProfile(id)
+      if (editing === id) reset()
+      await load()
+    } catch (e) {
+      alert('Could not delete profile: ' + (e?.message || 'unknown error'))
+    }
   }
 
   function field(key, value) {

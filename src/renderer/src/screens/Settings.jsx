@@ -11,7 +11,9 @@ export default function Settings() {
   const [saved, setSaved] = useState(false)
 
   useEffect(() => {
-    window.api.getSettings().then(s => setSettings({ ...DEFAULTS, ...s }))
+    window.api.getSettings()
+      .then(s => setSettings({ ...DEFAULTS, ...s }))
+      .catch(() => { /* keep defaults if settings can't be read */ })
   }, [])
 
   function set(key, value) {
@@ -20,9 +22,13 @@ export default function Settings() {
   }
 
   async function save() {
-    await window.api.saveSettings(settings)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    try {
+      await window.api.saveSettings(settings)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (e) {
+      alert('Could not save settings: ' + (e?.message || 'unknown error'))
+    }
   }
 
   return (

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { initDb } from './core/db'
+import { initDb, flushDb } from './core/db'
 import { registerRunnerHandlers } from './ipc/runner'
 import { registerStorageHandlers } from './ipc/storage'
 import { registerReporterHandlers } from './ipc/reporter'
@@ -60,6 +60,9 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+// Flush any debounced DB write before the process exits so no save is lost.
+app.on('before-quit', () => flushDb())
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

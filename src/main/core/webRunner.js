@@ -50,6 +50,8 @@ export async function runWeb({ runId, profile, scenarios = [], settings = {}, on
     activeRuns.set(runId, proc)
 
     const results = []
+    const scenarioResults = []   // per-scenario rollup: { id, name, status, stepsTotal, stepsPassed, stepsFailed }
+    let current = null           // scenario currently being attributed to
     let fatalError = null
     let tracePath = null
 
@@ -59,9 +61,18 @@ export async function runWeb({ runId, profile, scenarios = [], settings = {}, on
         try {
           const msg = JSON.parse(line)
           if (msg.type === 'step') {
-            results.push(msg)
-            onLog({ type: 'step', ...msg })
+            // Attribute the step to the scenario currently in progress.
+            const step = { ...msg, scenarioId: current?.id || null, scenarioName: current?.name || null }
+            results.push(step)
+            if (current) {
+              current.stepsTotal++
+              if (msg.status === 'failed') { current.stepsFailed++; current.status = 'failed' }
+              else current.stepsPassed++
+            }
+            onLog({ type: 'step', ...step })
           } else if (msg.type === 'scenario') {
+            current = { id: msg.id || null, name: msg.name || 'Scenario', status: 'passed', stepsTotal: 0, stepsPassed: 0, stepsFailed: 0 }
+            scenarioResults.push(current)
             onLog({ type: 'info', text: `▶ Scenario: ${msg.name}` })
           } else if (msg.type === 'done') {
             // final summary already in results
@@ -89,23 +100,32 @@ export async function runWeb({ runId, profile, scenarios = [], settings = {}, on
       activeRuns.delete(runId)
       try { unlinkSync(scriptPath) } catch { /* best-effort cleanup of the script only */ }
 
+      // A fatal (e.g. browser/setup crash) aborts mid-scenario — count that scenario failed.
+      if (fatalError && current && current.status === 'passed') current.status = 'failed'
+
       const passed = results.filter(r => r.status === 'passed').length
       const failed = results.filter(r => r.status === 'failed').length
+      const scenariosPassed = scenarioResults.filter(s => s.status === 'passed').length
+      const scenariosFailed = scenarioResults.filter(s => s.status === 'failed').length
       const status = fatalError || failed > 0 ? 'failed' : 'passed'
 
       onComplete({
         runId,
         status,
         results,
+        scenarioResults,
         fatalError,
         tracePath,
         stepsTotal: results.length,
         stepsPassed: passed,
         stepsFailed: failed,
+        scenariosTotal: scenarioResults.length,
+        scenariosPassed,
+        scenariosFailed,
         exitCode: code
       })
 
-      resolve({ status, results, fatalError, tracePath })
+      resolve({ status, results, scenarioResults, fatalError, tracePath })
     })
   })
 }

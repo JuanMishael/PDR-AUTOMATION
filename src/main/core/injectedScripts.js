@@ -116,6 +116,66 @@ export function recorderListener() {
   window.__recInstalled = true
   var norm = window.__norm || function (t) { return (t || '').trim() }
 
+  // --- Smart waits ----------------------------------------------------------
+  // Notice when an element appears on the page WHILE the tester pauses, then emit
+  // a "wait for it visible" before the action that uses it — instead of recording
+  // the raw pause as a hard sleep (the flaky anti-pattern). A MutationObserver
+  // stamps every newly-added node; a click after a real pause looks for the
+  // container that appeared during that pause.
+  var SMART_GAP_MS = 400       // below this it's back-to-back clicking, not a wait
+  var pageReadyTs = Infinity   // nothing counts as "appeared" until the load settles
+  var lastActionTs = Date.now()
+
+  // Initial-parse nodes are added before load; bounding "appeared" by pageReadyTs
+  // keeps them from being mistaken for content that showed up mid-flow.
+  window.addEventListener('load', function () { pageReadyTs = Date.now(); lastActionTs = Date.now() }, true)
+
+  try {
+    var mo = new MutationObserver(function (muts) {
+      var t = Date.now()
+      for (var i = 0; i < muts.length; i++) {
+        var added = muts[i].addedNodes
+        for (var j = 0; j < added.length; j++) {
+          var n = added[j]
+          if (n && n.nodeType === 1 && n.__recAddedAt == null) n.__recAddedAt = t
+        }
+      }
+    })
+    mo.observe(document.documentElement || document, { childList: true, subtree: true })
+  } catch (e) { /* observer unsupported */ }
+
+  function isVisible(el) {
+    if (!el || !el.getBoundingClientRect) return false
+    var r = el.getBoundingClientRect()
+    if (r.width === 0 && r.height === 0) return false
+    var st = window.getComputedStyle ? getComputedStyle(el) : null
+    if (st && (st.display === 'none' || st.visibility === 'hidden' || st.opacity === '0')) return false
+    return true
+  }
+
+  // The outermost STRICT ancestor of the target that appeared after the last action
+  // (e.g. the modal/panel wrapping a freshly clicked button). Strict-ancestor only:
+  // Playwright already auto-waits for the action's own target, so a wait for it would
+  // be redundant — the value is waiting for the container that gates it.
+  function appearedContainer(target) {
+    var node = target.parentElement, best = null
+    while (node && node.nodeType === 1 && node !== document.body && node !== document.documentElement) {
+      if (node.__recAddedAt != null && node.__recAddedAt > lastActionTs && node.__recAddedAt > pageReadyTs) best = node
+      node = node.parentElement
+    }
+    return best
+  }
+
+  function maybeSmartWait(target) {
+    if (Date.now() - lastActionTs < SMART_GAP_MS) return
+    var cont = appearedContainer(target)
+    if (!cont || !isVisible(cont)) return
+    var sel = window.__genSelector(cont)
+    if (!sel || sel === 'body') return
+    send({ action: 'waitForSelector', selector: sel, state: 'visible', smart: true,
+      label: 'Wait for ' + (norm(cont.textContent).slice(0, 30) || sel) })
+  }
+
   function armed() { try { return sessionStorage.getItem('__recArmed') === '1' } catch (e) { return false } }
   function getCount() { try { return parseInt(sessionStorage.getItem('__recCount') || '0', 10) } catch (e) { return 0 } }
   function setCount(n) { try { sessionStorage.setItem('__recCount', String(n)) } catch (e) {} }
@@ -134,11 +194,13 @@ export function recorderListener() {
     var lbl = document.getElementById('__recCount')
     if (lbl) lbl.textContent = n + ' step' + (n === 1 ? '' : 's') + ' recorded'
     try { window.__recordStep(step) } catch (e) { /* binding not ready */ }
+    lastActionTs = Date.now()   // reset the pause baseline after every emitted step
   }
 
   document.addEventListener('click', function (e) {
     if (!armed()) return
     var t = e.target; if (inBar(t)) return
+    maybeSmartWait(t)   // may emit a "wait for the container that just appeared" first
     send({ action: 'click', selector: window.__genSelector(t), label: labelOf(t) })
   }, true)
 

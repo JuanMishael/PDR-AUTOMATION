@@ -29,6 +29,13 @@ Build and run browser automation scripts through a point-and-click UI — no cod
 - **Playwright** — browser automation engine
 - **sql.js** — embedded SQLite (WASM, no native compilation needed)
 
+## Design
+
+The UI follows a hand-drawn **"Sketchbook"** theme (warm paper, soft-ink borders,
+solid offset shadows, hand-drawn headings). Before adding or changing any UI, read
+[**docs/DESIGN.md**](docs/DESIGN.md) — it documents the tokens, component classes,
+icons, and do/don'ts that keep the look uniform.
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 18+

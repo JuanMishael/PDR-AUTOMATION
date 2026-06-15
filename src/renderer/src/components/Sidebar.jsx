@@ -1,50 +1,40 @@
+import { Icon } from './SketchDefs'
+
 const NAV = [
-  { id: 'dashboard',  label: 'Dashboard',   icon: '▦' },
-  { id: 'profile',    label: 'Profiles',    icon: '⊡' },
-  { id: 'scenarios',  label: 'Scenarios',   icon: '≡' },
-  { id: 'history',    label: 'History',     icon: '◷' },
-  { id: 'health',     label: 'Health',      icon: '◎' },
-  { id: 'settings',   label: 'Settings',    icon: '⚙' },
+  { id: 'dashboard',  label: 'Dashboard',  icon: 'dashboard' },
+  { id: 'profile',    label: 'Profiles',   icon: 'profile'   },
+  { id: 'scenarios',  label: 'Scenarios',  icon: 'builder'   },
+  { id: 'history',    label: 'History',    icon: 'history'   },
+  { id: 'health',     label: 'Health',     icon: 'health'    },
+  { id: 'settings',   label: 'Settings',   icon: 'settings'  },
 ]
 
-export default function Sidebar({ current, navigate }) {
+export default function Sidebar({ current, navigate, appName = 'PDR-AUTOMATION' }) {
   return (
     <aside style={{
-      width: 210,
-      minWidth: 210,
+      width: 224,
+      minWidth: 224,
       background: 'var(--surface)',
-      borderRight: '1px solid var(--border)',
+      borderRight: '2px solid var(--line)',
       display: 'flex',
       flexDirection: 'column',
       userSelect: 'none'
     }}>
-      {/* Logo */}
+      {/* Wordmark */}
       <div style={{
-        padding: '22px 20px 18px',
-        borderBottom: '1px solid var(--border)'
+        padding: '20px 18px 16px',
+        borderBottom: '1.5px dashed var(--line-soft)'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 32, height: 32,
-            background: 'var(--accent)',
-            borderRadius: 8,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 16, fontWeight: 900, color: '#fff',
-            boxShadow: '0 2px 12px rgba(108,99,255,0.4)'
-          }}>P</div>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.02em' }}>
-              PDR-AUTOMATION
-            </div>
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.04em' }}>
-              PLAYWRIGHT · V2
-            </div>
-          </div>
+        <div style={{ fontFamily: 'var(--font-marker)', fontSize: 30, fontWeight: 700, lineHeight: 0.95, color: 'var(--ink)' }}>
+          {appName.split('-')[0] || appName}<span style={{ color: 'var(--accent)' }}>{appName.includes('-') ? '-' + appName.split('-').slice(1).join('-') : ''}</span>
+        </div>
+        <div style={{ fontFamily: 'var(--font-hand)', fontSize: 12, color: 'var(--ink-soft)', letterSpacing: '1px', textTransform: 'uppercase', marginTop: 2 }}>
+          Playwright · V2
         </div>
       </div>
 
       {/* Nav */}
-      <nav style={{ flex: 1, padding: '10px 10px' }}>
+      <nav style={{ flex: 1, padding: '12px 10px' }}>
         {NAV.map(item => {
           const active = current === item.id
           return (
@@ -54,23 +44,24 @@ export default function Sidebar({ current, navigate }) {
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 10,
+                gap: 11,
                 width: '100%',
-                padding: '9px 12px',
-                marginBottom: 2,
+                padding: '9px 11px',
+                marginBottom: 4,
                 textAlign: 'left',
-                background: active ? 'var(--accent-dim)' : 'transparent',
-                color: active ? 'var(--accent)' : 'var(--text-muted)',
-                borderRadius: 8,
-                fontWeight: active ? 700 : 500,
-                fontSize: 13,
-                border: active ? '1px solid rgba(108,99,255,0.2)' : '1px solid transparent',
-                transition: 'all 0.15s'
+                background: active ? 'var(--accent-soft)' : 'transparent',
+                color: active ? 'var(--accent-ink)' : 'var(--ink-soft)',
+                borderRadius: 9,
+                fontFamily: 'var(--font-hand)',
+                fontSize: 16,
+                border: active ? '2px solid color-mix(in srgb, var(--accent) 40%, transparent)' : '2px solid transparent',
+                boxShadow: 'none',
+                transition: 'background .12s, color .12s'
               }}
+              onMouseEnter={e => { if (!active) { e.currentTarget.style.background = 'var(--surface-2)'; e.currentTarget.style.color = 'var(--ink)' } }}
+              onMouseLeave={e => { if (!active) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--ink-soft)' } }}
             >
-              <span style={{ fontSize: 15, width: 18, textAlign: 'center', opacity: active ? 1 : 0.6 }}>
-                {item.icon}
-              </span>
+              <Icon name={item.icon} size={19} fill={item.icon === 'dashboard'} />
               {item.label}
             </button>
           )
@@ -79,12 +70,12 @@ export default function Sidebar({ current, navigate }) {
 
       {/* Footer */}
       <div style={{
-        padding: '14px 20px',
-        borderTop: '1px solid var(--border)',
-        fontSize: 11,
-        color: 'var(--text-muted)'
+        padding: '12px 18px',
+        borderTop: '1.5px dashed var(--line-soft)'
       }}>
-        QA Automation
+        <div style={{ fontFamily: 'var(--font-hand)', fontSize: 13, color: 'var(--ink-soft)' }}>
+          Pacific Data Resources
+        </div>
       </div>
     </aside>
   )

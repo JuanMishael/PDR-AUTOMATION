@@ -9,6 +9,7 @@ import { registerHealthHandlers } from './ipc/health'
 import { registerSelectorTesterHandlers } from './ipc/selectorTester'
 import { registerElementPickerHandlers } from './ipc/elementPicker'
 import { registerRecorderHandlers } from './ipc/recorder'
+import { registerDataLibraryHandlers } from './ipc/dataLibrary'
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -53,6 +54,7 @@ app.whenReady().then(async () => {
   registerSelectorTesterHandlers()
   registerElementPickerHandlers()
   registerRecorderHandlers()
+  registerDataLibraryHandlers()
 
   createWindow()
 

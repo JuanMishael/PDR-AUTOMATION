@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
 import { getDb } from '../core/db'
 import { runWeb, stopRun } from '../core/webRunner'
+import { buildDataContext } from '../core/tokenResolver'
 
 // Build a single scenario's full step list for an ISOLATED run: its prerequisite chain
 // (e.g. Login) first, then its own steps — all in one browser. sort_order is
@@ -24,15 +25,20 @@ function collectSteps(db, scenario, seen = new Set()) {
 
 // Runs the given scenario groups in ONE browser session and records history.
 // scenarioMeta is optional { scenarioId, scenarioName } for isolated single-scenario runs.
-async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, send }) {
+async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dataSetId = null, send }) {
   const runId = randomUUID()
   const startedAt = new Date().toISOString()
+
+  // Resolve test-data tokens fresh for THIS run (so {{unique.*}}/{{faker.*}} differ per run).
+  // With no collections/sets this is an empty context and the run path is unchanged.
+  const dataContext = await buildDataContext(getDb(), dataSetId)
 
   const { status, results, scenarioResults = [], fatalError, tracePath } = await runWeb({
     runId,
     profile,
     scenarios,
     settings,
+    dataContext,
     onLog: (data) => send('runner:log', data),
     onComplete: () => {}
   })
@@ -83,7 +89,7 @@ export function registerRunnerHandlers() {
   }
 
   // Continuous run: every scenario in the profile, in order, in ONE browser session.
-  ipcMain.handle('runner:run', async (_event, profileId) => {
+  ipcMain.handle('runner:run', async (_event, profileId, dataSetId = null) => {
     const db = getDb()
     const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
     if (!profile) return { error: 'Profile not found' }
@@ -97,11 +103,11 @@ export function registerRunnerHandlers() {
       steps: db.prepare('SELECT * FROM steps WHERE scenario_id = ? ORDER BY sort_order').all(s.id)
     }))
 
-    return executeRun({ profile, scenarios, settings: loadSettings(db), send: sender() })
+    return executeRun({ profile, scenarios, settings: loadSettings(db), dataSetId, send: sender() })
   })
 
   // Isolated run: a single scenario (plus its prerequisite chain) in a fresh browser.
-  ipcMain.handle('runner:runScenario', async (_event, { profileId, scenarioId }) => {
+  ipcMain.handle('runner:runScenario', async (_event, { profileId, scenarioId, dataSetId = null }) => {
     const db = getDb()
     const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
     if (!profile) return { error: 'Profile not found' }
@@ -111,7 +117,7 @@ export function registerRunnerHandlers() {
     const scenarios = [{ id: scenario.id, name: scenario.name, steps: collectSteps(db, scenario) }]
 
     return executeRun({
-      profile, scenarios, settings: loadSettings(db),
+      profile, scenarios, settings: loadSettings(db), dataSetId,
       scenarioMeta: { scenarioId: scenario.id, scenarioName: scenario.name },
       send: sender()
     })

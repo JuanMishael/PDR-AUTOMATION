@@ -167,6 +167,34 @@ export async function initDb() {
       script_template TEXT NOT NULL,
       created_at      TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Test Data Library (Phase 1): a Collection is "the form" (defines fields once);
+    -- a Data Set is one row of values grouped by intent (positive/negative/edge).
+    -- Steps reference values via {{Collection.field}} tokens, resolved at generate-time.
+    CREATE TABLE IF NOT EXISTS data_collections (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      description TEXT,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS data_fields (
+      id            TEXT PRIMARY KEY,
+      collection_id TEXT NOT NULL REFERENCES data_collections(id) ON DELETE CASCADE,
+      name          TEXT NOT NULL,
+      type          TEXT NOT NULL DEFAULT 'text',
+      default_token TEXT NOT NULL DEFAULT '',
+      sort_order    INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS data_sets (
+      id            TEXT PRIMARY KEY,
+      collection_id TEXT NOT NULL REFERENCES data_collections(id) ON DELETE CASCADE,
+      name          TEXT NOT NULL,
+      group_type    TEXT NOT NULL DEFAULT 'positive',
+      field_values  TEXT NOT NULL DEFAULT '{}',
+      sort_order    INTEGER NOT NULL DEFAULT 0,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
 
   // --- migrations (idempotent: sql.js throws on duplicate column, which we ignore) ---

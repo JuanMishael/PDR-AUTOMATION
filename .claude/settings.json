@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const {faker}=require\\('@faker-js/faker'\\); console.log\\('email:', faker.internet.email\\(\\)\\); console.log\\('firstName:', faker.person.firstName\\(\\)\\); console.log\\('uuid:', faker.string.uuid\\(\\)\\);\")"
+    ]
+  }
+}

@@ -12,7 +12,9 @@
  * Util        : screenshot, executeScript
  */
 
-export function generateScript({ profile, scenarios = [], settings = {}, outputDir = '' }) {
+import { resolveParams } from './tokenResolver'
+
+export function generateScript({ profile, scenarios = [], settings = {}, outputDir = '', dataContext = null }) {
   const timeout = profile.timeout || 30000
   const baseUrl = profile.base_url || ''
   const traceOnFail = settings.trace_on_fail === '1'
@@ -32,7 +34,7 @@ export function generateScript({ profile, scenarios = [], settings = {}, outputD
   for (const sc of scenarios) {
     const orderedSteps = [...(sc.steps || [])].sort((a, b) => a.sort_order - b.sort_order)
     const stepCode = orderedSteps.map(step => {
-      const code = generateStep(step, globalIndex, baseUrl, { screenshotOnFail, outputDir })
+      const code = generateStep(step, globalIndex, baseUrl, { screenshotOnFail, outputDir, dataContext })
       globalIndex++
       return code
     }).join('\n\n')
@@ -93,8 +95,11 @@ function browserLaunchExpr(profile) {
   return `${browser}.launch({ headless: ${headless} })`
 }
 
-function generateStep(step, index, baseUrl, { screenshotOnFail = false, outputDir = '' } = {}) {
-  const p = typeof step.params === 'string' ? JSON.parse(step.params) : step.params
+function generateStep(step, index, baseUrl, { screenshotOnFail = false, outputDir = '', dataContext = null } = {}) {
+  const rawParams = typeof step.params === 'string' ? JSON.parse(step.params) : step.params
+  // Resolve {{Collection.field}} / {{faker.*}} / {{unique.*}} to concrete values now, so the
+  // emitted script stays plain JS with no runtime data dependency.
+  const p = dataContext ? resolveParams(rawParams, dataContext) : rawParams
   const label = step.label || `${step.action} #${index + 1}`
   const stepId = step.id
   const perStepScreenshot = !!p._screenshot

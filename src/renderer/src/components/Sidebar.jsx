@@ -4,6 +4,7 @@ const NAV = [
   { id: 'dashboard',  label: 'Dashboard',  icon: 'dashboard' },
   { id: 'profile',    label: 'Profiles',   icon: 'profile'   },
   { id: 'scenarios',  label: 'Scenarios',  icon: 'builder'   },
+  { id: 'testdata',   label: 'Test Data',  icon: 'data'      },
   { id: 'history',    label: 'History',    icon: 'history'   },
   { id: 'health',     label: 'Health',     icon: 'health'    },
   { id: 'settings',   label: 'Settings',   icon: 'settings'  },

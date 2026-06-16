@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar'
 import Dashboard from './screens/Dashboard'
 import ProfileConfig from './screens/ProfileConfig'
 import ScenarioBuilder from './screens/ScenarioBuilder'
+import TestData from './screens/TestData'
 import ActiveRun from './screens/ActiveRun'
 import Results from './screens/Results'
 import History from './screens/History'
@@ -14,6 +15,7 @@ const SCREENS = {
   dashboard: Dashboard,
   profile: ProfileConfig,
   scenarios: ScenarioBuilder,
+  testdata: TestData,
   run: ActiveRun,
   results: Results,
   history: History,

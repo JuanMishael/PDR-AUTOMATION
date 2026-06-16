@@ -27,13 +27,13 @@ function getNodeExecutable() {
 
 const activeRuns = new Map()
 
-export async function runWeb({ runId, profile, scenarios = [], settings = {}, onLog, onComplete }) {
+export async function runWeb({ runId, profile, scenarios = [], settings = {}, dataContext = null, onLog, onComplete }) {
   const tmpDir = join(app.getPath('temp'), 'pdr-runs')
   const outputDir = join(tmpDir, runId)
   mkdirSync(outputDir, { recursive: true })
   const scriptPath = join(outputDir, `run.js`)
 
-  const script = generateScript({ profile, scenarios, settings, outputDir })
+  const script = generateScript({ profile, scenarios, settings, outputDir, dataContext })
   writeFileSync(scriptPath, script, 'utf-8')
 
   return new Promise((resolve) => {

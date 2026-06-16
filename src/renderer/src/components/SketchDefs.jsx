@@ -42,6 +42,7 @@ export default function SketchDefs() {
         <g id="i-plus"><path d="M12 5v14M5 12h14" /></g>
         <g id="i-chev"><path d="M6 9l6 6 6-6" /></g>
         <g id="i-copy"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M4 14V5a1 1 0 011-1h9" /></g>
+        <g id="i-data"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.8" /><path d="M4.5 5.5v6c0 1.55 3.36 2.8 7.5 2.8s7.5-1.25 7.5-2.8v-6" /><path d="M4.5 11.5v6c0 1.55 3.36 2.8 7.5 2.8s7.5-1.25 7.5-2.8v-6" /></g>
       </defs>
     </svg>
   )

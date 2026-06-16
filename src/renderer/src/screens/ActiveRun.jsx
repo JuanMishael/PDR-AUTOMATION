@@ -6,10 +6,27 @@ export default function ActiveRun({ navigate, ctx }) {
   const [status, setStatus] = useState('running')
   const [summary, setSummary] = useState(null)
   const [runId, setRunId] = useState(null)
+  const [started, setStarted] = useState(false)
+  const [dataSets, setDataSets] = useState(null)   // null = still loading; [] = none
+  const [dataSetId, setDataSetId] = useState('')   // '' = use field defaults
   const logRef = useRef(null)
 
+  // Flatten every collection's sets into one pickable list. If there are none, skip the
+  // gate entirely and auto-run — so the run path is unchanged when the feature is unused.
   useEffect(() => {
-    if (!profileId) return
+    let cancelled = false
+    window.api.getCollections().then(cols => {
+      if (cancelled) return
+      const flat = []
+      for (const c of cols) for (const s of c.sets) flat.push({ id: s.id, label: `${c.name} · ${s.name}`, group: s.group_type })
+      setDataSets(flat)
+      if (flat.length === 0) setStarted(true)   // nothing to pick → run immediately
+    }).catch(() => { if (!cancelled) { setDataSets([]); setStarted(true) } })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!profileId || !started) return
 
     window.api.offRunLog()
     window.api.offRunComplete()
@@ -27,9 +44,10 @@ export default function ActiveRun({ navigate, ctx }) {
       setRunId(data.runId)
     })
 
+    const setId = dataSetId || null
     const runPromise = scenarioId
-      ? window.api.runScenario(profileId, scenarioId)
-      : window.api.runProfile(profileId)
+      ? window.api.runScenario(profileId, scenarioId, setId)
+      : window.api.runProfile(profileId, setId)
     runPromise.then(result => {
       if (result?.error) {
         setLogs(prev => [...prev, { type: 'error', text: result.error }])
@@ -41,11 +59,40 @@ export default function ActiveRun({ navigate, ctx }) {
       window.api.offRunLog()
       window.api.offRunComplete()
     }
-  }, [profileId, scenarioId])
+  }, [profileId, scenarioId, started])
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [logs])
+
+  // Pre-run gate: only shown when data sets exist and the run hasn't started.
+  // NB: every hook must run BEFORE this conditional return — React requires a
+  // stable hook order across renders, so no useEffect may live below it.
+  if (!started) {
+    return (
+      <div className="fade-in" style={{ maxWidth: 560 }}>
+        <div className="page-header">
+          <h1>Choose Test Data</h1>
+          <p>{scenarioName ? `Scenario: ${scenarioName}` : 'Running all scenarios'} — pick a data set to fill {'{{token}}'} values, or run with field defaults.</p>
+        </div>
+        <div className="card" style={{ display: 'grid', gap: 16 }}>
+          <div>
+            <label>Active data set</label>
+            <select value={dataSetId} onChange={e => setDataSetId(e.target.value)}>
+              <option value="">— None (use field defaults) —</option>
+              {(dataSets || []).map(d => (
+                <option key={d.id} value={d.id}>{d.label}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn-primary" onClick={() => setStarted(true)}>▶ Start Run</button>
+            <button className="btn-ghost" onClick={() => navigate('dashboard')}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   function stopRun() {
     if (runId) window.api.stopRun(runId)

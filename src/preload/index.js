@@ -2,8 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('api', {
   // Runner
-  runProfile: (profileId) => ipcRenderer.invoke('runner:run', profileId),
-  runScenario: (profileId, scenarioId) => ipcRenderer.invoke('runner:runScenario', { profileId, scenarioId }),
+  runProfile: (profileId, dataSetId = null) => ipcRenderer.invoke('runner:run', profileId, dataSetId),
+  runScenario: (profileId, scenarioId, dataSetId = null) => ipcRenderer.invoke('runner:runScenario', { profileId, scenarioId, dataSetId }),
   stopRun: (runId) => ipcRenderer.invoke('runner:stop', runId),
   onRunLog: (cb) => ipcRenderer.on('runner:log', (_, data) => cb(data)),
   onRunComplete: (cb) => ipcRenderer.on('runner:complete', (_, data) => cb(data)),
@@ -52,6 +52,15 @@ contextBridge.exposeInMainWorld('api', {
   startRecording: (opts) => ipcRenderer.invoke('recorder:start', opts),
   onRecorderStep: (cb) => ipcRenderer.on('recorder:step', (_, data) => cb(data)),
   offRecorderStep: () => ipcRenderer.removeAllListeners('recorder:step'),
+
+  // Storage — Test Data Library
+  getCollections: () => ipcRenderer.invoke('data:getCollections'),
+  saveCollection: (collection) => ipcRenderer.invoke('data:saveCollection', collection),
+  deleteCollection: (id) => ipcRenderer.invoke('data:deleteCollection', id),
+  saveField: (field) => ipcRenderer.invoke('data:saveField', field),
+  deleteField: (id) => ipcRenderer.invoke('data:deleteField', id),
+  saveDataSet: (set) => ipcRenderer.invoke('data:saveSet', set),
+  deleteDataSet: (id) => ipcRenderer.invoke('data:deleteSet', id),
 
   // Health
   checkHealth: () => ipcRenderer.invoke('health:check'),

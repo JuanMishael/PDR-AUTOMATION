@@ -462,7 +462,7 @@ function SelectorChooser({ title, candidates, onUse, onFallback, onClose }) {
 
 // ─── Canvas Step ─────────────────────────────────────────────────────────────
 
-function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, priorSteps = [], expanded = true, onToggleExpand }) {
+function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, priorSteps = [], expanded = true, onToggleExpand, selected = false, onToggleSelect }) {
   const params = typeof step.params === 'string' ? JSON.parse(step.params) : (step.params || {})
   const def = ACTION_DEFS[step.action] || { label: step.action, params: [], category: 'Interaction' }
 
@@ -487,14 +487,19 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
 
   return (
     <div style={{
-      border: '1px solid var(--border)',
+      border: `1px solid ${selected ? 'rgba(108,99,255,0.45)' : 'var(--border)'}`,
       borderLeft: `3px solid ${borderColor}`,
       borderRadius: 8,
       marginBottom: 8,
-      background: 'var(--bg)'
+      background: selected ? 'var(--accent-dim)' : 'var(--bg)'
     }}>
       {/* Header row */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
+        {onToggleSelect && (
+          <input type="checkbox" checked={selected} onChange={onToggleSelect}
+            onClick={e => e.stopPropagation()} title="Select for bulk actions"
+            style={{ width: 'auto', flexShrink: 0, cursor: 'pointer', margin: 0 }} />
+        )}
         <button onClick={cycleKeyword} title="Click to cycle keyword" style={{
           padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
           background: borderColor + '1a', color: borderColor,
@@ -736,12 +741,28 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [exporting, setExporting]     = useState(false)
   const [recording, setRecording]     = useState(false)
   const [expandedIds, setExpandedIds] = useState(() => new Set())
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
 
   function toggleExpand(id) {
     setExpandedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
   const expandAll   = () => setExpandedIds(new Set(steps.map(s => s.id)))
   const collapseAll = () => setExpandedIds(new Set())
+
+  function toggleSelect(id) {
+    setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  const selectAll       = () => setSelectedIds(new Set(steps.map(s => s.id)))
+  const clearSelection  = () => setSelectedIds(new Set())
+
+  async function deleteSelected() {
+    if (selectedIds.size === 0) return
+    const n = selectedIds.size
+    if (!confirm(`Delete ${n} selected step${n !== 1 ? 's' : ''}? This can't be undone.`)) return
+    for (const id of selectedIds) await window.api.deleteStep(id)
+    setSteps(prev => prev.filter(s => !selectedIds.has(s.id)))
+    setSelectedIds(new Set())
+  }
 
   useEffect(() => {
     if (profileId) {
@@ -762,6 +783,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   async function selectScenario(scenario) {
     setActive(scenario)
     setExpandedIds(new Set())   // collapse for a clean overview on switch
+    setSelectedIds(new Set())   // drop any bulk selection from the previous scenario
     const s = await window.api.getSteps(scenario.id)
     setSteps(s)
   }
@@ -825,6 +847,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   async function deleteStep(id) {
     await window.api.deleteStep(id)
     setSteps(prev => prev.filter(s => s.id !== id))
+    setSelectedIds(prev => { if (!prev.has(id)) return prev; const n = new Set(prev); n.delete(id); return n })
   }
 
   async function moveStep(id, direction) {
@@ -842,14 +865,20 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     if (!profile.base_url?.trim()) { alert('Set a Base URL in this profile before recording.'); return }
     setRecording(true)
 
+    // Track everything created this session so the tester can discard the whole
+    // recording on Stop (e.g. a misclick run, or the flow errored partway).
+    let navId = null            // the auto-added "Open the app" step, if we add one
+    const recordedIds = []      // steps captured live from the recorder
+
     // A runnable scenario must start by opening the app. If empty, add that first
     // so the recorded steps below it actually have a page to run against.
     let current = steps
     if (current.length === 0) {
-      await window.api.saveStep({
+      const navRes = await window.api.saveStep({
         scenario_id: active.id, action: 'navigate',
         params: { _keyword: 'Given', url: '' }, label: 'Open the app', sort_order: 0
       })
+      if (navRes?.id) navId = navRes.id
       current = await window.api.getSteps(active.id)
       setSteps(current)
     }
@@ -859,13 +888,14 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     let chain = Promise.resolve()
     const onStep = (payload) => {
       chain = chain.then(async () => {
-        await window.api.saveStep({
+        const res = await window.api.saveStep({
           scenario_id: active.id,
           action: payload.action,
           params: buildRecordedParams(payload),
           label: payload.label || '',
           sort_order: order++
         })
+        if (res?.id) recordedIds.push(res.id)
         setSteps(await window.api.getSteps(active.id))
       })
     }
@@ -880,8 +910,21 @@ export default function ScenarioBuilder({ navigate, ctx }) {
         runSteps: true
       })
       await chain
-      setSteps(await window.api.getSteps(active.id))
       if (res && !res.ok && res.error) alert('Recorder: ' + res.error)
+
+      // Keep or discard the captured steps — a safety net for a bad/errored take.
+      if (recordedIds.length > 0) {
+        const n = recordedIds.length
+        const keep = confirm(
+          `Recording captured ${n} step${n !== 1 ? 's' : ''}.\n\n` +
+          `OK = keep them.\nCancel = discard this recording.`
+        )
+        if (!keep) {
+          for (const id of recordedIds) await window.api.deleteStep(id)
+          if (navId) await window.api.deleteStep(navId)   // also undo the auto-added "Open the app"
+        }
+      }
+      setSteps(await window.api.getSteps(active.id))
     } catch (e) {
       alert('Recorder error: ' + (e?.message || 'unknown'))
     } finally {
@@ -1059,9 +1102,26 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     {steps.length} step{steps.length !== 1 ? 's' : ''}
                   </span>
                   <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {selectedIds.size > 0 && (
+                      <>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{selectedIds.size} selected</span>
+                        <button onClick={deleteSelected} style={{ background: 'rgba(239,68,68,0.1)',
+                          border: '1px solid rgba(239,68,68,0.35)', borderRadius: 6, padding: '5px 8px',
+                          fontSize: 11, fontWeight: 600, color: '#EF4444', cursor: 'pointer' }}>
+                          🗑 Delete {selectedIds.size}
+                        </button>
+                        <button onClick={clearSelection} style={{ background: 'none', border: '1px solid var(--border)',
+                          borderRadius: 6, padding: '5px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>Clear</button>
+                      </>
+                    )}
                     <CopyToProfileButton currentProfileId={profileId} scenarioId={active.id} />
                     {steps.length > 1 && (
                       <>
+                        <button onClick={selectedIds.size === steps.length ? clearSelection : selectAll}
+                          style={{ background: 'none', border: '1px solid var(--border)',
+                          borderRadius: 6, padding: '5px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                          {selectedIds.size === steps.length ? 'Deselect all' : 'Select all'}
+                        </button>
                         <button onClick={expandAll} style={{ background: 'none', border: '1px solid var(--border)',
                           borderRadius: 6, padding: '5px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>Expand all</button>
                         <button onClick={collapseAll} style={{ background: 'none', border: '1px solid var(--border)',
@@ -1101,7 +1161,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     <CanvasStep key={step.id} step={step} index={i} total={steps.length}
                       onChange={updateStep} onDelete={deleteStep} onMove={moveStep}
                       profile={profile} priorSteps={steps.slice(0, i)}
-                      expanded={expandedIds.has(step.id)} onToggleExpand={() => toggleExpand(step.id)} />
+                      expanded={expandedIds.has(step.id)} onToggleExpand={() => toggleExpand(step.id)}
+                      selected={selectedIds.has(step.id)} onToggleSelect={() => toggleSelect(step.id)} />
                   ))
                 )}
               </div>

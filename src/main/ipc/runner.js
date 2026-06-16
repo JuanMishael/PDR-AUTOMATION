@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { getDb } from '../core/db'
 import { runWeb, stopRun } from '../core/webRunner'
 import { buildDataContext } from '../core/tokenResolver'
+import { refocusMainWindow } from '../core/windowFocus'
 
 // Build a single scenario's full step list for an ISOLATED run: its prerequisite chain
 // (e.g. Login) first, then its own steps — all in one browser. sort_order is
@@ -74,6 +75,7 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dat
     scenariosTotal: scenarioResults.length, scenariosPassed, scenariosFailed, scenarioResults
   }
   send('runner:complete', summary)
+  refocusMainWindow()   // the headful run browser steals focus; hand it back to the app
   return summary
 }
 

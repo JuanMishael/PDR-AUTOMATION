@@ -3,7 +3,12 @@ export const ACTION_DEFS = {
   navigate: {
     label: 'Navigate', category: 'Navigation',
     summary: p => p.url,
-    params: [{ key: 'url', label: 'URL (relative or absolute)', placeholder: '/login or https://...' }]
+    params: [
+      { key: 'url', label: 'URL (relative or absolute)', placeholder: '/login or https://...' },
+      { key: 'waitUntil', label: 'Wait until', type: 'select',
+        options: ['domcontentloaded', 'load', 'networkidle', 'commit'], default: 'domcontentloaded' },
+      { key: 'navTimeout', label: 'Nav timeout (ms)', type: 'number', placeholder: 'blank = profile default (e.g. 30000)' }
+    ]
   },
   reload: { label: 'Reload Page', category: 'Navigation', params: [] },
   goBack: { label: 'Go Back', category: 'Navigation', params: [] },
@@ -21,7 +26,9 @@ export const ACTION_DEFS = {
     params: [
       { key: 'selector', label: 'Selector (CSS or text)', placeholder: '#submit-btn or text=Login' },
       { key: 'selector2', label: 'Alt Selector (fallback)', placeholder: 'button.login-btn (optional)' },
-      { key: 'waitBefore', label: 'Wait before click (ms)', placeholder: '0 — e.g. 500 for modal animations', type: 'number' }
+      { key: 'waitBefore', label: 'Wait before click (ms)', placeholder: '0 — e.g. 500 for modal animations', type: 'number' },
+      { key: 'force', label: 'Force click (skip visible/stable checks)', type: 'boolean' },
+      { key: 'dispatch', label: 'Dispatch DOM event (stubborn JS toggles / hidden menus)', type: 'boolean' }
     ]
   },
   dblclick: {
@@ -30,7 +37,9 @@ export const ACTION_DEFS = {
     params: [
       { key: 'selector', label: 'Selector', placeholder: '.item' },
       { key: 'selector2', label: 'Alt Selector (fallback)', placeholder: 'optional fallback' },
-      { key: 'waitBefore', label: 'Wait before click (ms)', placeholder: '0 — e.g. 500 for modal animations', type: 'number' }
+      { key: 'waitBefore', label: 'Wait before click (ms)', placeholder: '0 — e.g. 500 for modal animations', type: 'number' },
+      { key: 'force', label: 'Force click (skip visible/stable checks)', type: 'boolean' },
+      { key: 'dispatch', label: 'Dispatch DOM event (stubborn JS toggles / hidden menus)', type: 'boolean' }
     ]
   },
   rightClick: {
@@ -39,7 +48,8 @@ export const ACTION_DEFS = {
     params: [
       { key: 'selector', label: 'Selector', placeholder: '.item' },
       { key: 'selector2', label: 'Alt Selector (fallback)', placeholder: 'optional fallback' },
-      { key: 'waitBefore', label: 'Wait before click (ms)', placeholder: '0 — e.g. 500 for modal animations', type: 'number' }
+      { key: 'waitBefore', label: 'Wait before click (ms)', placeholder: '0 — e.g. 500 for modal animations', type: 'number' },
+      { key: 'force', label: 'Force click (skip visible/stable checks)', type: 'boolean' }
     ]
   },
   hover: {
@@ -102,6 +112,37 @@ export const ACTION_DEFS = {
     params: [
       { key: 'source', label: 'Source Selector', placeholder: '.drag-item' },
       { key: 'target', label: 'Target Selector', placeholder: '.drop-zone' }
+    ]
+  },
+
+  // --- Mouse / Map ---
+  clickAt: {
+    label: 'Click at Position', category: 'Mouse',
+    summary: p => `${p.selector || 'page'} @ (${p.x || 0}, ${p.y || 0})`,
+    params: [
+      { key: 'selector', label: 'Selector (blank = whole page)', placeholder: 'canvas#map (optional)' },
+      { key: 'x', label: 'X — px from element left', type: 'number', placeholder: '0' },
+      { key: 'y', label: 'Y — px from element top', type: 'number', placeholder: '0' }
+    ]
+  },
+  dragByOffset: {
+    label: 'Drag by Offset', category: 'Mouse',
+    summary: p => `${p.selector || '?'} by (${p.dx || 0}, ${p.dy || 0})`,
+    params: [
+      { key: 'selector', label: 'Handle to grab', placeholder: '.modal-header' },
+      { key: 'dx', label: 'Move X — px (− = left)', type: 'number', placeholder: '-300' },
+      { key: 'dy', label: 'Move Y — px (− = up)', type: 'number', placeholder: '0' },
+      { key: 'x', label: 'Grab X within element (blank = center)', type: 'number', placeholder: 'center' },
+      { key: 'y', label: 'Grab Y within element (blank = center)', type: 'number', placeholder: 'center' }
+    ]
+  },
+  zoom: {
+    label: 'Zoom / Scroll Wheel', category: 'Mouse',
+    summary: p => `${p.selector || 'page'} ${(Number(p.deltaY) || -100) < 0 ? 'in' : 'out'} ×${p.times || 1}`,
+    params: [
+      { key: 'selector', label: 'Hover target (the map)', placeholder: 'canvas#map' },
+      { key: 'deltaY', label: 'Wheel delta (− = zoom in)', type: 'number', placeholder: '-100' },
+      { key: 'times', label: 'Repeat', type: 'number', placeholder: '1' }
     ]
   },
 
@@ -188,7 +229,7 @@ export const ACTION_DEFS = {
   }
 }
 
-export const ACTION_CATEGORIES = ['Navigation', 'Interaction', 'Assertions', 'Waits', 'Util']
+export const ACTION_CATEGORIES = ['Navigation', 'Interaction', 'Mouse', 'Assertions', 'Waits', 'Util']
 
 export const ACTIONS_BY_CATEGORY = ACTION_CATEGORIES.reduce((acc, cat) => {
   acc[cat] = Object.entries(ACTION_DEFS)

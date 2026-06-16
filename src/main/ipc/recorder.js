@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { replaySteps } from '../core/stepReplay'
 import { installSelectorGen, recorderListener } from '../core/injectedScripts'
+import { refocusMainWindow } from '../core/windowFocus'
 
 /**
  * Live recorder. Opens a headful browser, optionally replays existing steps so the
@@ -78,6 +79,7 @@ export function registerRecorderHandlers() {
 
     } finally {
       try { await browser?.close() } catch { /* ignore */ }
+      refocusMainWindow()   // restore app input focus after the headful browser closes
     }
   })
 }

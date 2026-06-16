@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import { replaySteps } from '../core/stepReplay'
+import { installSelectorGen } from '../core/injectedScripts'
 
 export function registerSelectorTesterHandlers() {
   ipcMain.handle('selector:test', async (_, args) => {
@@ -23,6 +24,9 @@ export function registerSelectorTesterHandlers() {
 
       browser = await browserType.launch({ headless: true })
       const context = await browser.newContext({ ignoreHTTPSErrors: true })
+      // Inject the shared selector generator so we can compute robust "Strengthen"
+      // candidates for each matched element (used when the typed selector is ambiguous).
+      await context.addInitScript(installSelectorGen)
       const page = await context.newPage()
       page.setDefaultTimeout(timeout)
 
@@ -42,22 +46,27 @@ export function registerSelectorTesterHandlers() {
       const count = await page.locator(selector).count()
 
       const elements = []
-      const limit = Math.min(count, 3)
+      const limit = Math.min(count, 5)
       for (let i = 0; i < limit; i++) {
         const el = page.locator(selector).nth(i)
-        const [tag, text, visible, cls, id] = await Promise.all([
+        const [tag, text, visible, cls, id, candidates] = await Promise.all([
           el.evaluate(e => e.tagName.toLowerCase()).catch(() => '?'),
           el.textContent().catch(() => ''),
           el.isVisible().catch(() => false),
           el.evaluate(e => e.className || '').catch(() => ''),
-          el.evaluate(e => e.id || '').catch(() => '')
+          el.evaluate(e => e.id || '').catch(() => ''),
+          // Top robust, unique selectors that pin THIS specific match (for Strengthen).
+          el.evaluate(e => (window.__genCandidates ? window.__genCandidates(e) : []))
+            .then(list => (list || []).filter(c => c.count === 1).slice(0, 4))
+            .catch(() => [])
         ])
         elements.push({
           tag,
           text:    text?.trim().slice(0, 60),
           visible,
           class:   cls?.trim().slice(0, 50),
-          id:      id?.trim()
+          id:      id?.trim(),
+          candidates
         })
       }
 

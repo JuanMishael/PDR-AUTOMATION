@@ -152,8 +152,37 @@ function actionToCode(action, p, baseUrl) {
 
   switch (action) {
     // --- Navigation ---
-    case 'navigate':
-      return `await page.goto(${url});`
+    case 'navigate': {
+      // Default to 'domcontentloaded', not Playwright's 'load' default: heavy apps
+      // (e.g. GIS maps) may never fire 'load' within the timeout even when the UI is
+      // already interactive. Subsequent steps auto-wait for their own targets.
+      const WAIT_UNTIL = ['commit', 'domcontentloaded', 'load', 'networkidle']
+      const waitUntil = WAIT_UNTIL.indexOf(p.waitUntil) >= 0 ? p.waitUntil : 'domcontentloaded'
+      const navTimeout = Number(p.navTimeout) > 0 ? Number(p.navTimeout) : 0
+      const opts = navTimeout
+        ? `{ waitUntil: '${waitUntil}', timeout: ${navTimeout} }`
+        : `{ waitUntil: '${waitUntil}' }`
+      // networkidle may never settle on live apps; use a lighter state to recover with.
+      const settle = waitUntil === 'networkidle' ? 'domcontentloaded' : waitUntil
+      // Skip if we're already on the target page (continuous Run All carries the session
+      // over, so a scenario's "Open the app" is a no-op there). Compare by origin+path so
+      // a post-login #hash or ?query doesn't defeat the skip. Tolerate the SPA aborting a
+      // redundant load (ERR_ABORTED) or redirecting to itself ("interrupted by another
+      // navigation") — both mean we're effectively already there.
+      return `const _target = ${url};
+    const _samePage = (a, b) => {
+      try { const x = new URL(a), y = new URL(b); return x.origin === y.origin && x.pathname.replace(/\\/+$/, '') === y.pathname.replace(/\\/+$/, ''); }
+      catch (e) { return (a || '').replace(/\\/+$/, '') === (b || '').replace(/\\/+$/, ''); }
+    };
+    if (!_samePage(_target, page.url())) {
+      try {
+        await page.goto(_target, ${opts});
+      } catch (_navErr) {
+        if (!/ERR_ABORTED|interrupted by another navigation/i.test(_navErr.message || '')) throw _navErr;
+        await page.waitForLoadState('${settle}').catch(() => {});
+      }
+    }`
+    }
 
     case 'reload':
       return `await page.reload();`
@@ -170,17 +199,22 @@ function actionToCode(action, p, baseUrl) {
     // --- Interaction ---
     case 'click': {
       const pre = p.waitBefore > 0 ? `await page.waitForTimeout(${Number(p.waitBefore)});\n    ` : ''
-      return `${pre}await ${loc}.click();`
+      // dispatch: fire the DOM click directly — works on stubborn JS toggles (Bootstrap
+      // data-toggle) and elements that are hidden in a collapsed menu. force: skip the
+      // visibility/stability actionability checks but still do a real mouse click.
+      if (p.dispatch) return `${pre}await ${loc}.dispatchEvent('click');`
+      return `${pre}await ${loc}.click(${p.force ? '{ force: true }' : ''});`
     }
 
     case 'dblclick': {
       const pre = p.waitBefore > 0 ? `await page.waitForTimeout(${Number(p.waitBefore)});\n    ` : ''
-      return `${pre}await ${loc}.dblclick();`
+      if (p.dispatch) return `${pre}await ${loc}.dispatchEvent('dblclick');`
+      return `${pre}await ${loc}.dblclick(${p.force ? '{ force: true }' : ''});`
     }
 
     case 'rightClick': {
       const pre = p.waitBefore > 0 ? `await page.waitForTimeout(${Number(p.waitBefore)});\n    ` : ''
-      return `${pre}await ${loc}.click({ button: 'right' });`
+      return `${pre}await ${loc}.click({ button: 'right'${p.force ? ', force: true' : ''} });`
     }
 
     case 'hover':
@@ -209,6 +243,38 @@ function actionToCode(action, p, baseUrl) {
 
     case 'dragAndDrop':
       return `await page.dragAndDrop(${JSON.stringify(p.source)}, ${JSON.stringify(p.target)});`
+
+    // --- Mouse / Map (canvas-friendly low-level actions) ---
+    case 'clickAt': {
+      // Click an exact pixel — for a map canvas where there's no DOM element at a point.
+      const x = Number(p.x) || 0, y = Number(p.y) || 0
+      if (p.selector) return `await ${loc}.click({ position: { x: ${x}, y: ${y} } });`
+      return `await page.mouse.click(${x}, ${y});`
+    }
+
+    case 'dragByOffset': {
+      // Press a handle and move it by (dx, dy) — slides a modal off the map, pans the map.
+      const dx = Number(p.dx) || 0, dy = Number(p.dy) || 0
+      const sx = (p.x === '' || p.x == null) ? '_box.width / 2' : String(Number(p.x) || 0)
+      const sy = (p.y === '' || p.y == null) ? '_box.height / 2' : String(Number(p.y) || 0)
+      return `{
+      const _box = await ${loc}.boundingBox();
+      if (!_box) throw new Error('Drag source not found: ' + ${sel});
+      const _sx = _box.x + (${sx}), _sy = _box.y + (${sy});
+      await page.mouse.move(_sx, _sy);
+      await page.mouse.down();
+      await page.mouse.move(_sx + (${dx}), _sy + (${dy}), { steps: 12 });
+      await page.mouse.up();
+    }`
+    }
+
+    case 'zoom': {
+      // Hover the map, then wheel — negative deltaY zooms in. Small settle between steps.
+      const deltaY = Number(p.deltaY) || -100
+      const times = Math.max(1, Number(p.times) || 1)
+      const pre = p.selector ? `await ${loc}.hover();\n    ` : ''
+      return `${pre}for (let _i = 0; _i < ${times}; _i++) { await page.mouse.wheel(0, ${deltaY}); await page.waitForTimeout(150); }`
+    }
 
     // --- Assertions ---
     case 'assertVisible':

@@ -193,6 +193,13 @@ export function registerStorageHandlers() {
     return { ok: true }
   })
 
+  // Clear all history, or just one profile's runs when profileId is given.
+  ipcMain.handle('storage:clearHistory', (_, profileId) => {
+    if (profileId) db().prepare('DELETE FROM history WHERE profile_id = ?').run(profileId)
+    else db().prepare('DELETE FROM history').run()
+    return { ok: true }
+  })
+
   // --- Custom Steps ---
   ipcMain.handle('storage:getCustomSteps', () => {
     return db().prepare('SELECT * FROM custom_steps ORDER BY name').all()

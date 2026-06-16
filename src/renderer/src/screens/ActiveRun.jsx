@@ -9,6 +9,7 @@ export default function ActiveRun({ navigate, ctx }) {
   const [started, setStarted] = useState(false)
   const [dataSets, setDataSets] = useState(null)   // null = still loading; [] = none
   const [dataSetId, setDataSetId] = useState('')   // '' = use field defaults
+  const [runNonce, setRunNonce] = useState(0)      // bump to re-trigger the run effect
   const logRef = useRef(null)
 
   // Flatten every collection's sets into one pickable list. If there are none, skip the
@@ -59,7 +60,7 @@ export default function ActiveRun({ navigate, ctx }) {
       window.api.offRunLog()
       window.api.offRunComplete()
     }
-  }, [profileId, scenarioId, started])
+  }, [profileId, scenarioId, started, runNonce])
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
@@ -99,6 +100,15 @@ export default function ActiveRun({ navigate, ctx }) {
     setStatus('stopped')
   }
 
+  // Restart the same run (same scenario/data set) without leaving the screen — the run
+  // effect re-fires on runNonce and resets logs/summary/status at its top.
+  function rerun() {
+    setRunId(null)
+    setStarted(true)
+    setRunNonce(n => n + 1)
+  }
+  const finished = status === 'passed' || status === 'failed' || status === 'stopped'
+
   const STATUS_CONFIG = {
     running: { color: 'var(--warning)',  bg: 'var(--warning-dim)',  label: 'Running' },
     passed:  { color: 'var(--success)',  bg: 'var(--success-dim)',  label: 'Passed' },
@@ -127,10 +137,18 @@ export default function ActiveRun({ navigate, ctx }) {
         {status === 'running' && (
           <button className="btn-danger" onClick={stopRun}>■ Stop</button>
         )}
-        {(status === 'passed' || status === 'failed') && runId && (
-          <button className="btn-primary" onClick={() => navigate('results', { runId })}>
-            View Results →
-          </button>
+        {finished && (
+          <>
+            <button className="btn-ghost" onClick={() => navigate('dashboard')}>← Back</button>
+            <button className="btn-primary" onClick={rerun}>
+              ↻ Re-run{scenarioName ? '' : ' All'}
+            </button>
+            {(status === 'passed' || status === 'failed') && runId && (
+              <button className="btn-ghost" onClick={() => navigate('results', { runId })}>
+                View Results →
+              </button>
+            )}
+          </>
         )}
       </div>
 

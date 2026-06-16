@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { replaySteps } from '../core/stepReplay'
 import { installSelectorGen, pickerListener } from '../core/injectedScripts'
+import { refocusMainWindow } from '../core/windowFocus'
 
 export function registerElementPickerHandlers() {
   ipcMain.handle('picker:pick', async (_, args) => {
@@ -54,7 +55,10 @@ export function registerElementPickerHandlers() {
 
       const picked = await pickPromise
       if (!picked) return { ok: false, cancelled: true }
-      return { ok: true, selector: picked.selector, tag: picked.tag, text: picked.text, ranSteps }
+      return {
+        ok: true, selector: picked.selector, tag: picked.tag, text: picked.text,
+        candidates: picked.candidates || [], ranSteps
+      }
 
     } catch (err) {
       const msg = err.message || ''
@@ -71,6 +75,7 @@ export function registerElementPickerHandlers() {
 
     } finally {
       try { await browser?.close() } catch { /* ignore */ }
+      refocusMainWindow()   // restore app input focus after the headful browser closes
     }
   })
 }

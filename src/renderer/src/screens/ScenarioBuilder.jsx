@@ -5,6 +5,7 @@ import { ACTION_DEFS, ACTION_CATEGORIES, ACTIONS_BY_CATEGORY } from '../componen
 const CATEGORY_KEYWORD = {
   Navigation: 'Given',
   Interaction: 'When',
+  Mouse: 'When',
   Assertions: 'Then',
   Waits: 'When',
   Util: 'When'
@@ -25,6 +26,10 @@ function buildRecordedParams(p) {
   if (p.action === 'selectOption') return { ...params, selector: p.selector, value: p.value ?? '' }
   if (p.action === 'pressKey')     return { ...params, selector: p.selector, key: p.key }
   if (p.action === 'navigate')     return { ...params, url: p.url ?? '' }
+  // Map / canvas gestures captured by the recorder
+  if (p.action === 'clickAt')      return { ...params, selector: p.selector, x: p.x, y: p.y }
+  if (p.action === 'dragByOffset') return { ...params, selector: p.selector, dx: p.dx, dy: p.dy, x: p.x, y: p.y }
+  if (p.action === 'zoom')         return { ...params, selector: p.selector, deltaY: p.deltaY, times: p.times ?? 1 }
   // Smart wait inferred during recording — a real wait-for-visible, not a sleep.
   // Flagged _smart so the card shows it was auto-suggested (the tester can delete it).
   if (p.action === 'waitForSelector') return { ...params, selector: p.selector, state: p.state || 'visible', _smart: !!p.smart }
@@ -33,13 +38,24 @@ function buildRecordedParams(p) {
 
 // ─── Test Selector Button ─────────────────────────────────────────────────────
 
-function TestSelectorButton({ selector, baseUrl, browser, priorSteps = [] }) {
+function TestSelectorButton({ selector, baseUrl, browser, priorSteps = [], onUse, onUseFallback }) {
   const [open, setOpen]         = useState(false)
   const [url, setUrl]           = useState('')
   const [testing, setTesting]   = useState(false)
   const [result, setResult]     = useState(null)
   const [runFromTop, setRunFromTop] = useState(true)
   const ref = useRef(null)
+
+  // Strengthen: dedupe each match's candidate selectors into one ranked list so an
+  // ambiguous selector (0 or many matches) can be swapped for a unique, robust one.
+  const strengthenOptions = (() => {
+    if (!result?.elements) return []
+    const seen = {}, list = []
+    for (const el of result.elements) for (const c of (el.candidates || [])) {
+      if (!seen[c.selector]) { seen[c.selector] = true; list.push(c) }
+    }
+    return list.filter(c => c.selector !== selector)
+  })()
 
   const hasPriorSteps = priorSteps.length > 0
 
@@ -215,9 +231,46 @@ function TestSelectorButton({ selector, baseUrl, browser, priorSteps = [] }) {
                     </div>
                   ))}
 
-                  {result.count > 3 && (
+                  {result.count > result.elements.length && (
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 4 }}>
-                      +{result.count - 3} more — consider a more specific selector
+                      +{result.count - result.elements.length} more — consider a more specific selector
+                    </div>
+                  )}
+
+                  {result.count !== 1 && strengthenOptions.length > 0 && (onUse || onUseFallback) && (
+                    <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>
+                        🛠 Strengthen this selector
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.4 }}>
+                        Unique selectors that pin a single matched element — pick one to replace your selector.
+                      </div>
+                      <div style={{ display: 'grid', gap: 6 }}>
+                        {strengthenOptions.slice(0, 6).map(c => (
+                          <div key={c.selector} style={{
+                            border: '1px solid rgba(16,185,129,0.4)', borderRadius: 8, padding: '7px 9px',
+                            background: 'rgba(16,185,129,0.06)'
+                          }}>
+                            <div style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--accent)',
+                              wordBreak: 'break-all', marginBottom: 6 }}>{c.selector}</div>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              {onUse && (
+                                <button onClick={() => {
+                                  onUse(c.selector)
+                                  if (onUseFallback) { const alt = bestFallback(strengthenOptions, c.selector); if (alt) onUseFallback(alt.selector) }
+                                  setOpen(false)
+                                }} className="btn-primary"
+                                  style={{ fontSize: 11, padding: '4px 10px' }}>Use</button>
+                              )}
+                              {onUseFallback && (
+                                <button onClick={() => onUseFallback(c.selector)} className="btn-ghost"
+                                  title="Set as the Alt Selector fallback (.or())"
+                                  style={{ fontSize: 11, padding: '4px 10px' }}>+ fallback</button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </>
@@ -240,9 +293,19 @@ function TestSelectorButton({ selector, baseUrl, browser, priorSteps = [] }) {
 
 // ─── Pick Button (element picker) ─────────────────────────────────────────────
 
-function PickButton({ baseUrl, browser, priorSteps = [], onPicked }) {
+function PickButton({ baseUrl, browser, priorSteps = [], onPicked, onPickedFallback }) {
   const [picking, setPicking] = useState(false)
   const [msg, setMsg] = useState(null)
+  const [candidates, setCandidates] = useState(null)   // non-null → chooser open
+  const ref = useRef(null)
+
+  // Close the chooser on outside click
+  useEffect(() => {
+    if (!candidates) return
+    function handle(e) { if (ref.current && !ref.current.contains(e.target)) setCandidates(null) }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [candidates])
 
   async function pick() {
     if (!baseUrl?.trim()) { setMsg({ type: 'err', text: 'Set a Base URL in the profile first' }); return }
@@ -257,9 +320,15 @@ function PickButton({ baseUrl, browser, priorSteps = [], onPicked }) {
         runSteps: priorSteps.length > 0
       })
       if (res?.ok) {
-        onPicked(res.selector)
-        setMsg({ type: 'ok', text: `Captured <${res.tag}>${res.ranSteps ? ` (after ${res.ranSteps} steps)` : ''}` })
-        setTimeout(() => setMsg(null), 4000)
+        const list = res.candidates || []
+        // More than one viable selector → let the tester choose the most robust one.
+        if (list.length > 1) {
+          setCandidates(list)
+        } else {
+          onPicked(res.selector)
+          setMsg({ type: 'ok', text: `Captured <${res.tag}>${res.ranSteps ? ` (after ${res.ranSteps} steps)` : ''}` })
+          setTimeout(() => setMsg(null), 4000)
+        }
       } else if (res?.cancelled) {
         setMsg(null)
       } else {
@@ -272,8 +341,20 @@ function PickButton({ baseUrl, browser, priorSteps = [], onPicked }) {
     }
   }
 
+  function use(sel) {
+    onPicked(sel)
+    let withFallback = false
+    if (onPickedFallback) {
+      const alt = bestFallback(candidates, sel)
+      if (alt) { onPickedFallback(alt.selector); withFallback = true }
+    }
+    setCandidates(null)
+    setMsg({ type: 'ok', text: withFallback ? 'Selector + auto fallback set' : 'Selector set' })
+    setTimeout(() => setMsg(null), 3500)
+  }
+
   return (
-    <div style={{ position: 'relative', flexShrink: 0 }}>
+    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
       <button
         onClick={pick}
         disabled={picking}
@@ -288,6 +369,16 @@ function PickButton({ baseUrl, browser, priorSteps = [], onPicked }) {
         {picking ? '◎ Opening…' : '🎯 Pick'}
       </button>
 
+      {candidates && (
+        <SelectorChooser
+          title="Choose a robust selector"
+          candidates={candidates}
+          onUse={use}
+          onFallback={onPickedFallback ? (sel => { onPickedFallback(sel); setMsg({ type: 'ok', text: 'Fallback set' }) }) : null}
+          onClose={() => setCandidates(null)}
+        />
+      )}
+
       {msg && (
         <div style={{
           position: 'absolute', top: 36, right: 0, zIndex: 200, width: 210,
@@ -299,6 +390,72 @@ function PickButton({ baseUrl, browser, priorSteps = [], onPicked }) {
           {msg.type === 'err' ? '✗ ' : '✓ '}{msg.text}
         </div>
       )}
+    </div>
+  )
+}
+
+// Best auto-fallback for a chosen primary: a DIFFERENT unique candidate, preferring a
+// different strategy (kind) so the .or() is genuine redundancy, not a near-duplicate.
+// All candidates derive from the same clicked element, so any of them re-finds it.
+function bestFallback(candidates, primarySel) {
+  if (!candidates) return null
+  const primary = candidates.find(c => c.selector === primarySel)
+  const uniques = candidates.filter(c => c.count === 1 && c.selector !== primarySel)
+  return uniques.find(c => c.kind !== primary?.kind) || uniques[0] || null
+}
+
+// Shared ranked-candidate list used by both Pick (choose a robust selector) and
+// Test → Strengthen (disambiguate a selector that matched 0 or many elements).
+// First unique candidate is flagged ★ recommended.
+function SelectorChooser({ title, candidates, onUse, onFallback, onClose }) {
+  const firstUnique = candidates.findIndex(c => c.count === 1)
+  return (
+    <div style={{
+      position: 'absolute', top: 36, right: 0, zIndex: 300, width: 340,
+      background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
+      padding: 12, boxShadow: '0 10px 36px rgba(0,0,0,0.45)'
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)' }}>
+          {title}
+        </div>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 15 }}>×</button>
+      </div>
+      <div style={{ display: 'grid', gap: 6, maxHeight: 260, overflowY: 'auto' }}>
+        {candidates.map((c, i) => {
+          const unique = c.count === 1
+          return (
+            <div key={c.selector} style={{
+              border: `1px solid ${i === firstUnique ? 'rgba(16,185,129,0.4)' : 'var(--border)'}`,
+              borderRadius: 8, padding: '7px 9px',
+              background: i === firstUnique ? 'rgba(16,185,129,0.06)' : 'var(--surface2)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 5 }}>
+                <span style={{
+                  fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 999,
+                  color: unique ? '#10B981' : '#F59E0B',
+                  background: unique ? 'rgba(16,185,129,0.12)' : 'rgba(245,158,11,0.12)'
+                }}>
+                  {unique ? '✓ 1 match' : `⚠ ${c.count} matches`}
+                </span>
+                {i === firstUnique && <span style={{ fontSize: 10, color: '#10B981', fontWeight: 700 }}>★ recommended</span>}
+              </div>
+              <div style={{ fontSize: 12, fontFamily: 'monospace', color: 'var(--accent)', wordBreak: 'break-all', marginBottom: 6 }}>
+                {c.selector}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button onClick={() => onUse(c.selector)} className="btn-primary"
+                  style={{ fontSize: 11, padding: '4px 10px' }}>Use</button>
+                {onFallback && (
+                  <button onClick={() => onFallback(c.selector)} className="btn-ghost"
+                    title="Set as the Alt Selector fallback (.or())"
+                    style={{ fontSize: 11, padding: '4px 10px' }}>+ fallback</button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -424,12 +581,15 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
                     browser={profile?.browser}
                     priorSteps={priorSteps}
                     onPicked={sel => updateParam(p.key, sel)}
+                    onPickedFallback={p.key === 'selector' ? (sel => updateParam('selector2', sel)) : null}
                   />
                   <TestSelectorButton
                     selector={params[p.key]}
                     baseUrl={profile?.base_url}
                     browser={profile?.browser}
                     priorSteps={priorSteps}
+                    onUse={sel => updateParam(p.key, sel)}
+                    onUseFallback={p.key === 'selector' ? (sel => updateParam('selector2', sel)) : null}
                   />
                 </div>
               ) : (

@@ -25,6 +25,16 @@ export default function History({ navigate }) {
     }
   }
 
+  async function clearAll() {
+    if (!confirm(`Delete ALL ${history.length} runs from history? This cannot be undone.`)) return
+    try {
+      await window.api.clearHistory()
+      await load()
+    } catch (e) {
+      alert('Could not clear history: ' + (e?.message || 'unknown error'))
+    }
+  }
+
   const filtered = filter === 'all' ? history : history.filter(h => h.status === filter)
 
   return (
@@ -34,7 +44,7 @@ export default function History({ navigate }) {
           <h1>Run History</h1>
           <p>{history.length} total runs recorded</p>
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           {['all', 'passed', 'failed'].map(f => (
             <button key={f} onClick={() => setFilter(f)}
               style={{
@@ -47,6 +57,13 @@ export default function History({ navigate }) {
               {f}
             </button>
           ))}
+          {history.length > 0 && (
+            <button className="btn-danger" onClick={clearAll}
+              title="Delete every run from history"
+              style={{ padding: '5px 14px', fontSize: 12, fontWeight: 700, marginLeft: 6 }}>
+              🗑 Delete all
+            </button>
+          )}
         </div>
       </div>
 

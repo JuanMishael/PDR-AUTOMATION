@@ -27,11 +27,62 @@ export function installSelectorGen() {
     return parts.join(' > ')
   }
 
+  // Legacy apps often REUSE the same id on many elements (e.g. id="imgdigitize" on every
+  // nav icon). A bare "#id" then explodes at run time with a strict-mode violation, so when
+  // an id isn't globally unique we scope it by the nearest ANCESTOR id that makes it unique
+  // — e.g. "#Bimsnav #imgdigitize". Returns null if no id'd ancestor disambiguates it.
+  function scopeById(el, idSel) {
+    var node = el.parentElement
+    while (node && node.nodeType === 1 && node !== document.body) {
+      if (node.id) {
+        var s = '#' + esc(node.id) + ' ' + idSel
+        if (uniq(s)) return s
+      }
+      node = node.parentElement
+    }
+    return null
+  }
+
+  // Child-combinator tag path from an ancestor (exclusive) down to el.
+  function relPath(fromAncestor, el) {
+    var parts = [], node = el
+    while (node && node !== fromAncestor && node.nodeType === 1) {
+      var part = node.tagName.toLowerCase(), parent = node.parentElement
+      if (parent) {
+        var same = Array.prototype.filter.call(parent.children, function (c) { return c.tagName === node.tagName })
+        if (same.length > 1) part += ':nth-of-type(' + (same.indexOf(node) + 1) + ')'
+      }
+      parts.unshift(part); node = node.parentElement
+    }
+    return parts.join(' > ')
+  }
+
+  // Anchor a structural path on the nearest ancestor whose id is GLOBALLY UNIQUE — more
+  // robust than a bare cssPath, which stops at the first id'd ancestor even if that id is
+  // itself duplicated. e.g. a bare <a> inside <li id="BIMS_Nav_Create"> -> "#BIMS_Nav_Create > a".
+  function uniqueAncestorScope(el) {
+    var node = el.parentElement
+    while (node && node.nodeType === 1 && node !== document.body) {
+      if (node.id && uniq('#' + esc(node.id))) {
+        var rel = relPath(node, el)
+        var s = '#' + esc(node.id) + (rel ? ' > ' + rel : '')
+        if (uniq(s)) return s
+      }
+      node = node.parentElement
+    }
+    return null
+  }
+
   window.__norm = norm
   window.__genSelector = function (el) {
     if (!el || el.nodeType !== 1) return 'body'
-    // 1. unique id
-    if (el.id && uniq('#' + esc(el.id))) return '#' + esc(el.id)
+    // 1. id — globally unique wins; if the id is shared, scope it by an ancestor id
+    if (el.id) {
+      var idSel = '#' + esc(el.id)
+      if (uniq(idSel)) return idSel
+      var scopedId = scopeById(el, idSel)
+      if (scopedId) return scopedId
+    }
     // 2. test attributes
     var ta = ['data-testid', 'data-test', 'data-cy', 'data-qa']
     for (var i = 0; i < ta.length; i++) {
@@ -42,19 +93,77 @@ export function installSelectorGen() {
     // 3. name / aria-label
     var name = el.getAttribute('name'); if (name) { var sn = tag + '[name="' + name + '"]'; if (uniq(sn)) return sn }
     var aria = el.getAttribute('aria-label'); if (aria) { var sa = tag + '[aria-label="' + aria.replace(/"/g, '\\"') + '"]'; if (uniq(sa)) return sa }
-    // 4. text for interactive elements (beats brittle classes — the modal OK button case)
+    // 4. text for interactive elements (beats brittle classes — the modal OK button case).
+    // Use :text-is (EXACT) not :has-text (SUBSTRING): "Create" is inside "Bulk Create",
+    // so :has-text would match both and explode in strict mode at run time.
     var text = norm(el.textContent)
     if (['button', 'a', 'label', 'summary'].indexOf(tag) >= 0 && text && text.length <= 40) {
       var c = Array.prototype.filter.call(document.querySelectorAll(tag), function (e) { return norm(e.textContent) === text }).length
-      if (c === 1) return tag + ':has-text("' + text.replace(/"/g, '\\"') + '")'
+      if (c === 1) return tag + ':text-is("' + text.replace(/"/g, '\\"') + '")'
     }
     // 5. a single unique class, then a class combo
     if (el.classList && el.classList.length) {
       for (var j = 0; j < el.classList.length; j++) { var sc = tag + '.' + esc(el.classList[j]); if (uniq(sc)) return sc }
       var combo = tag + '.' + Array.prototype.map.call(el.classList, esc).join('.'); if (uniq(combo)) return combo
     }
-    // 6. structural fallback
+    // 6. structural path anchored on a unique-id ancestor (preferred over a bare cssPath)
+    var scoped = uniqueAncestorScope(el)
+    if (scoped) return scoped
+    // 7. last-resort structural fallback
     return cssPath(el)
+  }
+
+  // Ranked, validated selector candidates for an element AND its clickable ancestors.
+  // Each entry: { selector, count, kind }. Used by the Pick chooser and Test "Strengthen"
+  // to let the tester pick a robust, unique selector (and an optional .or() fallback)
+  // instead of trusting a single guess. Unique (count===1) candidates rank first.
+  window.__genCandidates = function (el) {
+    if (!el || el.nodeType !== 1) return []
+    var out = [], seen = {}
+    function add(sel, kind) {
+      if (!sel || seen[sel]) return
+      seen[sel] = true
+      var count
+      try { count = document.querySelectorAll(sel).length } catch (e) { return }
+      if (count > 0) out.push({ selector: sel, count: count, kind: kind })
+    }
+    var tag = el.tagName.toLowerCase()
+    if (el.id) {
+      add('#' + esc(el.id), 'id')
+      add(scopeById(el, '#' + esc(el.id)), 'scoped-id')
+    }
+    var ta = ['data-testid', 'data-test', 'data-cy', 'data-qa']
+    for (var i = 0; i < ta.length; i++) {
+      var v = el.getAttribute && el.getAttribute(ta[i]); if (v) add('[' + ta[i] + '="' + v + '"]', 'test-attr')
+    }
+    var name = el.getAttribute && el.getAttribute('name'); if (name) add(tag + '[name="' + name + '"]', 'name')
+    var aria = el.getAttribute && el.getAttribute('aria-label'); if (aria) add(tag + '[aria-label="' + aria.replace(/"/g, '\\"') + '"]', 'aria')
+    var text = norm(el.textContent)
+    if (['button', 'a', 'label', 'summary'].indexOf(tag) >= 0 && text && text.length <= 40) {
+      // :text-is isn't a CSS selector, so querySelectorAll can't count it — count by hand.
+      var _ts = tag + ':text-is("' + text.replace(/"/g, '\\"') + '")'
+      if (!seen[_ts]) {
+        var _tc = Array.prototype.filter.call(document.querySelectorAll(tag), function (e) { return norm(e.textContent) === text }).length
+        if (_tc > 0) { seen[_ts] = true; out.push({ selector: _ts, count: _tc, kind: 'text' }) }
+      }
+    }
+    add(uniqueAncestorScope(el), 'scoped-structural')
+    // Clickable ancestors: clicking the <li id> that wraps an <a> is just as valid.
+    var node = el.parentElement, hops = 0
+    while (node && node.nodeType === 1 && node !== document.body && hops < 4) {
+      if (node.id) { add('#' + esc(node.id), 'ancestor-id'); add('#' + esc(node.id) + ' ' + tag, 'ancestor-id-tag') }
+      node = node.parentElement; hops++
+    }
+    add(cssPath(el), 'css-path')
+
+    var rank = { id: 1, 'scoped-id': 2, 'test-attr': 3, 'ancestor-id': 4, 'ancestor-id-tag': 4,
+      name: 5, aria: 6, text: 7, 'scoped-structural': 8, 'css-path': 9 }
+    out.sort(function (a, b) {
+      var au = a.count === 1 ? 0 : 1, bu = b.count === 1 ? 0 : 1
+      if (au !== bu) return au - bu                         // unique matches first
+      return (rank[a.kind] || 99) - (rank[b.kind] || 99)    // then by kind robustness
+    })
+    return out
   }
 }
 
@@ -87,7 +196,13 @@ export function pickerListener() {
     var banner = document.getElementById('__pickerBanner')
     if (banner) { banner.textContent = '✓ Captured — you can return to the app'; banner.style.background = '#10B981' }
     try {
-      window.__pickerPick({ selector: window.__genSelector(el), tag: el.tagName.toLowerCase(), text: norm(el.textContent).slice(0, 60) })
+      var candidates = window.__genCandidates ? window.__genCandidates(el) : []
+      window.__pickerPick({
+        selector: window.__genSelector(el),
+        tag: el.tagName.toLowerCase(),
+        text: norm(el.textContent).slice(0, 60),
+        candidates: candidates
+      })
     } catch (err) { /* binding not ready */ }
   }, true)
 
@@ -197,11 +312,62 @@ export function recorderListener() {
     lastActionTs = Date.now()   // reset the pause baseline after every emitted step
   }
 
+  // --- Map / canvas gestures: drag-to-move, wheel-zoom, positioned canvas clicks ----
+  var DRAG_MIN = 8                 // px of movement before a press counts as a drag
+  var down = null, dragged = false // mousedown anchor; dragged → suppress the tail click
+  var wheelAcc = 0, wheelEl = null, wheelTimer = null
+
+  function relPos(el, clientX, clientY) {
+    try { var r = el.getBoundingClientRect(); return { x: Math.round(clientX - r.left), y: Math.round(clientY - r.top) } }
+    catch (e) { return { x: 0, y: 0 } }
+  }
+
+  document.addEventListener('mousedown', function (e) {
+    if (!armed()) { down = null; return }
+    if (inBar(e.target)) { down = null; return }
+    down = { el: e.target, x: e.clientX, y: e.clientY }; dragged = false
+  }, true)
+
+  document.addEventListener('mouseup', function (e) {
+    if (!down) return
+    var dx = e.clientX - down.x, dy = e.clientY - down.y
+    if (armed() && (Math.abs(dx) >= DRAG_MIN || Math.abs(dy) >= DRAG_MIN)) {
+      var s = relPos(down.el, down.x, down.y)
+      send({ action: 'dragByOffset', selector: window.__genSelector(down.el),
+        dx: Math.round(dx), dy: Math.round(dy), x: s.x, y: s.y,
+        label: 'Drag by (' + Math.round(dx) + ', ' + Math.round(dy) + ')' })
+      dragged = true
+    }
+    down = null
+  }, true)
+
   document.addEventListener('click', function (e) {
     if (!armed()) return
     var t = e.target; if (inBar(t)) return
+    if (dragged) { dragged = false; return }   // this click is the tail end of a drag
     maybeSmartWait(t)   // may emit a "wait for the container that just appeared" first
-    send({ action: 'click', selector: window.__genSelector(t), label: labelOf(t) })
+    if (t.tagName === 'CANVAS') {
+      var p = relPos(t, e.clientX, e.clientY)
+      send({ action: 'clickAt', selector: window.__genSelector(t), x: p.x, y: p.y,
+        label: 'Click map @ (' + p.x + ', ' + p.y + ')' })
+    } else {
+      send({ action: 'click', selector: window.__genSelector(t), label: labelOf(t) })
+    }
+  }, true)
+
+  // Coalesce a wheel-zoom gesture (many events) into ONE step with the summed delta.
+  document.addEventListener('wheel', function (e) {
+    if (!armed()) return
+    var t = e.target; if (inBar(t)) return
+    wheelAcc += e.deltaY; wheelEl = t
+    if (wheelTimer) clearTimeout(wheelTimer)
+    wheelTimer = setTimeout(function () {
+      var d = Math.round(wheelAcc); wheelAcc = 0
+      if (!d || !wheelEl) return
+      send({ action: 'zoom', selector: window.__genSelector(wheelEl), deltaY: d, times: 1,
+        label: (d < 0 ? 'Zoom in' : 'Zoom out') + ' (' + d + ')' })
+      wheelEl = null
+    }, 450)
   }, true)
 
   document.addEventListener('change', function (e) {

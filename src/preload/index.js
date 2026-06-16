@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('api', {
   // Storage — History
   getHistory: (profileId) => ipcRenderer.invoke('storage:getHistory', profileId),
   deleteHistory: (id) => ipcRenderer.invoke('storage:deleteHistory', id),
+  clearHistory: (profileId) => ipcRenderer.invoke('storage:clearHistory', profileId),
 
   // Storage — Custom Steps
   getCustomSteps: () => ipcRenderer.invoke('storage:getCustomSteps'),

@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { replaySteps } from '../core/stepReplay'
 import { installSelectorGen, recorderListener } from '../core/injectedScripts'
 import { refocusMainWindow } from '../core/windowFocus'
+import { launchSessionContext } from '../core/browserSession'
 
 /**
  * Live recorder. Opens a headful browser, optionally replays existing steps so the
@@ -25,13 +26,12 @@ export function registerRecorderHandlers() {
 
     if (!url?.trim()) return { ok: false, error: 'No URL — set a Base URL in the profile' }
 
-    let browser
+    let close
     try {
-      const pw = await import('playwright')
-      const browserType = pw[browserName] || pw.chromium
-
-      browser = await browserType.launch({ headless: false })
-      const context = await browser.newContext({ ignoreHTTPSErrors: true })
+      // Persistent profile → recording continues under the login the tester already did.
+      const session = await launchSessionContext(browserName, { headless: false, timeout })
+      const { context, page } = session
+      close = session.close
 
       let resolveDone
       const donePromise = new Promise(res => { resolveDone = res })
@@ -46,10 +46,8 @@ export function registerRecorderHandlers() {
       await context.addInitScript(installSelectorGen)
       await context.addInitScript(recorderListener)
 
-      const page = await context.newPage()
-      page.setDefaultTimeout(timeout)
       page.on('close', () => resolveDone('closed'))
-      browser.on('disconnected', () => resolveDone('closed'))
+      context.on('close', () => resolveDone('closed'))
 
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout })
 
@@ -78,7 +76,7 @@ export function registerRecorderHandlers() {
       return { ok: false, error: msg.split('\n')[0].slice(0, 120) }
 
     } finally {
-      try { await browser?.close() } catch { /* ignore */ }
+      await close?.()
       refocusMainWindow()   // restore app input focus after the headful browser closes
     }
   })

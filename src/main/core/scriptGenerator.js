@@ -13,6 +13,7 @@
  */
 
 import { resolveParams } from './tokenResolver'
+import { findDragHandleRect, synthDrag } from './dragHelpers'
 
 export function generateScript({ profile, scenarios = [], settings = {}, outputDir = '', dataContext = null }) {
   const timeout = profile.timeout || 30000
@@ -253,27 +254,47 @@ function actionToCode(action, p, baseUrl) {
     }
 
     case 'dragByOffset': {
-      // Press a handle and move it by (dx, dy) — slides a modal off the map, pans the map.
+      // Slide a draggable panel/handle by (dx, dy). We press the real drag HANDLE (jQuery
+      // UI only starts a drag from its handle, not the panel body), move in DISCRETE paced
+      // steps (a burst move is often dropped), and — if the panel didn't actually move —
+      // fall back to synthetic DOM events that drive the library directly.
       const dx = Number(p.dx) || 0, dy = Number(p.dy) || 0
-      const sx = (p.x === '' || p.x == null) ? '_box.width / 2' : String(Number(p.x) || 0)
-      const sy = (p.y === '' || p.y == null) ? '_box.height / 2' : String(Number(p.y) || 0)
       return `{
-      const _box = await ${loc}.boundingBox();
-      if (!_box) throw new Error('Drag source not found: ' + ${sel});
-      const _sx = _box.x + (${sx}), _sy = _box.y + (${sy});
+      const _el = await ${loc}.elementHandle();
+      if (!_el) throw new Error('Drag source not found: ' + ${sel});
+      const _findRect = ${findDragHandleRect.toString()};
+      const _r = await page.evaluate(_findRect, _el);
+      const _before = await page.evaluate(_findRect, _el);
+      const _sx = _r.x + _r.w / 2, _sy = _r.y + _r.h / 2, _N = 25;
       await page.mouse.move(_sx, _sy);
       await page.mouse.down();
-      await page.mouse.move(_sx + (${dx}), _sy + (${dy}), { steps: 12 });
+      await page.waitForTimeout(80);
+      for (let _i = 1; _i <= _N; _i++) {
+        await page.mouse.move(_sx + (${dx}) * _i / _N, _sy + (${dy}) * _i / _N);
+        await page.waitForTimeout(16);
+      }
+      await page.waitForTimeout(80);
       await page.mouse.up();
+      const _after = await page.evaluate(_findRect, _el);
+      if (Math.abs(_after.x - _before.x) < 3 && Math.abs(_after.y - _before.y) < 3) {
+        await page.evaluate((${synthDrag.toString()}), { el: _el, dx: ${dx}, dy: ${dy} });
+      }
     }`
     }
 
     case 'zoom': {
-      // Hover the map, then wheel — negative deltaY zooms in. Small settle between steps.
+      // Position the cursor over the map, then wheel — negative deltaY zooms in.
+      // Uses a low-level mouse.move to the element centre (not hover()) so an overlapping
+      // draggable panel that "intercepts pointer events" can't make the step time out.
       const deltaY = Number(p.deltaY) || -100
       const times = Math.max(1, Number(p.times) || 1)
-      const pre = p.selector ? `await ${loc}.hover();\n    ` : ''
-      return `${pre}for (let _i = 0; _i < ${times}; _i++) { await page.mouse.wheel(0, ${deltaY}); await page.waitForTimeout(150); }`
+      const loop = `for (let _i = 0; _i < ${times}; _i++) { await page.mouse.wheel(0, ${deltaY}); await page.waitForTimeout(150); }`
+      if (!p.selector) return loop
+      return `{
+      const _b = await ${loc}.boundingBox();
+      if (_b) await page.mouse.move(_b.x + _b.width / 2, _b.y + _b.height / 2);
+      ${loop}
+    }`
     }
 
     // --- Assertions ---

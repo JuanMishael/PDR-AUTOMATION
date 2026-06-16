@@ -9,6 +9,8 @@ const DEFAULTS = {
 export default function Settings() {
   const [settings, setSettings] = useState(DEFAULTS)
   const [saved, setSaved] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [sessionMsg, setSessionMsg] = useState('')
 
   useEffect(() => {
     window.api.getSettings()
@@ -28,6 +30,20 @@ export default function Settings() {
       setTimeout(() => setSaved(false), 2000)
     } catch (e) {
       alert('Could not save settings: ' + (e?.message || 'unknown error'))
+    }
+  }
+
+  async function clearSession() {
+    if (!confirm('Log out the picker/recorder browser? Your next pick or recording will start signed out.')) return
+    setClearing(true)
+    setSessionMsg('')
+    try {
+      const res = await window.api.clearBrowserSession()
+      setSessionMsg(res?.ok ? '✓ Logged out — next pick starts fresh' : (res?.error || 'Could not clear the session'))
+    } catch (e) {
+      setSessionMsg(e?.message || 'Could not clear the session')
+    } finally {
+      setClearing(false)
     }
   }
 
@@ -75,6 +91,22 @@ export default function Settings() {
           Record trace on failure (Playwright Trace Viewer)
         </label>
         <button className="btn-primary" style={{ marginTop: 4 }} onClick={save}>Save Settings</button>
+      </div>
+
+      <div className="card" style={{ marginTop: 20, display: 'grid', gap: 10 }}>
+        <div>
+          <label style={{ textTransform: 'none', letterSpacing: 'normal' }}>Browser Session</label>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+            The picker, recorder, and selector test remember your login so you don't have to sign in
+            every time. Clear it to log out or switch users.
+          </p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button onClick={clearSession} disabled={clearing} style={{ width: 'auto' }}>
+            {clearing ? 'Clearing…' : 'Clear browser session / log out'}
+          </button>
+          {sessionMsg && <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{sessionMsg}</span>}
+        </div>
       </div>
     </div>
   )

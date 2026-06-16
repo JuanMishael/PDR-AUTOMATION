@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { replaySteps } from '../core/stepReplay'
 import { installSelectorGen } from '../core/injectedScripts'
+import { launchSessionContext } from '../core/browserSession'
 
 export function registerSelectorTesterHandlers() {
   ipcMain.handle('selector:test', async (_, args) => {
@@ -17,18 +18,16 @@ export function registerSelectorTesterHandlers() {
     if (!selector?.trim()) return { ok: false, error: 'No selector entered' }
     if (!url?.trim())      return { ok: false, error: 'No URL — set a Base URL in the profile' }
 
-    let browser
+    let close
     try {
-      const pw = await import('playwright')
-      const browserType = pw[browserName] || pw.chromium
-
-      browser = await browserType.launch({ headless: true })
-      const context = await browser.newContext({ ignoreHTTPSErrors: true })
+      // Shares the persistent profile, so a login done in the picker/recorder carries
+      // over here too — selectors for gated pages resolve without re-auth.
+      const session = await launchSessionContext(browserName, { headless: true, timeout })
+      const { context, page } = session
+      close = session.close
       // Inject the shared selector generator so we can compute robust "Strengthen"
       // candidates for each matched element (used when the typed selector is ambiguous).
       await context.addInitScript(installSelectorGen)
-      const page = await context.newPage()
-      page.setDefaultTimeout(timeout)
 
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout })
 
@@ -89,7 +88,7 @@ export function registerSelectorTesterHandlers() {
       return { ok: false, error: msg.split('\n')[0].slice(0, 120) }
 
     } finally {
-      try { await browser?.close() } catch { /* ignore */ }
+      await close?.()
     }
   })
 }

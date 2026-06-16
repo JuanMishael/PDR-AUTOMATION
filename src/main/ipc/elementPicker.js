@@ -2,8 +2,12 @@ import { ipcMain } from 'electron'
 import { replaySteps } from '../core/stepReplay'
 import { installSelectorGen, pickerListener } from '../core/injectedScripts'
 import { refocusMainWindow } from '../core/windowFocus'
+import { launchSessionContext, clearSession } from '../core/browserSession'
 
 export function registerElementPickerHandlers() {
+  // Log out / switch users — wipes the shared persistent browser profile.
+  ipcMain.handle('session:clear', () => clearSession())
+
   ipcMain.handle('picker:pick', async (_, args) => {
     const {
       url,
@@ -16,13 +20,13 @@ export function registerElementPickerHandlers() {
 
     if (!url?.trim()) return { ok: false, error: 'No URL — set a Base URL in the profile' }
 
-    let browser
+    let close
     try {
-      const pw = await import('playwright')
-      const browserType = pw[browserName] || pw.chromium
-
-      browser = await browserType.launch({ headless: false })
-      const context = await browser.newContext({ ignoreHTTPSErrors: true })
+      // Persistent profile → the tester's login from a previous pick/record is still
+      // there, so no re-login just to reach a gated element.
+      const session = await launchSessionContext(browserName, { headless: false, timeout })
+      const { context, page } = session
+      close = session.close
 
       let resolvePick
       const pickPromise = new Promise(res => { resolvePick = res })
@@ -32,12 +36,9 @@ export function registerElementPickerHandlers() {
       await context.addInitScript(installSelectorGen)
       await context.addInitScript(pickerListener)
 
-      const page = await context.newPage()
-      page.setDefaultTimeout(timeout)
-
       // If the tester closes the window without picking, resolve as cancelled.
       page.on('close', () => resolvePick(null))
-      browser.on('disconnected', () => resolvePick(null))
+      context.on('close', () => resolvePick(null))
 
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout })
 
@@ -74,7 +75,7 @@ export function registerElementPickerHandlers() {
       return { ok: false, error: msg.split('\n')[0].slice(0, 120) }
 
     } finally {
-      try { await browser?.close() } catch { /* ignore */ }
+      await close?.()
       refocusMainWindow()   // restore app input focus after the headful browser closes
     }
   })

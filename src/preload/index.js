@@ -49,6 +49,9 @@ contextBridge.exposeInMainWorld('api', {
   // Element picker — opts: { url, browser, steps, baseUrl, runSteps }
   pickElement: (opts) => ipcRenderer.invoke('picker:pick', opts),
 
+  // Browser session — wipe the saved login shared by picker/recorder/selector test
+  clearBrowserSession: () => ipcRenderer.invoke('session:clear'),
+
   // Recorder — opts: { url, browser, steps, baseUrl, runSteps }; resolves when stopped
   startRecording: (opts) => ipcRenderer.invoke('recorder:start', opts),
   onRecorderStep: (cb) => ipcRenderer.on('recorder:step', (_, data) => cb(data)),

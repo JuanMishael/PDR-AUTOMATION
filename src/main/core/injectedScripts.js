@@ -167,34 +167,45 @@ export function installSelectorGen() {
   }
 }
 
-/** One-shot element picker: hover-highlight, capture one click, send via window.__pickerPick. */
+/**
+ * Element picker: a draggable Start/Cancel pill + one-shot capture (sent via
+ * window.__pickerPick). Starts DISARMED so the tester can log in / navigate to the
+ * target first — clicks are only captured after they press "Start picking", so a
+ * login form or link won't be grabbed by accident. Armed state lives in sessionStorage
+ * and the bar rebuilds on every load, so a login redirect doesn't drop the picker.
+ */
 export function pickerListener() {
   if (window.__pickInstalled) return
   window.__pickInstalled = true
-  window.__pickerArmed = false
   var norm = window.__norm || function (t) { return (t || '').trim() }
+
+  function armed() { try { return sessionStorage.getItem('__pickArmed') === '1' } catch (e) { return false } }
+  function setArmed(on) { try { sessionStorage.setItem('__pickArmed', on ? '1' : '0') } catch (e) {} render() }
+  function inBar(t) { return t && t.closest && t.closest('#__pickerBar') }
 
   var last = null
   function outline(el, on) {
-    if (!el || !el.style) return
+    if (!el || !el.style || inBar(el)) return
     el.style.outline = on ? '2px solid #6C63FF' : ''
     el.style.outlineOffset = on ? '1px' : ''
   }
 
   document.addEventListener('mousemove', function (e) {
-    if (!window.__pickerArmed) return
-    if (e.target && e.target.id === '__pickerBanner') return
+    if (!armed()) return
+    if (inBar(e.target)) { if (last) { outline(last, false); last = null } return }
     if (last && last !== e.target) outline(last, false)
     last = e.target; outline(last, true)
   }, true)
 
   document.addEventListener('click', function (e) {
-    if (!window.__pickerArmed) return
-    if (e.target && e.target.id === '__pickerBanner') return
+    if (!armed()) return
+    if (inBar(e.target)) return
     e.preventDefault(); e.stopPropagation(); if (e.stopImmediatePropagation) e.stopImmediatePropagation()
-    var el = e.target; outline(el, false); window.__pickerArmed = false
-    var banner = document.getElementById('__pickerBanner')
-    if (banner) { banner.textContent = '✓ Captured — you can return to the app'; banner.style.background = '#10B981' }
+    var el = e.target; outline(el, false); setArmed(false)
+    var lbl = document.getElementById('__pickerLabel')
+    var bar = document.getElementById('__pickerBar')
+    if (lbl) lbl.textContent = '✓ Captured — back to the app'
+    if (bar) bar.style.background = '#10B981'
     try {
       var candidates = window.__genCandidates ? window.__genCandidates(el) : []
       window.__pickerPick({
@@ -206,18 +217,76 @@ export function pickerListener() {
     } catch (err) { /* binding not ready */ }
   }, true)
 
-  window.__pickerArm = function () {
-    window.__pickerArmed = true
-    if (!document.getElementById('__pickerBanner')) {
-      var b = document.createElement('div')
-      b.id = '__pickerBanner'
-      b.textContent = '🎯 Click any element to capture it as your selector'
-      b.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483647;' +
-        'background:#6C63FF;color:#fff;font:600 13px system-ui,-apple-system,sans-serif;padding:10px 16px;' +
-        'border-radius:999px;text-align:center;box-shadow:0 6px 24px rgba(0,0,0,.4);pointer-events:none'
-      document.documentElement.appendChild(b)
+  // Esc cancels arming so a mis-press doesn't force a capture.
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && armed()) setArmed(false)
+  }, true)
+
+  function render() {
+    var lbl = document.getElementById('__pickerLabel')
+    var btn = document.getElementById('__pickerToggle')
+    var bar = document.getElementById('__pickerBar')
+    if (!lbl || !btn || !bar) return
+    if (armed()) {
+      lbl.textContent = '🎯 Click any element to capture it'
+      btn.textContent = 'Cancel'; btn.style.background = '#9CA3AF'
+      bar.style.background = '#6C63FF'
+    } else {
+      lbl.textContent = 'Log in / navigate, then'
+      btn.textContent = '▶ Start picking'; btn.style.background = '#6C63FF'
+      bar.style.background = '#1b1b2b'
     }
   }
+
+  function buildBar() {
+    var existing = document.getElementById('__pickerBar'); if (existing) existing.remove()
+    var bar = document.createElement('div'); bar.id = '__pickerBar'
+    bar.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483647;' +
+      'display:inline-flex;align-items:center;gap:10px;background:#1b1b2b;color:#fff;' +
+      'font:600 13px system-ui,-apple-system,sans-serif;padding:7px 9px 7px 12px;border-radius:999px;' +
+      'box-shadow:0 6px 24px rgba(0,0,0,.5);cursor:grab;user-select:none'
+
+    var grip = document.createElement('span')
+    grip.textContent = '⠿'; grip.title = 'Drag to move'
+    grip.style.cssText = 'opacity:.5;font-size:14px;letter-spacing:-1px'
+    var lbl = document.createElement('span'); lbl.id = '__pickerLabel'; lbl.style.cssText = 'opacity:.9'
+    var btn = document.createElement('button'); btn.id = '__pickerToggle'
+    btn.style.cssText = 'cursor:pointer;border:none;border-radius:999px;padding:6px 14px;font:inherit;color:#fff'
+
+    btn.addEventListener('click', function (ev) {
+      ev.preventDefault(); ev.stopPropagation()
+      setArmed(!armed())
+    }, true)
+
+    // Drag-to-reposition so the pill can be moved off whatever it covers.
+    var drag = false, sx = 0, sy = 0, ox = 0, oy = 0
+    bar.addEventListener('mousedown', function (ev) {
+      if (ev.target === btn || btn.contains(ev.target)) return
+      var r = bar.getBoundingClientRect()
+      drag = true; sx = ev.clientX; sy = ev.clientY; ox = r.left; oy = r.top
+      bar.style.transform = 'none'; bar.style.left = r.left + 'px'; bar.style.top = r.top + 'px'; bar.style.bottom = 'auto'
+      bar.style.cursor = 'grabbing'
+      ev.preventDefault(); ev.stopPropagation()
+    }, true)
+    document.addEventListener('mousemove', function (ev) {
+      if (!drag) return
+      var maxX = window.innerWidth - bar.offsetWidth, maxY = window.innerHeight - bar.offsetHeight
+      bar.style.left = Math.max(0, Math.min(maxX, ox + ev.clientX - sx)) + 'px'
+      bar.style.top = Math.max(0, Math.min(maxY, oy + ev.clientY - sy)) + 'px'
+      ev.preventDefault()
+    }, true)
+    document.addEventListener('mouseup', function () { if (drag) { drag = false; bar.style.cursor = 'grab' } }, true)
+
+    bar.appendChild(grip); bar.appendChild(lbl); bar.appendChild(btn)
+    document.documentElement.appendChild(bar)
+    render()
+  }
+
+  // Kept for the main process's post-replay call; just ensures the bar exists.
+  window.__pickerArm = function () { if (!document.getElementById('__pickerBar')) buildBar() }
+
+  if (document.body) buildBar()
+  else document.addEventListener('DOMContentLoaded', buildBar)
 }
 
 /**

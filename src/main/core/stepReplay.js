@@ -8,10 +8,13 @@
  * replayable; assertions and screenshots are intentionally excluded.
  */
 
+import { findDragHandleRect, synthDrag } from './dragHelpers'
+
 export const REPLAYABLE = new Set([
   'navigate', 'reload', 'goBack', 'goForward', 'waitForUrl',
   'click', 'dblclick', 'rightClick', 'hover', 'focus', 'selectOption',
   'fill', 'type', 'clearInput', 'pressKey', 'uploadFile', 'dragAndDrop',
+  'dragByOffset', 'clickAt', 'zoom',
   'waitForSelector', 'waitForTimeout', 'waitForNetworkIdle'
 ])
 
@@ -60,6 +63,50 @@ export async function replayStep(page, action, p, baseUrl) {
     case 'pressKey':           return page.press(p.selector || 'body', p.key)
     case 'uploadFile':         return page.setInputFiles(p.selector, p.filePath)
     case 'dragAndDrop':        return page.dragAndDrop(p.source, p.target)
+
+    case 'dragByOffset': {
+      // Mirror scriptGenerator: press the real drag handle, paced discrete moves, and a
+      // synthetic-event fallback if the panel didn't move.
+      const el = await locator(page, p).elementHandle()
+      if (!el) throw new Error('Drag source not found: ' + (p.selector || ''))
+      const dx = Number(p.dx) || 0, dy = Number(p.dy) || 0
+      const r = await page.evaluate(findDragHandleRect, el)
+      const before = await page.evaluate(findDragHandleRect, el)
+      const sx = r.x + r.w / 2, sy = r.y + r.h / 2, N = 25
+      await page.mouse.move(sx, sy)
+      await page.mouse.down()
+      await page.waitForTimeout(80)
+      for (let i = 1; i <= N; i++) {
+        await page.mouse.move(sx + (dx * i) / N, sy + (dy * i) / N)
+        await page.waitForTimeout(16)
+      }
+      await page.waitForTimeout(80)
+      await page.mouse.up()
+      const after = await page.evaluate(findDragHandleRect, el)
+      if (Math.abs(after.x - before.x) < 3 && Math.abs(after.y - before.y) < 3) {
+        await page.evaluate(synthDrag, { el, dx, dy })
+      }
+      return undefined
+    }
+
+    case 'clickAt': {
+      const x = Number(p.x) || 0, y = Number(p.y) || 0
+      if (p.selector) return locator(page, p).click({ position: { x, y } })
+      return page.mouse.click(x, y)
+    }
+
+    case 'zoom': {
+      const deltaY = Number(p.deltaY) || -100
+      const times = Math.max(1, Number(p.times) || 1)
+      if (p.selector) {
+        // Low-level move (not hover) so an overlapping panel can't block actionability.
+        const b = await locator(page, p).boundingBox()
+        if (b) await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2)
+      }
+      for (let i = 0; i < times; i++) { await page.mouse.wheel(0, deltaY); await page.waitForTimeout(150) }
+      return undefined
+    }
+
     case 'waitForSelector':    return page.waitForSelector(p.selector, { state: p.state || 'visible' })
     case 'waitForTimeout':     return page.waitForTimeout(Number(p.ms) || 1000)
     case 'waitForNetworkIdle': return page.waitForLoadState('networkidle')

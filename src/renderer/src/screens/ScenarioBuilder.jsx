@@ -26,6 +26,8 @@ function buildRecordedParams(p) {
   if (p.action === 'selectOption') return { ...params, selector: p.selector, value: p.value ?? '' }
   if (p.action === 'pressKey')     return { ...params, selector: p.selector, key: p.key }
   if (p.action === 'navigate')     return { ...params, url: p.url ?? '' }
+  // Assert captured in the recorder's assert mode — a "Then" check (e.g. success toast).
+  if (p.action === 'assertVisible') return { _keyword: 'Then', selector: p.selector }
   // Map / canvas gestures captured by the recorder
   if (p.action === 'clickAt')      return { ...params, selector: p.selector, x: p.x, y: p.y }
   if (p.action === 'dragByOffset') return { ...params, selector: p.selector, dx: p.dx, dy: p.dy, x: p.x, y: p.y }

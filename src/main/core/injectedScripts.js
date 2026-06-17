@@ -361,6 +361,12 @@ export function recorderListener() {
   }
 
   function armed() { try { return sessionStorage.getItem('__recArmed') === '1' } catch (e) { return false } }
+  function setArmed(v) { try { sessionStorage.setItem('__recArmed', v ? '1' : '0') } catch (e) {} }
+  // Assert mode: the NEXT click marks its target as a "check this is visible" step
+  // (e.g. a success toast) instead of performing/recording a normal click. One-shot.
+  function assertMode() { try { return sessionStorage.getItem('__recAssert') === '1' } catch (e) { return false } }
+  function setAssert(v) { try { sessionStorage.setItem('__recAssert', v ? '1' : '0') } catch (e) {} }
+  var renderBar = null   // set by buildBar so capture handlers can refresh the bar
   function getCount() { try { return parseInt(sessionStorage.getItem('__recCount') || '0', 10) } catch (e) { return 0 } }
   function setCount(n) { try { sessionStorage.setItem('__recCount', String(n)) } catch (e) {} }
   function inBar(t) { return t && t.closest && t.closest('#__recBar') }
@@ -392,7 +398,7 @@ export function recorderListener() {
   }
 
   document.addEventListener('mousedown', function (e) {
-    if (!armed()) { down = null; return }
+    if (!armed() || assertMode()) { down = null; return }
     if (inBar(e.target)) { down = null; return }
     down = { el: e.target, x: e.clientX, y: e.clientY }; dragged = false
   }, true)
@@ -413,6 +419,17 @@ export function recorderListener() {
   document.addEventListener('click', function (e) {
     if (!armed()) return
     var t = e.target; if (inBar(t)) return
+    // Assert mode: don't perform the click — mark the target as a visibility check
+    // (the success-notification case) and emit an assertVisible step. One-shot.
+    if (assertMode()) {
+      e.preventDefault(); e.stopPropagation()
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation()
+      var asel = window.__genSelector(t)
+      send({ action: 'assertVisible', selector: asel, label: 'Assert visible: ' + (labelOf(t) || asel) })
+      setAssert(false)
+      if (renderBar) renderBar()
+      return
+    }
     if (dragged) { dragged = false; return }   // this click is the tail end of a drag
     maybeSmartWait(t)   // may emit a "wait for the container that just appeared" first
     if (t.tagName === 'CANVAS') {
@@ -426,7 +443,7 @@ export function recorderListener() {
 
   // Coalesce a wheel-zoom gesture (many events) into ONE step with the summed delta.
   document.addEventListener('wheel', function (e) {
-    if (!armed()) return
+    if (!armed() || assertMode()) return
     var t = e.target; if (inBar(t)) return
     wheelAcc += e.deltaY; wheelEl = t
     if (wheelTimer) clearTimeout(wheelTimer)
@@ -440,7 +457,7 @@ export function recorderListener() {
   }, true)
 
   document.addEventListener('change', function (e) {
-    if (!armed()) return
+    if (!armed() || assertMode()) return
     var t = e.target; if (inBar(t)) return
     var tn = t && t.tagName
     if (tn === 'SELECT') { send({ action: 'selectOption', selector: window.__genSelector(t), value: t.value, label: labelOf(t) }); return }
@@ -452,7 +469,7 @@ export function recorderListener() {
   }, true)
 
   document.addEventListener('keydown', function (e) {
-    if (!armed()) return
+    if (!armed() || assertMode()) return
     var t = e.target; if (inBar(t)) return
     if (['Enter', 'Tab', 'Escape'].indexOf(e.key) >= 0) {
       send({ action: 'pressKey', selector: window.__genSelector(t), key: e.key, label: e.key })
@@ -472,37 +489,61 @@ export function recorderListener() {
     grip.textContent = '⠿'; grip.title = 'Drag to move'
     grip.style.cssText = 'opacity:.5;font-size:14px;letter-spacing:-1px'
     var dot = document.createElement('span')
-    var btn = document.createElement('button')
-    btn.style.cssText = 'cursor:pointer;border:none;border-radius:999px;padding:6px 14px;font:inherit;color:#fff'
+
+    // Three controls. Pause flips the armed flag WITHOUT calling __recordDone, so the
+    // tester can pan the map / re-pick a pin / re-login without it being recorded, then
+    // Resume right where they left off. Assert marks the next click as a visibility
+    // check. Only Stop & save ends the whole session.
+    function mkBtn() { var b = document.createElement('button'); b.style.cssText = 'cursor:pointer;border:none;border-radius:999px;padding:6px 13px;font:inherit;color:#fff'; return b }
+    var btnMain = mkBtn()
+    var btnAssert = mkBtn(); btnAssert.id = '__recAssertBtn'
+    var btnStop = mkBtn()
     var info = document.createElement('span'); info.id = '__recCount'; info.style.cssText = 'opacity:.85;padding-right:4px'
     info.textContent = getCount() + ' steps'
 
     function render() {
       if (armed()) {
         dot.textContent = '●'; dot.style.color = '#EF4444'
-        btn.textContent = '■ Stop'; btn.style.background = '#EF4444'
+        btnMain.textContent = '⏸ Pause'
       } else {
-        dot.textContent = '○'; dot.style.color = '#9CA3AF'
-        btn.textContent = '▶ Start Recording'; btn.style.background = '#6C63FF'
+        dot.textContent = getCount() ? '❚❚' : '○'; dot.style.color = getCount() ? '#F59E0B' : '#9CA3AF'
+        btnMain.textContent = getCount() ? '▶ Resume' : '▶ Start Recording'
       }
+      btnMain.style.background = '#6C63FF'
+      // Assert applies only while recording; dim it when paused/stopped.
+      var on = assertMode()
+      btnAssert.textContent = on ? '✓ Click target…' : '✓ Assert'
+      btnAssert.style.background = on ? '#F59E0B' : 'rgba(255,255,255,.14)'
+      btnAssert.style.opacity = armed() ? '1' : '.45'
+      btnStop.textContent = '■ Stop & save'; btnStop.style.background = '#EF4444'
     }
+    renderBar = render
 
-    btn.addEventListener('click', function (ev) {
+    btnMain.addEventListener('click', function (ev) {
       ev.preventDefault(); ev.stopPropagation()
-      if (armed()) {
-        try { sessionStorage.setItem('__recArmed', '0') } catch (e) {}
-        render(); info.textContent = '✓ ' + getCount() + ' saved'
-        try { window.__recordDone() } catch (e) {}
-      } else {
-        try { sessionStorage.setItem('__recArmed', '1') } catch (e) {}
-        render()
-      }
+      setArmed(!armed())
+      if (!armed()) setAssert(false)   // leaving record mode clears a pending assert
+      render()
+    }, true)
+
+    btnAssert.addEventListener('click', function (ev) {
+      ev.preventDefault(); ev.stopPropagation()
+      if (!armed()) return             // assert is a recording-time check
+      setAssert(!assertMode())
+      render()
+    }, true)
+
+    btnStop.addEventListener('click', function (ev) {
+      ev.preventDefault(); ev.stopPropagation()
+      setArmed(false); setAssert(false)
+      render(); info.textContent = '✓ ' + getCount() + ' saved'
+      try { window.__recordDone() } catch (e) {}
     }, true)
 
     // Drag-to-reposition (so it can be moved off whatever it covers on any layout).
     var drag = false, sx = 0, sy = 0, ox = 0, oy = 0
     bar.addEventListener('mousedown', function (ev) {
-      if (ev.target === btn || btn.contains(ev.target)) return
+      if (ev.target.closest && ev.target.closest('button')) return
       var r = bar.getBoundingClientRect()
       drag = true; sx = ev.clientX; sy = ev.clientY; ox = r.left; oy = r.top
       bar.style.transform = 'none'; bar.style.left = r.left + 'px'; bar.style.top = r.top + 'px'; bar.style.bottom = 'auto'
@@ -518,7 +559,9 @@ export function recorderListener() {
     }, true)
     document.addEventListener('mouseup', function () { if (drag) { drag = false; bar.style.cursor = 'grab' } }, true)
 
-    bar.appendChild(grip); bar.appendChild(dot); bar.appendChild(btn); bar.appendChild(info)
+    bar.appendChild(grip); bar.appendChild(dot)
+    bar.appendChild(btnMain); bar.appendChild(btnAssert); bar.appendChild(btnStop)
+    bar.appendChild(info)
     document.documentElement.appendChild(bar)
     render()
   }

@@ -9,8 +9,13 @@ const CATEGORY_KEYWORD = {
   Mouse: 'When',
   Assertions: 'Then',
   Waits: 'When',
+  Flow: 'When',
   Util: 'When'
 }
+
+// Group markers wrap a range of steps (loopStart/loopEnd are legacy repeat-group aliases).
+const isGroupStart = a => a === 'groupStart' || a === 'loopStart'
+const isGroupEnd = a => a === 'groupEnd' || a === 'loopEnd'
 
 const KEYWORD_COLOR = {
   Given: '#3B82F6',
@@ -465,7 +470,22 @@ function SelectorChooser({ title, candidates, onUse, onFallback, onClose }) {
 
 // ─── Canvas Step ─────────────────────────────────────────────────────────────
 
-function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, priorSteps = [], collections = [], expanded = true, onToggleExpand, selected = false, onToggleSelect }) {
+function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, priorSteps = [], collections = [], indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
+  // Drag-and-drop wiring shared by the normal card and the group cards.
+  const dragging = dragId === step.id
+  const showDropLine = overId === step.id && dragId && dragId !== step.id
+  const dragHandlers = {
+    onDragOver: dragId ? (e => { e.preventDefault(); onDragOverStep && onDragOverStep(step.id) }) : undefined,
+    onDrop: dragId ? (e => { e.preventDefault(); onDropStep && onDropStep(step.id) }) : undefined,
+    onMouseDown: () => onActivate && onActivate(step.id)
+  }
+  const gripProps = {
+    draggable: true,
+    onDragStart: (e) => { e.stopPropagation(); try { e.dataTransfer.effectAllowed = 'move' } catch {} ; onDragStartStep && onDragStartStep(step.id) },
+    onDragEnd: () => onDragEndStep && onDragEndStep(),
+    title: 'Drag to move',
+    style: { cursor: 'grab', color: 'var(--text-muted)', fontSize: 13, flexShrink: 0, userSelect: 'none', padding: '0 2px' }
+  }
   const params = typeof step.params === 'string' ? JSON.parse(step.params) : (step.params || {})
   const def = ACTION_DEFS[step.action] || { label: step.action, params: [], category: 'Interaction' }
 
@@ -486,18 +506,91 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
     updateParam('_keyword', next)
   }
 
-  const borderColor = KEYWORD_COLOR[keyword] || KEYWORD_COLOR.When
+  const isLoop = isGroupStart(step.action) || isGroupEnd(step.action)
+  const borderColor = isLoop ? 'var(--accent)' : (KEYWORD_COLOR[keyword] || KEYWORD_COLOR.When)
+
+  // --- Group start: a named, collapsible block with an optional "repeat per data set" ---
+  if (isGroupStart(step.action)) {
+    const col = collections.find(c => c.id === params.collectionId)
+    const grp = params.group || 'positive'
+    const n = col ? col.sets.filter(s => grp === 'all' || s.group_type === grp).length : 0
+    const repeat = step.action === 'loopStart' || !!params.repeat
+    return (
+      <div {...dragHandlers} style={{ border: `1px solid ${active ? 'var(--accent)' : 'var(--accent)'}`, borderRadius: 8, marginBottom: 8, marginLeft: indent * 18,
+        background: 'var(--accent-dim)', opacity: dragging ? 0.4 : 1,
+        boxShadow: showDropLine ? '0 -3px 0 -1px var(--accent)' : (active ? '0 0 0 2px var(--accent)' : undefined) }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', flexWrap: 'wrap' }}>
+          <span {...gripProps}>⠿</span>
+          <button onClick={onToggleGroup} title={groupCollapsed ? 'Expand group' : 'Collapse group'}
+            style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+            {groupCollapsed ? '▸' : '▾'} ⊞
+          </button>
+          <input value={step.label || ''} onChange={e => onChange({ ...step, label: e.target.value })}
+            placeholder="Group name" style={{ fontFamily: 'var(--font-hand)', fontSize: 15, color: 'var(--ink)',
+              background: 'transparent', border: 'none', borderBottom: '1px dashed var(--border)', minWidth: 120 }} />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={repeat} onChange={e => updateParam('repeat', e.target.checked)}
+              style={{ width: 'auto', margin: 0 }} disabled={step.action === 'loopStart'} />
+            🔁 repeat for each data set
+          </label>
+          {repeat && (
+            <>
+              <select value={params.collectionId || ''} onChange={e => updateParam('collectionId', e.target.value)} style={{ fontSize: 12 }}>
+                <option value="">— collection —</option>
+                {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <select value={grp} onChange={e => updateParam('group', e.target.value)} style={{ fontSize: 12 }}>
+                <option value="positive">📗 Positive</option>
+                <option value="negative">📕 Negative</option>
+                <option value="edge">📒 Edge</option>
+                <option value="all">All groups</option>
+              </select>
+            </>
+          )}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
+            <button onClick={() => onMove(step.id, 'up')} title="Move group up"
+              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '3px 5px', cursor: 'pointer' }}>↑</button>
+            <button onClick={() => onMove(step.id, 'down')} title="Move group down"
+              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '3px 5px', cursor: 'pointer' }}>↓</button>
+            <button onClick={onUngroup} title="Remove the group (keep the steps)"
+              style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>⊟ Ungroup</button>
+          </div>
+        </div>
+        {repeat && (
+          <div style={{ padding: '0 12px 8px', fontSize: 11, color: 'var(--text-muted)' }}>
+            {col ? `↻ Steps in this group run ${n} time${n !== 1 ? 's' : ''} — once per ${grp === 'all' ? '' : grp + ' '}set, with that set's {{tokens}}.` : 'Pick a collection to repeat over.'}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // --- Group end: a thin closing marker (also a drop target → drop here = last in group) ---
+  if (isGroupEnd(step.action)) {
+    return (
+      <div {...dragHandlers} style={{ marginLeft: indent * 18, marginBottom: 8, padding: '3px 12px',
+        borderLeft: '2px dashed var(--accent)', fontSize: 10, fontWeight: 700, letterSpacing: '0.05em',
+        textTransform: 'uppercase', color: 'var(--accent)', opacity: 0.7,
+        boxShadow: showDropLine ? '0 -3px 0 -1px var(--accent)' : undefined }}>
+        ⊞ end group
+      </div>
+    )
+  }
 
   return (
-    <div style={{
+    <div {...dragHandlers} style={{
       border: `1px solid ${selected ? 'rgba(108,99,255,0.45)' : 'var(--border)'}`,
       borderLeft: `3px solid ${borderColor}`,
       borderRadius: 8,
       marginBottom: 8,
-      background: selected ? 'var(--accent-dim)' : 'var(--bg)'
+      marginLeft: indent * 18,
+      opacity: dragging ? 0.4 : 1,
+      boxShadow: showDropLine ? '0 -3px 0 -1px var(--accent)' : (active ? '0 0 0 2px var(--accent)' : undefined),
+      background: selected ? 'var(--accent-dim)' : (isLoop ? 'var(--accent-dim)' : 'var(--bg)')
     }}>
       {/* Header row */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
+        <span {...gripProps}>⠿</span>
         {onToggleSelect && (
           <input type="checkbox" checked={selected} onChange={onToggleSelect}
             onClick={e => e.stopPropagation()} title="Select for bulk actions"
@@ -986,16 +1079,24 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [recording, setRecording]     = useState(false)
   const [expandedIds, setExpandedIds] = useState(() => new Set())
   const [selectedIds, setSelectedIds] = useState(() => new Set())
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set())   // groupStart ids hidden
+  const [dragId, setDragId] = useState(null)     // step/group being dragged
+  const [overId, setOverId] = useState(null)     // drop-before target (for the indicator line)
+  const [activeId, setActiveId] = useState(null) // last-clicked step (highlight)
   const [collections, setCollections] = useState([])
   const [fillMenu, setFillMenu]       = useState(false)   // "Fill form" collection picker open
   const [dataModal, setDataModal]     = useState(false)   // capture/create test data inline
+  const [ddCollectionId, setDdCollectionId] = useState('')  // data-driven: collection to iterate
+  const [ddGroup, setDdGroup]         = useState('positive') // data-driven: which group of sets
+  const [ddLogoutId, setDdLogoutId]   = useState('')      // data-driven: logout scenario between runs
   const saveChain                     = useRef(Promise.resolve())   // serialize background step saves
 
   function toggleExpand(id) {
     setExpandedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
-  const expandAll   = () => setExpandedIds(new Set(steps.map(s => s.id)))
-  const collapseAll = () => setExpandedIds(new Set())
+  // Expand/Collapse all also opens/closes every group block (not just step-card params).
+  const expandAll   = () => { setExpandedIds(new Set(steps.map(s => s.id))); setCollapsedGroups(new Set()) }
+  const collapseAll = () => { setExpandedIds(new Set()); setCollapsedGroups(new Set(steps.filter(s => isGroupStart(s.action)).map(s => s.id))) }
 
   function toggleSelect(id) {
     setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -1010,6 +1111,47 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     for (const id of selectedIds) await window.api.deleteStep(id)
     setSteps(prev => prev.filter(s => !selectedIds.has(s.id)))
     setSelectedIds(new Set())
+  }
+
+  // Wrap the selected steps (by their span min..max) in a groupStart/groupEnd pair.
+  async function groupSelected() {
+    if (!active || selectedIds.size === 0) return
+    const idxs = steps.map((s, i) => selectedIds.has(s.id) ? i : -1).filter(i => i >= 0)
+    const min = Math.min(...idxs), max = Math.max(...idxs)
+    // The span must contain whole groups only (balanced markers) — else wrapping it would
+    // cross an existing group boundary. Nesting a group fully inside another is fine.
+    let d = 0, balanced = true
+    for (let k = min; k <= max; k++) {
+      if (isGroupStart(steps[k].action)) d++
+      else if (isGroupEnd(steps[k].action)) { d--; if (d < 0) { balanced = false; break } }
+    }
+    if (!balanced || d !== 0) {
+      await confirmDialog('That selection splits an existing group. Pick whole groups, or steps within a single group.', { confirmText: 'OK' })
+      return
+    }
+    const gs = await window.api.saveStep({ scenario_id: active.id, action: 'groupStart',
+      params: { _keyword: 'When', label: 'Group', repeat: false, group: 'positive' }, label: 'Group', sort_order: 0 })
+    const ge = await window.api.saveStep({ scenario_id: active.id, action: 'groupEnd', params: {}, label: '', sort_order: 0 })
+    const ids = steps.map(s => s.id)
+    const order = [...ids.slice(0, min), gs.id, ...ids.slice(min, max + 1), ge.id, ...ids.slice(max + 1)]
+    await window.api.reorderSteps(active.id, order)
+    setSteps(await window.api.getSteps(active.id))
+    setSelectedIds(new Set())
+    if (gs.id) setExpandedIds(prev => new Set(prev).add(gs.id))
+  }
+
+  const toggleGroupCollapse = (id) =>
+    setCollapsedGroups(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  // Remove a group's markers (keep the inner steps in place).
+  async function ungroupGroup(groupStartId) {
+    const i = steps.findIndex(s => s.id === groupStartId)
+    if (i < 0) return
+    let j = i + 1
+    while (j < steps.length && !isGroupEnd(steps[j].action)) j++
+    await window.api.deleteStep(groupStartId)
+    if (j < steps.length) await window.api.deleteStep(steps[j].id)
+    setSteps(await window.api.getSteps(active.id))
   }
 
   useEffect(() => {
@@ -1035,6 +1177,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     setActive(scenario)
     setExpandedIds(new Set())   // collapse for a clean overview on switch
     setSelectedIds(new Set())   // drop any bulk selection from the previous scenario
+    setCollapsedGroups(new Set())
     const s = await window.api.getSteps(scenario.id)
     setSteps(s)
   }
@@ -1072,6 +1215,35 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     const data = await window.api.getScenarios(profileId)
     setScenarios(data)
     if (data.length) selectScenario(data[0])
+  }
+
+  // Reorder scenarios — Run All executes them top→bottom (e.g. Login → Logout → Login).
+  async function moveScenario(id, dir) {
+    const idx = scenarios.findIndex(s => s.id === id)
+    const swap = dir === 'up' ? idx - 1 : idx + 1
+    if (idx < 0 || swap < 0 || swap >= scenarios.length) return
+    const next = [...scenarios]
+    ;[next[idx], next[swap]] = [next[swap], next[idx]]
+    setScenarios(next)
+    await window.api.reorderScenarios(profileId, next.map(s => s.id))
+  }
+
+  // Duplicate a scenario (+ its steps) within this profile, then select the copy.
+  async function duplicateScenario(id) {
+    const res = await window.api.duplicateScenario(id)
+    const data = await window.api.getScenarios(profileId)
+    setScenarios(data)
+    if (res?.id) { const c = data.find(s => s.id === res.id); if (c) selectScenario(c) }
+  }
+
+  // Data-driven: run the active scenario once per data set in the chosen collection+group,
+  // logging out between iterations. Hands off to ActiveRun (which calls runDataDriven).
+  function runDataDriven(dataSetIds) {
+    if (!active || !dataSetIds.length) return
+    navigate('run', {
+      profileId, scenarioId: active.id, scenarioName: active.name,
+      dataDriven: { dataSetIds, logoutScenarioId: ddLogoutId || null }
+    })
   }
 
   async function addStep(actionKey) {
@@ -1141,15 +1313,80 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     setSelectedIds(prev => { if (!prev.has(id)) return prev; const n = new Set(prev); n.delete(id); return n })
   }
 
-  async function moveStep(id, direction) {
-    const idx = steps.findIndex(s => s.id === id)
-    const next = [...steps]
-    const swap = direction === 'up' ? idx - 1 : idx + 1
-    if (swap < 0 || swap >= next.length) return
-    ;[next[idx], next[swap]] = [next[swap], next[idx]]
-    setSteps(next)
-    await window.api.reorderSteps(active.id, next.map(s => s.id))
+  // The contiguous span [start,end] of the "unit" at idx: a whole group (start→matched end)
+  // if idx is a group marker, otherwise just the single step. Used for block-aware moves.
+  function unitRange(arr, idx) {
+    const s = arr[idx]
+    if (isGroupStart(s.action)) {
+      let depth = 1, j = idx + 1
+      while (j < arr.length && depth > 0) {
+        if (isGroupStart(arr[j].action)) depth++
+        else if (isGroupEnd(arr[j].action)) { depth--; if (depth === 0) break }
+        j++
+      }
+      return [idx, Math.min(j, arr.length - 1)]
+    }
+    if (isGroupEnd(s.action)) {
+      let depth = 1, j = idx - 1
+      while (j >= 0 && depth > 0) {
+        if (isGroupEnd(arr[j].action)) depth++
+        else if (isGroupStart(arr[j].action)) { depth--; if (depth === 0) break }
+        j--
+      }
+      return [Math.max(j, 0), idx]
+    }
+    return [idx, idx]
   }
+
+  // Move a step OR a whole group, swapping with the adjacent sibling at the same nesting
+  // level. Won't move a unit out of (or into) its parent group — that keeps pairing intact.
+  async function moveStep(id, direction) {
+    const arr = steps
+    const idx = arr.findIndex(s => s.id === id)
+    if (idx < 0) return
+    const [us, ue] = unitRange(arr, idx)
+    const ids = arr.map(s => s.id)
+    let newIds
+    if (direction === 'up') {
+      if (us === 0) return
+      const [ps, pe] = unitRange(arr, us - 1)
+      if (pe !== us - 1) return   // previous element is our parent's open marker → at boundary
+      newIds = [...ids.slice(0, ps), ...ids.slice(us, ue + 1), ...ids.slice(ps, us), ...ids.slice(ue + 1)]
+    } else {
+      if (ue >= arr.length - 1) return
+      if (isGroupEnd(arr[ue + 1].action)) return   // next is our parent's close marker → boundary
+      const [ns, ne] = unitRange(arr, ue + 1)
+      newIds = [...ids.slice(0, us), ...ids.slice(ns, ne + 1), ...ids.slice(us, ue + 1), ...ids.slice(ne + 1)]
+    }
+    await window.api.reorderSteps(active.id, newIds)
+    setSteps(await window.api.getSteps(active.id))
+  }
+
+  // Drag-and-drop: move the dragged unit (a step, or a whole group if its start is dragged)
+  // to just BEFORE `beforeId` (or to the end when null). Dropping between a group's markers
+  // makes the step a member of that group — membership is purely positional.
+  async function reorderByDrag(dragStepId, beforeId) {
+    if (!dragStepId || dragStepId === beforeId) return
+    const arr = steps
+    const di = arr.findIndex(s => s.id === dragStepId)
+    if (di < 0) return
+    const [us, ue] = unitRange(arr, di)
+    if (beforeId != null) {
+      const bi = arr.findIndex(s => s.id === beforeId)
+      if (bi >= us && bi <= ue) return   // can't drop a unit inside itself
+    }
+    const ids = arr.map(s => s.id)
+    const unit = ids.slice(us, ue + 1)
+    const remaining = [...ids.slice(0, us), ...ids.slice(ue + 1)]
+    let at = beforeId == null ? remaining.length : remaining.indexOf(beforeId)
+    if (at < 0) at = remaining.length
+    const newIds = [...remaining.slice(0, at), ...unit, ...remaining.slice(at)]
+    if (newIds.join() === ids.join()) return   // no-op
+    await window.api.reorderSteps(active.id, newIds)
+    setSteps(await window.api.getSteps(active.id))
+  }
+
+  const onDropBefore = (beforeId) => { const d = dragId; setDragId(null); setOverId(null); if (d) reorderByDrag(d, beforeId) }
 
   async function record() {
     if (!active || !profile) return
@@ -1315,9 +1552,11 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                 {scenarios.length === 0 && (
                   <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '10px 0' }}>No scenarios yet</p>
                 )}
-                {scenarios.map(s => (
+                {scenarios.map((s, i) => {
+                  const iconBtn = { background: 'none', border: 'none', color: 'var(--text-muted)', padding: '0 2px', flexShrink: 0, cursor: 'pointer' }
+                  return (
                   <div key={s.id} onClick={() => selectScenario(s)} style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1,
                     padding: '6px 8px', borderRadius: 6, cursor: 'pointer', marginBottom: 2,
                     background: active?.id === s.id ? 'var(--accent-dim)' : 'transparent',
                     border: active?.id === s.id ? '1px solid rgba(108,99,255,0.2)' : '1px solid transparent',
@@ -1327,13 +1566,20 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                       {s.name}
                     </span>
+                    <button onClick={e => { e.stopPropagation(); moveScenario(s.id, 'up') }} disabled={i === 0}
+                      title="Move up (runs earlier)" style={{ ...iconBtn, fontSize: 11, opacity: i === 0 ? 0.3 : 1 }}>↑</button>
+                    <button onClick={e => { e.stopPropagation(); moveScenario(s.id, 'down') }} disabled={i === scenarios.length - 1}
+                      title="Move down (runs later)" style={{ ...iconBtn, fontSize: 11, opacity: i === scenarios.length - 1 ? 0.3 : 1 }}>↓</button>
+                    <button onClick={e => { e.stopPropagation(); duplicateScenario(s.id) }}
+                      title="Duplicate this scenario" style={{ ...iconBtn, fontSize: 12 }}>⧉</button>
                     <button onClick={e => { e.stopPropagation(); navigate('run', { profileId, scenarioId: s.id, scenarioName: s.name }) }}
                       title="Run just this scenario (with its prerequisite) in a fresh browser"
-                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '0 3px', fontSize: 11, flexShrink: 0, cursor: 'pointer' }}>▶</button>
+                      style={{ ...iconBtn, fontSize: 11 }}>▶</button>
                     <button onClick={e => { e.stopPropagation(); deleteScenario(s.id) }}
-                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '0 2px', fontSize: 14, flexShrink: 0 }}>×</button>
+                      style={{ ...iconBtn, fontSize: 14 }}>×</button>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           </div>
@@ -1438,6 +1684,11 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     {selectedIds.size > 0 && (
                       <>
                         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{selectedIds.size} selected</span>
+                        <button onClick={groupSelected} title="Wrap these steps in a group (then name it / make it repeat)"
+                          style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent)', borderRadius: 6,
+                          padding: '5px 8px', fontSize: 11, fontWeight: 600, color: 'var(--accent)', cursor: 'pointer' }}>
+                          ⊞ Group
+                        </button>
                         <button onClick={deleteSelected} style={{ background: 'rgba(239,68,68,0.1)',
                           border: '1px solid rgba(239,68,68,0.35)', borderRadius: 6, padding: '5px 8px',
                           fontSize: 11, fontWeight: 600, color: '#EF4444', cursor: 'pointer' }}>
@@ -1482,6 +1733,45 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                       : 'setup to run before this scenario when run on its own'}
                   </span>
                 </div>
+
+                {/* Data-driven: repeat this scenario for every data set in a group */}
+                {collections.length > 0 && (() => {
+                  const ddCollection = collections.find(c => c.id === ddCollectionId)
+                  const ddSets = ddCollection ? ddCollection.sets.filter(s => ddGroup === 'all' || s.group_type === ddGroup) : []
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
+                        🔁 Run across
+                      </span>
+                      <select value={ddCollectionId} onChange={e => setDdCollectionId(e.target.value)} style={{ fontSize: 12, padding: '4px 8px' }}>
+                        <option value="">— Pick data collection —</option>
+                        {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                      {ddCollectionId && (
+                        <>
+                          <select value={ddGroup} onChange={e => setDdGroup(e.target.value)} style={{ fontSize: 12, padding: '4px 8px' }}>
+                            <option value="positive">📗 Positive</option>
+                            <option value="negative">📕 Negative</option>
+                            <option value="edge">📒 Edge</option>
+                            <option value="all">All groups</option>
+                          </select>
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>logout with</span>
+                          <select value={ddLogoutId} onChange={e => setDdLogoutId(e.target.value)} style={{ fontSize: 12, padding: '4px 8px', maxWidth: 180 }}>
+                            <option value="">— No logout —</option>
+                            {scenarios.filter(s => s.id !== active.id).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
+                          <button className="btn-primary" disabled={!ddSets.length} onClick={() => runDataDriven(ddSets.map(s => s.id))}
+                            style={{ padding: '5px 12px', fontSize: 12 }}>
+                            ▶ Run × {ddSets.length}
+                          </button>
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                            {ddSets.length ? `runs this scenario once per ${ddGroup === 'all' ? '' : ddGroup + ' '}set` : 'no sets in this group yet'}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
                 {steps.length === 0 ? (
@@ -1490,13 +1780,51 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     <p>Click any action from the Step Library to add it here.</p>
                   </div>
                 ) : (
-                  steps.map((step, i) => (
-                    <CanvasStep key={step.id} step={step} index={i} total={steps.length}
-                      onChange={updateStep} onDelete={deleteStep} onMove={moveStep}
-                      profile={profile} priorSteps={steps.slice(0, i)} collections={collections}
-                      expanded={expandedIds.has(step.id)} onToggleExpand={() => toggleExpand(step.id)}
-                      selected={selectedIds.has(step.id)} onToggleSelect={() => toggleSelect(step.id)} />
-                  ))
+                  (() => {
+                    let depth = 0
+                    let hideDepth = null      // depth to return to before un-hiding (nest-aware)
+                    const out = []
+                    steps.forEach((step, i) => {
+                      const start = isGroupStart(step.action), end = isGroupEnd(step.action)
+                      let indent = depth
+                      if (start) depth++
+                      else if (end) { depth = Math.max(0, depth - 1); indent = depth }
+
+                      // Inside a collapsed group: hide everything (incl. nested) until its end
+                      // marker brings depth back to where the collapse began.
+                      if (hideDepth !== null) {
+                        if (end && depth === hideDepth) hideDepth = null
+                        return
+                      }
+                      if (start && collapsedGroups.has(step.id)) hideDepth = depth - 1   // render the start card, hide its body
+
+                      out.push(
+                        <CanvasStep key={step.id} step={step} index={i} total={steps.length} indent={indent}
+                          onChange={updateStep} onDelete={deleteStep} onMove={moveStep}
+                          profile={profile} priorSteps={steps.slice(0, i)} collections={collections}
+                          groupCollapsed={collapsedGroups.has(step.id)} onToggleGroup={() => toggleGroupCollapse(step.id)}
+                          onUngroup={() => ungroupGroup(step.id)}
+                          expanded={expandedIds.has(step.id)} onToggleExpand={() => toggleExpand(step.id)}
+                          selected={selectedIds.has(step.id)} onToggleSelect={() => toggleSelect(step.id)}
+                          dragId={dragId} overId={overId} active={activeId === step.id}
+                          onDragStartStep={(id) => { setDragId(id); setActiveId(id) }}
+                          onDragOverStep={(id) => setOverId(id)}
+                          onDropStep={(id) => onDropBefore(id)}
+                          onDragEndStep={() => { setDragId(null); setOverId(null) }}
+                          onActivate={(id) => setActiveId(id)} />
+                      )
+                    })
+                    // Trailing drop zone — drop here to move a step/group to the very end.
+                    out.push(
+                      <div key="__dropEnd__"
+                        onDragOver={dragId ? (e => { e.preventDefault(); setOverId('__end__') }) : undefined}
+                        onDrop={dragId ? (() => onDropBefore(null)) : undefined}
+                        style={{ height: 24, borderRadius: 6, margin: '2px 0 8px',
+                          border: overId === '__end__' ? '2px dashed var(--accent)' : '2px dashed transparent',
+                          background: overId === '__end__' ? 'var(--accent-dim)' : 'transparent' }} />
+                    )
+                    return out
+                  })()
                 )}
               </div>
             </>

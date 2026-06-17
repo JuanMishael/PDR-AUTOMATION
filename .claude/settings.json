@@ -7,7 +7,8 @@
       "Bash(grep -nA12 \"data_fields\\\\|data_collections\\\\|data_sets\" d:/SIDE_APPS/PDR-AUTOMATION/src/main/core/db.js)",
       "Bash(grep -nA18 \"saveStep\" d:/SIDE_APPS/PDR-AUTOMATION/src/main/ipc/storage.js)",
       "Bash(node -e \"require\\('@babel/core'\\)\")",
-      "Bash(grep -nA10 \"storage:getSteps\" d:/SIDE_APPS/PDR-AUTOMATION/src/main/ipc/storage.js)"
+      "Bash(grep -nA10 \"storage:getSteps\" d:/SIDE_APPS/PDR-AUTOMATION/src/main/ipc/storage.js)",
+      "Bash(git symbolic-ref *)"
     ]
   }
 }

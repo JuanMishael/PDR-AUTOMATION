@@ -143,6 +143,28 @@ export function registerStorageHandlers() {
     return { ok: true, count: src.length }
   })
 
+  // Duplicate one scenario (+ its steps) within the SAME profile, appended after the last.
+  ipcMain.handle('storage:duplicateScenario', (_, scenarioId) => {
+    const d = db()
+    const src = d.prepare('SELECT * FROM scenarios WHERE id = ?').get(scenarioId)
+    if (!src) return { error: 'Scenario not found' }
+    const count = d.prepare('SELECT COUNT(*) AS c FROM scenarios WHERE profile_id = ?').get(src.profile_id)
+    const newId = randomUUID()
+    // cloneScenario remaps prereq only via idMap; a lone copy keeps no prereq link.
+    cloneScenario(d, { ...src, name: `${src.name} (copy)` }, src.profile_id, count?.c || 0, { [src.id]: newId })
+    return { id: newId }
+  })
+
+  // Reorder a profile's scenarios (Run All executes in this order).
+  ipcMain.handle('storage:reorderScenarios', (_, profileId, orderedIds) => {
+    const update = db().prepare('UPDATE scenarios SET sort_order = ? WHERE id = ? AND profile_id = ?')
+    const tx = db().transaction((ids) => {
+      ids.forEach((id, i) => update.run(i, id, profileId))
+    })
+    tx(orderedIds)
+    return { ok: true }
+  })
+
   // --- Steps ---
   ipcMain.handle('storage:getSteps', (_, scenarioId) => {
     return db().prepare('SELECT * FROM steps WHERE scenario_id = ? ORDER BY sort_order').all(scenarioId)

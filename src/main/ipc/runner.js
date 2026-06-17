@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
 import { getDb } from '../core/db'
 import { runWeb, stopRun } from '../core/webRunner'
-import { buildDataContext } from '../core/tokenResolver'
+import { buildDataContext, resolveParams } from '../core/tokenResolver'
 import { refocusMainWindow } from '../core/windowFocus'
 
 // Build a single scenario's full step list for an ISOLATED run: its prerequisite chain
@@ -22,6 +22,76 @@ function collectSteps(db, scenario, seen = new Set()) {
   const combined = [...prereqSteps, ...own]
   combined.forEach((s, i) => { s.sort_order = i })
   return combined
+}
+
+function parseParams(p) {
+  if (typeof p !== 'string') return p || {}
+  try { return JSON.parse(p) } catch { return {} }
+}
+
+// Pre-resolve a step list's {{tokens}} against a data context, producing plain steps with
+// concrete values (params as objects). The run's global resolver then leaves them untouched.
+function resolveStepList(steps, ctx) {
+  return steps.map((s, i) => ({
+    id: s.id, action: s.action, label: s.label,
+    params: resolveParams(parseParams(s.params), ctx), sort_order: i
+  }))
+}
+
+const isGroupStart = a => a === 'groupStart' || a === 'loopStart'
+const isGroupEnd = a => a === 'groupEnd' || a === 'loopEnd'
+
+// Expand group blocks (NESTABLE). The body between a groupStart and its DEPTH-MATCHED
+// groupEnd is inlined; if the group repeats (loopStart is an implicit repeat), the body
+// repeats once per data set in the chosen collection+group, each iteration resolving that
+// set's {{tokens}} and prefixing labels with the set name. Bodies are expanded recursively
+// so inner groups resolve first. Markers are dropped; sort_order re-sequenced at the end.
+async function expandGroupsInner(db, steps) {
+  const out = []
+  let i = 0
+  while (i < steps.length) {
+    const s = steps[i]
+    if (isGroupStart(s.action)) {
+      // Find the matching end by tracking nesting depth.
+      let depth = 1, j = i + 1
+      const body = []
+      while (j < steps.length && depth > 0) {
+        if (isGroupStart(steps[j].action)) depth++
+        else if (isGroupEnd(steps[j].action)) { depth--; if (depth === 0) break }
+        body.push(steps[j]); j++
+      }
+      const p = parseParams(s.params)
+      const repeat = s.action === 'loopStart' || !!p.repeat
+      const expandedBody = await expandGroupsInner(db, body)   // resolve any nested groups first
+
+      if (repeat && p.collectionId) {
+        const sets = p.group && p.group !== 'all'
+          ? db.prepare('SELECT * FROM data_sets WHERE collection_id = ? AND group_type = ? ORDER BY sort_order').all(p.collectionId, p.group)
+          : db.prepare('SELECT * FROM data_sets WHERE collection_id = ? ORDER BY sort_order').all(p.collectionId)
+        for (const set of sets) {
+          const ctx = await buildDataContext(db, set.id)
+          for (const b of expandedBody) {
+            out.push({ id: b.id, action: b.action, label: `[${set.name}] ${b.label || b.action}`, params: resolveParams(parseParams(b.params), ctx) })
+          }
+        }
+      } else {
+        for (const b of expandedBody) out.push(b)   // organizational group — inline once
+      }
+      i = j + 1   // skip the matching end marker
+    } else if (isGroupEnd(s.action)) {
+      i++   // stray end — ignore
+    } else {
+      out.push({ id: s.id, action: s.action, label: s.label, params: parseParams(s.params) })
+      i++   // ← advance past this regular step (omitting this spun forever → heap OOM)
+    }
+  }
+  return out
+}
+
+async function expandGroups(db, steps) {
+  const out = await expandGroupsInner(db, steps)
+  out.forEach((s, idx) => { s.sort_order = idx })
+  return out
 }
 
 // Runs the given scenario groups in ONE browser session and records history.
@@ -90,39 +160,105 @@ export function registerRunnerHandlers() {
     return Object.fromEntries(rows.map(r => [r.key, r.value]))
   }
 
+  // If run SETUP throws (e.g. building data context / expanding groups), the renderer would
+  // otherwise wait forever on a 'complete' that never comes — and look frozen. Emit a visible
+  // error + a failed 'complete' so ActiveRun unsticks.
+  const failRun = (send, err) => {
+    const msg = err?.message || String(err)
+    send('runner:log', { type: 'error', text: `✗ Run failed to start: ${msg}` })
+    send('runner:complete', { runId: null, status: 'failed', passed: 0, failed: 0, durationMs: 0,
+      scenariosTotal: 0, scenariosPassed: 0, scenariosFailed: 0, scenarioResults: [] })
+    refocusMainWindow()
+    return { error: msg }
+  }
+
   // Continuous run: every scenario in the profile, in order, in ONE browser session.
   ipcMain.handle('runner:run', async (_event, profileId, dataSetId = null) => {
-    const db = getDb()
-    const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
-    if (!profile) return { error: 'Profile not found' }
+    const send = sender()
+    try {
+      const db = getDb()
+      const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
+      if (!profile) return { error: 'Profile not found' }
 
-    const scenarioRows = db.prepare('SELECT * FROM scenarios WHERE profile_id = ? ORDER BY sort_order').all(profileId)
-    if (!scenarioRows.length) return { error: 'No scenarios configured for this profile' }
+      const scenarioRows = db.prepare('SELECT * FROM scenarios WHERE profile_id = ? ORDER BY sort_order').all(profileId)
+      if (!scenarioRows.length) return { error: 'No scenarios configured for this profile' }
 
-    const scenarios = scenarioRows.map(s => ({
-      id: s.id,
-      name: s.name,
-      steps: db.prepare('SELECT * FROM steps WHERE scenario_id = ? ORDER BY sort_order').all(s.id)
-    }))
+      const scenarios = []
+      for (const s of scenarioRows) {
+        const rawSteps = db.prepare('SELECT * FROM steps WHERE scenario_id = ? ORDER BY sort_order').all(s.id)
+        scenarios.push({ id: s.id, name: s.name, steps: await expandGroups(db, rawSteps) })
+      }
 
-    return executeRun({ profile, scenarios, settings: loadSettings(db), dataSetId, send: sender() })
+      return await executeRun({ profile, scenarios, settings: loadSettings(db), dataSetId, send })
+    } catch (err) { return failRun(send, err) }
   })
 
   // Isolated run: a single scenario (plus its prerequisite chain) in a fresh browser.
   ipcMain.handle('runner:runScenario', async (_event, { profileId, scenarioId, dataSetId = null }) => {
-    const db = getDb()
-    const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
-    if (!profile) return { error: 'Profile not found' }
-    const scenario = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(scenarioId)
-    if (!scenario) return { error: 'Scenario not found' }
+    const send = sender()
+    try {
+      const db = getDb()
+      const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
+      if (!profile) return { error: 'Profile not found' }
+      const scenario = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(scenarioId)
+      if (!scenario) return { error: 'Scenario not found' }
 
-    const scenarios = [{ id: scenario.id, name: scenario.name, steps: collectSteps(db, scenario) }]
+      const scenarios = [{ id: scenario.id, name: scenario.name, steps: await expandGroups(db, collectSteps(db, scenario)) }]
 
-    return executeRun({
-      profile, scenarios, settings: loadSettings(db), dataSetId,
-      scenarioMeta: { scenarioId: scenario.id, scenarioName: scenario.name },
-      send: sender()
-    })
+      return await executeRun({
+        profile, scenarios, settings: loadSettings(db), dataSetId,
+        scenarioMeta: { scenarioId: scenario.id, scenarioName: scenario.name },
+        send
+      })
+    } catch (err) { return failRun(send, err) }
+  })
+
+  // Data-driven run: repeat ONE scenario once per selected data set, with each iteration's
+  // {{tokens}} resolved from that set. An optional logout scenario runs BETWEEN iterations to
+  // reset the session (so credential #2 sees a fresh login). All in one browser; each
+  // iteration is its own "scenario" so results show pass/fail per data row.
+  ipcMain.handle('runner:runDataDriven', async (_event, { profileId, scenarioId, dataSetIds = [], logoutScenarioId = null }) => {
+    const send = sender()
+    try {
+      const db = getDb()
+      const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
+      if (!profile) return { error: 'Profile not found' }
+      const scenario = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(scenarioId)
+      if (!scenario) return { error: 'Scenario not found' }
+      if (!dataSetIds.length) return { error: 'No data sets selected' }
+
+      const logoutScenario = logoutScenarioId
+        ? db.prepare('SELECT * FROM scenarios WHERE id = ?').get(logoutScenarioId) : null
+      const targetSteps = collectSteps(db, scenario)
+      const logoutSteps = logoutScenario ? collectSteps(db, logoutScenario) : null
+
+      const scenarios = []
+      for (let i = 0; i < dataSetIds.length; i++) {
+        const setId = dataSetIds[i]
+        const set = db.prepare('SELECT * FROM data_sets WHERE id = ?').get(setId)
+        const ctx = await buildDataContext(db, setId)
+        scenarios.push({
+          id: `${scenario.id}::${setId}`,
+          name: `${scenario.name} — ${set?.name || 'set ' + (i + 1)}`,
+          steps: resolveStepList(targetSteps, ctx)
+        })
+        // Logout between iterations (not needed after the very last one).
+        if (logoutSteps && i < dataSetIds.length - 1) {
+          const lctx = await buildDataContext(db, null)
+          scenarios.push({
+            id: `logout::${setId}`,
+            name: logoutScenario.name,
+            steps: resolveStepList(logoutSteps, lctx)
+          })
+        }
+      }
+
+      return await executeRun({
+        profile, scenarios, settings: loadSettings(db), dataSetId: null,
+        scenarioMeta: { scenarioId: scenario.id, scenarioName: scenario.name },
+        send
+      })
+    } catch (err) { return failRun(send, err) }
   })
 
   ipcMain.handle('runner:stop', async (_, runId) => {

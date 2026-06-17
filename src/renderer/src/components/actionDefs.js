@@ -215,6 +215,22 @@ export const ACTION_DEFS = {
     params: []
   },
 
+  // --- Group / Loop ---
+  // groupStart..groupEnd wrap a range of steps into a named, collapsible block. If "repeat"
+  // is on, the body repeats once per data set in the chosen collection+group (each iteration
+  // resolving that set's {{tokens}}). Usually created via "⊞ Group" on selected steps.
+  // Rendered specially in CanvasStep. (loopStart/loopEnd kept as repeat-group aliases.)
+  groupStart: {
+    label: 'Group start', category: 'Flow',
+    summary: p => (p.label || 'Group') + (p.repeat ? ` · repeats ${p.group || 'positive'} sets` : ''),
+    params: [
+      { key: 'repeat', label: 'Repeat for each data set', type: 'boolean' },
+      { key: 'collectionId', label: 'Collection', placeholder: 'pick a data collection' },
+      { key: 'group', label: 'Group', type: 'select', options: ['positive', 'negative', 'edge', 'all'], default: 'positive' }
+    ]
+  },
+  groupEnd: { label: 'Group end', category: 'Flow', params: [] },
+
   // --- Util ---
   screenshot: {
     label: 'Take Screenshot', category: 'Util',
@@ -229,7 +245,7 @@ export const ACTION_DEFS = {
   }
 }
 
-export const ACTION_CATEGORIES = ['Navigation', 'Interaction', 'Mouse', 'Assertions', 'Waits', 'Util']
+export const ACTION_CATEGORIES = ['Navigation', 'Interaction', 'Mouse', 'Assertions', 'Waits', 'Flow', 'Util']
 
 export const ACTIONS_BY_CATEGORY = ACTION_CATEGORIES.reduce((acc, cat) => {
   acc[cat] = Object.entries(ACTION_DEFS)

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 export default function ActiveRun({ navigate, ctx }) {
-  const { profileId, scenarioId, scenarioName } = ctx
+  const { profileId, scenarioId, scenarioName, dataDriven } = ctx
   const [logs, setLogs] = useState([])
   const [status, setStatus] = useState('running')
   const [summary, setSummary] = useState(null)
@@ -21,7 +21,10 @@ export default function ActiveRun({ navigate, ctx }) {
       const flat = []
       for (const c of cols) for (const s of c.sets) flat.push({ id: s.id, label: `${c.name} · ${s.name}`, group: s.group_type })
       setDataSets(flat)
-      if (flat.length === 0) setStarted(true)   // nothing to pick → run immediately
+      // Skip the single-set gate when: there's nothing to pick, it's a data-driven run (brings
+      // its own sets), or it's Run All (no scenarioId — scenarios get data from loop blocks or
+      // field defaults; forcing one global set for the whole run isn't meaningful).
+      if (flat.length === 0 || dataDriven || !scenarioId) setStarted(true)
     }).catch(() => { if (!cancelled) { setDataSets([]); setStarted(true) } })
     return () => { cancelled = true }
   }, [])
@@ -46,9 +49,11 @@ export default function ActiveRun({ navigate, ctx }) {
     })
 
     const setId = dataSetId || null
-    const runPromise = scenarioId
-      ? window.api.runScenario(profileId, scenarioId, setId)
-      : window.api.runProfile(profileId, setId)
+    const runPromise = dataDriven
+      ? window.api.runDataDriven({ profileId, scenarioId, dataSetIds: dataDriven.dataSetIds, logoutScenarioId: dataDriven.logoutScenarioId })
+      : scenarioId
+        ? window.api.runScenario(profileId, scenarioId, setId)
+        : window.api.runProfile(profileId, setId)
     runPromise.then(result => {
       if (result?.error) {
         setLogs(prev => [...prev, { type: 'error', text: result.error }])

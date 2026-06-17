@@ -33,7 +33,11 @@ export function generateScript({ profile, scenarios = [], settings = {}, outputD
   let globalIndex = 0
   const blocks = []
   for (const sc of scenarios) {
-    const orderedSteps = [...(sc.steps || [])].sort((a, b) => a.sort_order - b.sort_order)
+    // Group/loop markers are expanded away in the runner; drop any that slip through.
+    const MARKERS = ['groupStart', 'groupEnd', 'loopStart', 'loopEnd']
+    const orderedSteps = [...(sc.steps || [])]
+      .filter(s => !MARKERS.includes(s.action))
+      .sort((a, b) => a.sort_order - b.sort_order)
     const stepCode = orderedSteps.map(step => {
       const code = generateStep(step, globalIndex, baseUrl, { screenshotOnFail, outputDir, dataContext })
       globalIndex++

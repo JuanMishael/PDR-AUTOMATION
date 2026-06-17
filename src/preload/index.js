@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('api', {
   // Runner
   runProfile: (profileId, dataSetId = null) => ipcRenderer.invoke('runner:run', profileId, dataSetId),
   runScenario: (profileId, scenarioId, dataSetId = null) => ipcRenderer.invoke('runner:runScenario', { profileId, scenarioId, dataSetId }),
+  runDataDriven: (opts) => ipcRenderer.invoke('runner:runDataDriven', opts),
   stopRun: (runId) => ipcRenderer.invoke('runner:stop', runId),
   onRunLog: (cb) => ipcRenderer.on('runner:log', (_, data) => cb(data)),
   onRunComplete: (cb) => ipcRenderer.on('runner:complete', (_, data) => cb(data)),
@@ -21,6 +22,8 @@ contextBridge.exposeInMainWorld('api', {
   getScenarios: (profileId) => ipcRenderer.invoke('storage:getScenarios', profileId),
   saveScenario: (scenario) => ipcRenderer.invoke('storage:saveScenario', scenario),
   deleteScenario: (id) => ipcRenderer.invoke('storage:deleteScenario', id),
+  duplicateScenario: (id) => ipcRenderer.invoke('storage:duplicateScenario', id),
+  reorderScenarios: (profileId, orderedIds) => ipcRenderer.invoke('storage:reorderScenarios', profileId, orderedIds),
 
   // Storage — Steps
   getSteps: (scenarioId) => ipcRenderer.invoke('storage:getSteps', scenarioId),

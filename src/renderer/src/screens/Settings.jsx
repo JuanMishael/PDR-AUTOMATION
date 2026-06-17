@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '../lib/confirm'
 
 const DEFAULTS = {
   app_name: 'PDR-AUTOMATION', browser: 'chromium', headless: '0',
@@ -34,7 +35,7 @@ export default function Settings() {
   }
 
   async function clearSession() {
-    if (!confirm('Log out the picker/recorder browser? Your next pick or recording will start signed out.')) return
+    if (!(await confirmDialog('Log out the picker/recorder browser? Your next pick or recording will start signed out.', { title: 'Log out browser', confirmText: 'Log out', danger: false }))) return
     setClearing(true)
     setSessionMsg('')
     try {

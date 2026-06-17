@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '../lib/confirm'
 
 export default function History({ navigate }) {
   const [history, setHistory] = useState([])
@@ -16,7 +17,7 @@ export default function History({ navigate }) {
 
   async function del(id, e) {
     e.stopPropagation()
-    if (!confirm('Delete this run from history?')) return
+    if (!(await confirmDialog('Delete this run from history?', { confirmText: 'Delete' }))) return
     try {
       await window.api.deleteHistory(id)
       await load()
@@ -26,7 +27,7 @@ export default function History({ navigate }) {
   }
 
   async function clearAll() {
-    if (!confirm(`Delete ALL ${history.length} runs from history? This cannot be undone.`)) return
+    if (!(await confirmDialog(`Delete ALL ${history.length} runs from history? This cannot be undone.`, { confirmText: 'Delete all' }))) return
     try {
       await window.api.clearHistory()
       await load()

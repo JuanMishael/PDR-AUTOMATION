@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { confirmDialog } from '../lib/confirm'
 
 const EMPTY = { name: '', type: 'web', base_url: '', browser: 'chromium', headless: false, timeout: 30000 }
 
@@ -44,7 +45,7 @@ export default function ProfileConfig({ navigate }) {
   }
 
   async function del(id) {
-    if (!confirm('Delete this profile and all its scenarios?')) return
+    if (!(await confirmDialog('Delete this profile and all its scenarios?', { confirmText: 'Delete' }))) return
     try {
       await window.api.deleteProfile(id)
       if (editing === id) reset()

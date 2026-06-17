@@ -1,7 +1,8 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDb, flushDb } from './core/db'
+import { nudgeWindowFocus } from './core/windowFocus'
 import { registerRunnerHandlers } from './ipc/runner'
 import { registerStorageHandlers } from './ipc/storage'
 import { registerReporterHandlers } from './ipc/reporter'
@@ -55,6 +56,10 @@ app.whenReady().then(async () => {
   registerElementPickerHandlers()
   registerRecorderHandlers()
   registerDataLibraryHandlers()
+
+  // Renderer asks for this after a native confirm/alert dismisses — Chromium leaves the
+  // webContents without keyboard focus otherwise, killing all inputs until re-activation.
+  ipcMain.on('window:refocus', () => nudgeWindowFocus())
 
   createWindow()
 

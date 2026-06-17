@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import SketchDefs from './components/SketchDefs'
+import { ConfirmHost } from './lib/confirm'
 import Sidebar from './components/Sidebar'
 import Dashboard from './screens/Dashboard'
 import ProfileConfig from './screens/ProfileConfig'
@@ -50,6 +51,7 @@ export default function App() {
       <main style={{ flex: 1, overflow: 'auto', padding: '28px 32px' }}>
         <Screen navigate={navigate} ctx={ctx} />
       </main>
+      <ConfirmHost />
     </div>
   )
 }

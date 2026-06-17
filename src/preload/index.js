@@ -65,6 +65,12 @@ contextBridge.exposeInMainWorld('api', {
   deleteField: (id) => ipcRenderer.invoke('data:deleteField', id),
   saveDataSet: (set) => ipcRenderer.invoke('data:saveSet', set),
   deleteDataSet: (id) => ipcRenderer.invoke('data:deleteSet', id),
+  exportCollection: (id, format) => ipcRenderer.invoke('data:exportCollection', id, format),
+  importCollection: () => ipcRenderer.invoke('data:importCollection'),
+
+  // Re-assert keyboard focus on the app window (e.g. after a native confirm/alert that
+  // otherwise leaves Electron's inputs dead until the window is manually re-activated).
+  refocus: () => ipcRenderer.send('window:refocus'),
 
   // Health
   checkHealth: () => ipcRenderer.invoke('health:check'),

@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { ACTION_DEFS, ACTION_CATEGORIES, ACTIONS_BY_CATEGORY } from '../components/actionDefs'
+import { confirmDialog } from '../lib/confirm'
 
 // Default keyword per action category
 const CATEGORY_KEYWORD = {
@@ -464,7 +465,7 @@ function SelectorChooser({ title, candidates, onUse, onFallback, onClose }) {
 
 // ─── Canvas Step ─────────────────────────────────────────────────────────────
 
-function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, priorSteps = [], expanded = true, onToggleExpand, selected = false, onToggleSelect }) {
+function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, priorSteps = [], collections = [], expanded = true, onToggleExpand, selected = false, onToggleSelect }) {
   const params = typeof step.params === 'string' ? JSON.parse(step.params) : (step.params || {})
   const def = ACTION_DEFS[step.action] || { label: step.action, params: [], category: 'Interaction' }
 
@@ -576,8 +577,15 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
                   {p.options.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
               ) : p.type === 'textarea' ? (
-                <textarea rows={2} value={params[p.key] || ''} placeholder={p.placeholder || ''}
-                  onChange={e => updateParam(p.key, e.target.value)} style={{ fontSize: 12 }} />
+                <div style={{ display: 'grid', gap: 4 }}>
+                  <textarea rows={2} value={params[p.key] || ''} placeholder={p.placeholder || ''}
+                    onChange={e => updateParam(p.key, e.target.value)} style={{ fontSize: 12 }} />
+                  {collections.length > 0 && (
+                    <div style={{ justifySelf: 'end' }}>
+                      <TokenButton collections={collections} onInsert={tok => updateParam(p.key, (params[p.key] || '') + tok)} />
+                    </div>
+                  )}
+                </div>
               ) : isSelector ? (
                 <div style={{ display: 'flex', gap: 4 }}>
                   <input type="text" value={params[p.key] || ''} placeholder={p.placeholder || ''}
@@ -600,8 +608,14 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
                   />
                 </div>
               ) : (
-                <input type={p.type || 'text'} value={params[p.key] || ''} placeholder={p.placeholder || ''}
-                  onChange={e => updateParam(p.key, e.target.value)} style={{ fontSize: 12 }} />
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <input type={p.type || 'text'} value={params[p.key] || ''} placeholder={p.placeholder || ''}
+                    onChange={e => updateParam(p.key, e.target.value)} style={{ fontSize: 12, flex: 1, minWidth: 0 }} />
+                  {/* Token insert — only where a {{token}} makes sense (skip numeric params). */}
+                  {collections.length > 0 && p.type !== 'number' && (
+                    <TokenButton collections={collections} onInsert={tok => updateParam(p.key, (params[p.key] || '') + tok)} />
+                  )}
+                </div>
               )}
             </ParamRow>
           )
@@ -619,6 +633,234 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
         </div>
       </div>
       )}
+    </div>
+  )
+}
+
+// Insert a Test Data token ({{Collection.field}}) or a dynamic value into a param —
+// so testers don't have to remember the token syntax. Appends to the current value.
+const DYNAMIC_TOKENS = [
+  { label: 'Unique ref', token: '{{unique.ref}}' },
+  { label: 'Unique email', token: '{{unique.email}}' },
+  { label: 'Unique number', token: '{{unique.number}}' },
+  { label: 'Timestamp', token: '{{unique.timestamp}}' },
+  { label: 'Faker — first name', token: '{{faker.person.firstName}}' },
+  { label: 'Faker — email', token: '{{faker.internet.email}}' }
+]
+
+function TokenButton({ collections, onInsert }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    function handle(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [open])
+
+  function pick(token) { onInsert(token); setOpen(false) }
+
+  const hdr = { fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
+    color: 'var(--text-muted)', padding: '6px 10px 2px' }
+  const item = { display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', background: 'none',
+    border: 'none', color: 'var(--text)', fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-mono)' }
+
+  return (
+    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
+      <button type="button" title="Insert Test Data token" onClick={() => setOpen(o => !o)}
+        style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6,
+          color: 'var(--accent)', padding: '5px 8px', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+        {'{ }'}
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: '100%', right: 0, zIndex: 30, marginTop: 4, minWidth: 200, maxHeight: 280,
+          overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6,
+          boxShadow: '0 6px 20px rgba(0,0,0,.18)' }}>
+          {collections.map(c => (
+            <div key={c.id}>
+              <div style={hdr}>{c.name}</div>
+              {c.fields.length === 0 ? (
+                <div style={{ ...item, color: 'var(--text-muted)', cursor: 'default', fontFamily: 'inherit' }}>no fields</div>
+              ) : c.fields.map(f => (
+                <button key={f.id} type="button" style={item} onClick={() => pick(`{{${c.name}.${f.name}}}`)}>
+                  {f.name}
+                </button>
+              ))}
+            </div>
+          ))}
+          <div style={hdr}>Dynamic</div>
+          {DYNAMIC_TOKENS.map(d => (
+            <button key={d.token} type="button" style={{ ...item, fontFamily: 'inherit' }} onClick={() => pick(d.token)}>
+              {d.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Derive a sensible field name from a selector (#Username → Username, [name=email] → email).
+function fieldNameFromSelector(sel) {
+  if (!sel) return ''
+  let m = sel.match(/#([\w-]+)/);                 if (m) return m[1]
+  m = sel.match(/name=["']?([\w.-]+)/);            if (m) return m[1]
+  m = sel.match(/data-testid=["']?([\w.-]+)/);     if (m) return m[1]
+  m = sel.match(/\.([\w-]+)/);                     if (m) return m[1]
+  return sel.replace(/[^\w]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24)
+}
+
+const VALUE_ACTIONS = { fill: true, type: true, selectOption: true }
+const INTENTS = [{ k: 'positive', l: '📗 Positive' }, { k: 'negative', l: '📕 Negative' }, { k: 'edge', l: '📒 Edge' }]
+
+// Steps come back from storage with params as a JSON string (see CanvasStep) — parse safely.
+function stepParams(s) {
+  try { return typeof s.params === 'string' ? JSON.parse(s.params) : (s.params || {}) } catch { return {} }
+}
+
+// Inline test-data creator: prefills field/value rows from this scenario's fill steps
+// (so you "demonstrate" the form once), and lets you add rows by hand. Saves to the same
+// data_* tables the Test Data pane uses, then optionally rewrites the steps to {{tokens}}.
+function CaptureDataModal({ steps, collections, defaultName, onClose, onSaved }) {
+  function initialRows() {
+    const used = new Set(); const rows = []
+    for (const s of steps) {
+      if (!VALUE_ACTIONS[s.action]) continue
+      const p = stepParams(s)
+      const val = p.value
+      if (val == null || val === '' || String(val).includes('{{')) continue   // skip blank / already tokenized
+      let name = fieldNameFromSelector(p.selector) || `field${rows.length + 1}`
+      const base = name; let n = 2
+      while (used.has(name.toLowerCase())) name = `${base}${n++}`
+      used.add(name.toLowerCase())
+      rows.push({ include: true, name, value: String(val), selector: p.selector || '', stepId: s.id })
+    }
+    return rows
+  }
+
+  const [target, setTarget] = useState('__new__')   // '__new__' or an existing collection id
+  const [name, setName]     = useState(defaultName || '')
+  const [intent, setIntent] = useState('positive')
+  const [tokenize, setTokenize] = useState(true)
+  const [rows, setRows]     = useState(initialRows)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr]       = useState(null)
+
+  const setRow    = (i, patch) => setRows(rs => rs.map((r, j) => j === i ? { ...r, ...patch } : r))
+  const addRow    = () => setRows(rs => [...rs, { include: true, name: `field${rs.length + 1}`, value: '', selector: '', stepId: null }])
+  const removeRow = (i) => setRows(rs => rs.filter((_, j) => j !== i))
+
+  async function save() {
+    const incl = rows.filter(r => r.include && r.name.trim())
+    if (!incl.length) { setErr('Tick at least one field to save'); return }
+    if (target === '__new__' && !name.trim()) { setErr('Name the new collection'); return }
+    setSaving(true); setErr(null)
+    try {
+      let collectionId, collectionName, startOrder = 0, existing = new Set()
+      if (target === '__new__') {
+        const res = await window.api.saveCollection({ name: name.trim() })
+        collectionId = res.id; collectionName = name.trim()
+      } else {
+        const c = collections.find(x => x.id === target)
+        collectionId = c.id; collectionName = c.name; startOrder = c.fields.length
+        existing = new Set(c.fields.map(f => f.name.toLowerCase()))
+      }
+      let order = startOrder
+      for (const r of incl) {
+        if (existing.has(r.name.trim().toLowerCase())) continue   // keep the existing field as-is
+        await window.api.saveField({ collection_id: collectionId, name: r.name.trim(), type: 'text', selector: r.selector || '', sort_order: order++ })
+      }
+      const values = {}; for (const r of incl) values[r.name.trim()] = r.value
+      const setCount = target === '__new__' ? 0 : (collections.find(x => x.id === target)?.sets.filter(s => s.group_type === intent).length || 0)
+      await window.api.saveDataSet({ collection_id: collectionId, name: `${intent} set ${setCount + 1}`, group_type: intent, values, sort_order: setCount })
+
+      const tokenizations = tokenize
+        ? incl.filter(r => r.stepId).map(r => ({ stepId: r.stepId, token: `{{${collectionName}.${r.name.trim()}}}` }))
+        : []
+      await onSaved(tokenizations)
+    } catch (e) {
+      setErr(e?.message || 'Could not save'); setSaving(false)
+    }
+  }
+
+  const capturedCount = rows.filter(r => r.stepId).length
+  const lbl = { fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100,
+      display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={onClose}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14,
+        width: 640, maxHeight: '85vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ padding: '18px 20px 0' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <h2 style={{ fontSize: 16, fontWeight: 700 }}>Capture / create test data</h2>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: 20, cursor: 'pointer' }}>×</button>
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 14px' }}>
+            {capturedCount > 0
+              ? `Pulled ${capturedCount} value${capturedCount !== 1 ? 's' : ''} from this scenario's fill steps. Edit names, then save.`
+              : 'No literal fill values found in this scenario — add fields by hand below.'}
+          </p>
+        </div>
+
+        <div style={{ overflow: 'auto', padding: '0 20px', display: 'grid', gap: 12 }}>
+          {/* Target collection */}
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={lbl}>Save to</span>
+            <select value={target} onChange={e => setTarget(e.target.value)} style={{ fontSize: 12 }}>
+              <option value="__new__">➕ New collection</option>
+              {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            {target === '__new__' && (
+              <input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Collection name (e.g. Login)"
+                style={{ fontSize: 12, flex: 1, minWidth: 160 }} />
+            )}
+          </div>
+
+          {/* Field rows */}
+          <div style={{ display: 'grid', gap: 6 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '24px 1fr 1.3fr 28px', gap: 8, ...lbl }}>
+              <span /><span>Field name</span><span>Value</span><span />
+            </div>
+            {rows.length === 0 && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>No fields yet — add one below.</p>}
+            {rows.map((r, i) => (
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: '24px 1fr 1.3fr 28px', gap: 8, alignItems: 'center' }}>
+                <input type="checkbox" checked={r.include} onChange={e => setRow(i, { include: e.target.checked })} style={{ width: 'auto' }} />
+                <input value={r.name} onChange={e => setRow(i, { name: e.target.value })}
+                  style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}
+                  title={r.selector ? `from ${r.selector}` : ''} />
+                <input value={r.value} onChange={e => setRow(i, { value: e.target.value })} style={{ fontSize: 12 }} />
+                <button onClick={() => removeRow(i)} title="Remove"
+                  style={{ background: 'none', border: 'none', color: 'var(--error)', fontSize: 15, cursor: 'pointer' }}>×</button>
+              </div>
+            ))}
+            <button onClick={addRow} style={{ justifySelf: 'start', background: 'var(--surface2)', border: '1px solid var(--border)',
+              borderRadius: 6, color: 'var(--accent)', fontSize: 12, fontWeight: 600, padding: '5px 12px', cursor: 'pointer' }}>+ Add field</button>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: 16, borderTop: '1px solid var(--border)', marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={lbl}>Group</span>
+          <select value={intent} onChange={e => setIntent(e.target.value)} style={{ fontSize: 12 }}>
+            {INTENTS.map(g => <option key={g.k} value={g.k}>{g.l}</option>)}
+          </select>
+          {capturedCount > 0 && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+              <input type="checkbox" checked={tokenize} onChange={e => setTokenize(e.target.checked)} style={{ width: 'auto' }} />
+              Replace step values with {'{{tokens}}'}
+            </label>
+          )}
+          {err && <span style={{ fontSize: 12, color: 'var(--error)' }}>{err}</span>}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button onClick={onClose} className="btn btn-sm">Cancel</button>
+            <button onClick={save} disabled={saving} className="btn-primary"
+              style={{ padding: '6px 16px', fontSize: 13 }}>{saving ? 'Saving…' : 'Save test data'}</button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -744,6 +986,10 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [recording, setRecording]     = useState(false)
   const [expandedIds, setExpandedIds] = useState(() => new Set())
   const [selectedIds, setSelectedIds] = useState(() => new Set())
+  const [collections, setCollections] = useState([])
+  const [fillMenu, setFillMenu]       = useState(false)   // "Fill form" collection picker open
+  const [dataModal, setDataModal]     = useState(false)   // capture/create test data inline
+  const saveChain                     = useRef(Promise.resolve())   // serialize background step saves
 
   function toggleExpand(id) {
     setExpandedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -760,7 +1006,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   async function deleteSelected() {
     if (selectedIds.size === 0) return
     const n = selectedIds.size
-    if (!confirm(`Delete ${n} selected step${n !== 1 ? 's' : ''}? This can't be undone.`)) return
+    if (!(await confirmDialog(`Delete ${n} selected step${n !== 1 ? 's' : ''}? This can't be undone.`, { confirmText: 'Delete' }))) return
     for (const id of selectedIds) await window.api.deleteStep(id)
     setSteps(prev => prev.filter(s => !selectedIds.has(s.id)))
     setSelectedIds(new Set())
@@ -775,6 +1021,9 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       })
     }
   }, [profileId])
+
+  // Test Data collections power the "Fill form" one-click step generator.
+  useEffect(() => { window.api.getCollections().then(setCollections).catch(() => {}) }, [])
 
   async function loadScenarios() {
     const data = await window.api.getScenarios(profileId)
@@ -817,7 +1066,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   }
 
   async function deleteScenario(id) {
-    if (!confirm('Delete this scenario and all its steps?')) return
+    if (!(await confirmDialog('Delete this scenario and all its steps?', { confirmText: 'Delete' }))) return
     await window.api.deleteScenario(id)
     if (active?.id === id) { setActive(null); setSteps([]) }
     const data = await window.api.getScenarios(profileId)
@@ -841,9 +1090,49 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     if (res?.id) setExpandedIds(prev => new Set(prev).add(res.id))   // open the new step for editing
   }
 
-  async function updateStep(step) {
-    await window.api.saveStep(step)
+  // Drop a whole mapped form in as one fill card per field — selector + {{token}} pre-wired
+  // from the collection. Fields without a selector still get a card to complete with 🎯 Pick.
+  async function insertFormFill(collection) {
+    setFillMenu(false)
+    if (!active || !collection?.fields?.length) return
+    let order = steps.length
+    for (const f of collection.fields) {
+      await window.api.saveStep({
+        scenario_id: active.id,
+        action: 'fill',
+        params: { _keyword: 'When', selector: f.selector || '', value: `{{${collection.name}.${f.name}}}` },
+        label: '',
+        sort_order: order++
+      })
+    }
+    setSteps(await window.api.getSteps(active.id))
+  }
+
+  const refreshCollections = () => window.api.getCollections().then(setCollections).catch(() => {})
+
+  // Called by the inline data modal after it saves a collection. `tokenizations` is a list
+  // of { stepId, token } so we rewrite the source steps' value → {{Collection.field}}.
+  async function onDataSaved(tokenizations = []) {
+    for (const { stepId, token } of tokenizations) {
+      const s = steps.find(x => x.id === stepId)
+      if (!s) continue
+      await window.api.saveStep({ ...s, params: { ...stepParams(s), value: token } })
+    }
+    if (tokenizations.length && active) setSteps(await window.api.getSteps(active.id))
+    await refreshCollections()
+    setDataModal(false)
+  }
+
+  function updateStep(step) {
+    // Update the in-memory state synchronously so a controlled input reflects the new
+    // value on the same render as the keystroke. Awaiting the DB save before setState
+    // makes the value lag the keystroke, which forces React to reset the caret to the end
+    // of the field on every character. Persist in the background instead, serialized
+    // through a chain so rapid edits still land in order.
     setSteps(prev => prev.map(s => s.id === step.id ? step : s))
+    saveChain.current = saveChain.current
+      .then(() => window.api.saveStep(step))
+      .catch(() => {})
   }
 
   async function deleteStep(id) {
@@ -917,9 +1206,9 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       // Keep or discard the captured steps — a safety net for a bad/errored take.
       if (recordedIds.length > 0) {
         const n = recordedIds.length
-        const keep = confirm(
-          `Recording captured ${n} step${n !== 1 ? 's' : ''}.\n\n` +
-          `OK = keep them.\nCancel = discard this recording.`
+        const keep = await confirmDialog(
+          `Recording captured ${n} step${n !== 1 ? 's' : ''}. Keep them on the canvas?`,
+          { title: 'Recording finished', confirmText: 'Keep', cancelText: 'Discard', danger: false }
         )
         if (!keep) {
           for (const id of recordedIds) await window.api.deleteStep(id)
@@ -1057,6 +1346,48 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                 color: 'var(--text-muted)', marginBottom: 6 }}>Step Library</div>
               <input value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Search actions…" style={{ fontSize: 12, width: '100%' }} />
+              {/* Create/capture test data without leaving the builder. */}
+              {active && (
+                <button onClick={() => setDataModal(true)} title="Turn this scenario's values into reusable test data, or add fields by hand"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+                    marginTop: 6, padding: '6px 10px', borderRadius: 6, background: 'var(--surface2)',
+                    border: '1px dashed var(--border)', color: 'var(--text)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                  <span>💾 Capture / create test data</span>
+                  <span style={{ color: 'var(--accent)', fontSize: 14 }}>+</span>
+                </button>
+              )}
+              {/* One-click: drop a mapped Test Data collection in as pre-wired fill steps. */}
+              {active && collections.length > 0 && (
+                <div style={{ position: 'relative', marginTop: 6 }}>
+                  <button onClick={() => setFillMenu(o => !o)} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+                    padding: '6px 10px', borderRadius: 6, background: 'var(--accent-soft, var(--surface2))',
+                    border: '1px solid var(--accent)', color: 'var(--accent)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                    <span>▦ Fill form from data…</span>
+                    <span style={{ fontSize: 10 }}>▾</span>
+                  </button>
+                  {fillMenu && (
+                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20, marginTop: 4,
+                      background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6,
+                      boxShadow: '0 6px 20px rgba(0,0,0,.18)', overflow: 'hidden' }}>
+                      {collections.map(c => {
+                        const mapped = c.fields.filter(f => f.selector).length
+                        return (
+                          <button key={c.id} onClick={() => insertFormFill(c)} style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
+                            textAlign: 'left', padding: '7px 10px', background: 'none', border: 'none',
+                            borderBottom: '1px solid var(--border)', color: 'var(--text)', fontSize: 12, cursor: 'pointer' }}>
+                            <span>{c.name}</span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+                              {c.fields.length} field{c.fields.length !== 1 ? 's' : ''}{mapped < c.fields.length ? ` · ${mapped} mapped` : ''}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
               {!active ? (
@@ -1162,7 +1493,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                   steps.map((step, i) => (
                     <CanvasStep key={step.id} step={step} index={i} total={steps.length}
                       onChange={updateStep} onDelete={deleteStep} onMove={moveStep}
-                      profile={profile} priorSteps={steps.slice(0, i)}
+                      profile={profile} priorSteps={steps.slice(0, i)} collections={collections}
                       expanded={expandedIds.has(step.id)} onToggleExpand={() => toggleExpand(step.id)}
                       selected={selectedIds.has(step.id)} onToggleSelect={() => toggleSelect(step.id)} />
                   ))
@@ -1172,6 +1503,16 @@ export default function ScenarioBuilder({ navigate, ctx }) {
           )}
         </div>
       </div>
+
+      {dataModal && active && (
+        <CaptureDataModal
+          steps={steps}
+          collections={collections}
+          defaultName={active.name}
+          onClose={() => setDataModal(false)}
+          onSaved={onDataSaved}
+        />
+      )}
     </div>
   )
 }

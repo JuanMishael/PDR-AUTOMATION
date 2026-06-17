@@ -205,6 +205,9 @@ export async function initDb() {
   try { _db.run('ALTER TABLE history ADD COLUMN scenarios_passed INTEGER NOT NULL DEFAULT 0') } catch { /* already migrated */ }
   try { _db.run('ALTER TABLE history ADD COLUMN scenarios_failed INTEGER NOT NULL DEFAULT 0') } catch { /* already migrated */ }
   try { _db.run('ALTER TABLE history ADD COLUMN scenario_results TEXT') } catch { /* already migrated */ }
+  // A data field can remember WHERE it goes on the page (selector picked once), so a
+  // whole form can be dropped into a scenario as pre-wired fill steps (Test Data Phase 2).
+  try { _db.run('ALTER TABLE data_fields ADD COLUMN selector TEXT NOT NULL DEFAULT \'\'') } catch { /* already migrated */ }
 
   persist()
   seedDefaultSettings()

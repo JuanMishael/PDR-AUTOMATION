@@ -11,10 +11,14 @@ Build and run browser automation scripts through a point-and-click UI — no cod
 ## Features
 
 - **Profile-based runs** — configure URL, browser, timeout, and headless mode per environment
-- **Scenario builder** — assemble test steps from 28 action types (click, fill, assert, screenshot, etc.), with collapsible step cards for a clean overview
+- **Scenario builder** — assemble test steps from 30+ action types (click, fill, assert, screenshot, etc.) across Navigation, Interaction, Mouse, Assertions, Waits, Flow, and Util, with collapsible step cards for a clean overview
 - **🎯 Element picker** — click "Pick", then click the real element in a live browser; a robust selector is generated for you (no CSS knowledge needed)
-- **● Recorder** — open the site, hit Start, and just *use it* — your clicks, typing, and dropdowns become step cards live. Recording survives navigations (e.g. a login redirect)
+- **● Recorder** — open the site, hit Start, and just *use it* — your clicks, typing, and dropdowns become step cards live. Recording survives navigations (e.g. a login redirect). **Pause/Resume** to navigate without recording, and an **✓ Assert** mode that turns the next click into a "verify this is visible" check
 - **Selector tester (from the top)** — test a selector after replaying the steps above it, so mid-flow elements (modals, post-login content) actually match instead of misreporting "0 found"
+- **🗂 Test Data Library** — define a form once as a **collection** (fields + types), then store reusable **data sets** grouped by intent (positive / negative / edge). Reference values in steps with `{{Collection.field}}` tokens, plus `{{faker.*}}` and `{{unique.*}}` for fresh-per-run values. Capture data straight from a scenario's fill steps, **import** rows from CSV/Excel, and **export** a collection (.json/.csv) to share with other QA
+- **▦ Fill form / { } token insert** — drop a whole mapped form in as pre-wired fill cards, or insert a `{{token}}` into any value field from a dropdown — no need to remember the syntax
+- **🔁 Step groups & loops** — select steps → group them into a named, collapsible (and **nestable**) block; flip a group to **repeat for each data set** and it runs once per credential/row, resolving that row's tokens — login → logout → login again falls out naturally
+- **Reorder & arrange** — move steps and whole groups with ↑↓ (block-aware) or **drag-and-drop** (drop a step *into* a group to make it a member); reorder, duplicate, or copy scenarios across profiles
 - **Continuous runs** — "Run All" runs every scenario in order in **one browser session**; state carries over (stay logged in, keep created records). A failing scenario doesn't stop the rest — each gets its **own pass/fail** (see [How a run works](#how-a-run-works))
 - **Per-scenario isolated run** — run a single scenario in a fresh browser, optionally re-running a prerequisite (e.g. Login) first, for debugging
 - **Replicate environments** — duplicate a whole profile (e.g. staging → prebau) or copy scenarios into another profile; just change the Base URL
@@ -69,13 +73,14 @@ Output goes to `release/`.
 ```
 src/
   main/
-    core/       # db, scriptGenerator, webRunner, stepReplay, injectedScripts
+    core/       # db, scriptGenerator, webRunner, stepReplay, injectedScripts, tokenResolver, windowFocus
     ipc/        # IPC handlers: storage, runner, reporter, health,
-                #   selectorTester, elementPicker, recorder
+                #   selectorTester, elementPicker, recorder, dataLibrary
   renderer/
     src/
-      screens/  # Dashboard, ScenarioBuilder, ActiveRun, Results, History, Settings, HealthCheck
+      screens/  # Dashboard, ScenarioBuilder, ActiveRun, Results, History, Settings, HealthCheck, TestData
       components/ # Sidebar, StepCard, action definitions
+      lib/      # confirm (in-app dialog used instead of native confirm/prompt)
   preload/      # Context bridge
 ```
 
@@ -84,11 +89,14 @@ Key shared modules:
 - `core/stepReplay.js` — replays existing steps against a live page (used by the picker, recorder, and selector tester to reach mid-flow state)
 - `core/injectedScripts.js` — in-page scripts injected into the picker/recorder browser; **single source of truth** for selector generation (`id → data-testid → name/aria → text → CSS path`)
 - `core/scriptGenerator.js` — turns one or more scenarios into a single Playwright script (one browser per run)
+- `core/tokenResolver.js` — resolves `{{Collection.field}}` / `{{faker.*}}` / `{{unique.*}}` tokens to concrete values at generate-time, so the emitted script stays plain JS
+- `ipc/dataLibrary.js` — CRUD for the Test Data Library (collections, fields, data sets) + collection export/import
 
 ## How a run works
 
 - **Run All** generates **one** script for the whole profile and runs every scenario in order, in a single browser — so login and created state carry from one scenario to the next.
 - **Per-scenario ▶ Run** runs just that scenario (plus an optional prerequisite) in a fresh browser.
+- **Groups & loops** are expanded *before* the script is generated (`runner.js` → `expandGroups`): a repeating group's body is unrolled once per data set in its collection+group, each iteration's `{{tokens}}` resolved from that set (labels prefixed with the set name so per-row pass/fail is readable). Non-repeating groups are purely organizational and just inline their steps. Group markers never reach the generated script.
 
 ### Pass/fail (per scenario)
 
@@ -108,5 +116,8 @@ A run records **a pass/fail verdict for each scenario**, not just one verdict fo
 
 - Mobile automation via Appium
 - Tag-based step filtering
-- Assert-mode recording (mark what to verify, not just actions)
-- Smart waits and self-healing selector fallbacks
+- Negative/"expected-to-fail" data-driven testing (assert a login is *rejected* per row)
+- Self-healing selector fallback chain (auto-try by-text / role+name / nearby-label on failure)
+- "Blocked" scenario marking — skip/flag scenarios whose prerequisite already failed
+
+**Recently shipped** (was Phase 2): assert-mode recording, smart waits, Test Data Library + data-driven loops, step groups, drag-and-drop reordering.

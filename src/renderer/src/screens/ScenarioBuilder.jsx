@@ -521,6 +521,11 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
         boxShadow: showDropLine ? '0 -3px 0 -1px var(--accent)' : (active ? '0 0 0 2px var(--accent)' : undefined) }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', flexWrap: 'wrap' }}>
           <span {...gripProps}>⠿</span>
+          {onToggleSelect && (
+            <input type="checkbox" checked={selected} onChange={onToggleSelect}
+              onClick={e => e.stopPropagation()} title="Select the whole group (its steps too)"
+              style={{ width: 'auto', flexShrink: 0, cursor: 'pointer', margin: 0 }} />
+          )}
           <button onClick={onToggleGroup} title={groupCollapsed ? 'Expand group' : 'Collapse group'}
             style={{ background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
             {groupCollapsed ? '▸' : '▾'} ⊞
@@ -1064,6 +1069,63 @@ function CopyToProfileButton({ currentProfileId, scenarioId }) {
   )
 }
 
+// ─── Copy-selected-steps-to-another-scenario button ──────────────────────────
+
+function CopyStepsToScenarioButton({ scenarios, currentScenarioId, stepIds, onCopied }) {
+  const [open, setOpen] = useState(false)
+  const [msg, setMsg]   = useState(null)
+  const ref = useRef(null)
+  const targets = scenarios.filter(s => s.id !== currentScenarioId)
+
+  useEffect(() => {
+    if (!open) return
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [open])
+
+  async function copy(target) {
+    const res = await window.api.copySteps(stepIds, target.id)
+    setOpen(false)
+    if (res?.ok) { setMsg(`✓ Copied ${res.count} to ${target.name}`); onCopied && onCopied() }
+    else setMsg(`✗ ${res?.error || 'Copy failed'}`)
+    setTimeout(() => setMsg(null), 3000)
+  }
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(o => !o)} title="Copy the selected steps into another scenario"
+        style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6,
+          padding: '5px 8px', fontSize: 11, fontWeight: 600, color: 'var(--text)', cursor: 'pointer' }}>
+        ⧉ Copy to scenario…
+      </button>
+      {msg && <span style={{ fontSize: 11, marginLeft: 8, color: msg.startsWith('✓') ? '#10B981' : '#EF4444' }}>{msg}</span>}
+      {open && (
+        <div style={{
+          position: 'absolute', top: 32, left: 0, zIndex: 200, width: 220,
+          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 6,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.35)'
+        }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
+            color: 'var(--text-muted)', padding: '4px 8px' }}>Append {stepIds.length} step{stepIds.length !== 1 ? 's' : ''} to</div>
+          {targets.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px' }}>No other scenarios in this profile.</div>
+          ) : targets.map(s => (
+            <button key={s.id} onClick={() => copy(s)} style={{
+              display: 'block', width: '100%', textAlign: 'left', padding: '7px 8px', borderRadius: 6,
+              background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 12
+            }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+              {s.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main ScenarioBuilder ─────────────────────────────────────────────────────
 
 export default function ScenarioBuilder({ navigate, ctx }) {
@@ -1074,6 +1136,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [active, setActive]           = useState(null)   // active scenario
   const [steps, setSteps]             = useState([])
   const [newName, setNewName]         = useState('')
+  const [editingId, setEditingId]     = useState(null)   // scenario being renamed inline
+  const [editName, setEditName]       = useState('')
   const [search, setSearch]           = useState('')
   const [exporting, setExporting]     = useState(false)
   const [recording, setRecording]     = useState(false)
@@ -1086,9 +1150,6 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [collections, setCollections] = useState([])
   const [fillMenu, setFillMenu]       = useState(false)   // "Fill form" collection picker open
   const [dataModal, setDataModal]     = useState(false)   // capture/create test data inline
-  const [ddCollectionId, setDdCollectionId] = useState('')  // data-driven: collection to iterate
-  const [ddGroup, setDdGroup]         = useState('positive') // data-driven: which group of sets
-  const [ddLogoutId, setDdLogoutId]   = useState('')      // data-driven: logout scenario between runs
   const saveChain                     = useRef(Promise.resolve())   // serialize background step saves
 
   function toggleExpand(id) {
@@ -1098,8 +1159,21 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const expandAll   = () => { setExpandedIds(new Set(steps.map(s => s.id))); setCollapsedGroups(new Set()) }
   const collapseAll = () => { setExpandedIds(new Set()); setCollapsedGroups(new Set(steps.filter(s => isGroupStart(s.action)).map(s => s.id))) }
 
+  // Ticking a group's checkbox selects (or clears) the whole block — its inner steps and
+  // any nested groups too. A plain step toggles just itself.
   function toggleSelect(id) {
-    setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+    const idx = steps.findIndex(s => s.id === id)
+    setSelectedIds(prev => {
+      const n = new Set(prev)
+      if (idx >= 0 && isGroupStart(steps[idx].action)) {
+        const [us, ue] = unitRange(steps, idx)
+        const selecting = !n.has(id)   // follow the group marker's own state
+        for (let k = us; k <= ue; k++) selecting ? n.add(steps[k].id) : n.delete(steps[k].id)
+      } else {
+        n.has(id) ? n.delete(id) : n.add(id)
+      }
+      return n
+    })
   }
   const selectAll       = () => setSelectedIds(new Set(steps.map(s => s.id)))
   const clearSelection  = () => setSelectedIds(new Set())
@@ -1228,22 +1302,25 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     await window.api.reorderScenarios(profileId, next.map(s => s.id))
   }
 
+  // Inline rename: open the editor, then commit (keeps the same id / steps / order).
+  function startRename(s) { setEditingId(s.id); setEditName(s.name) }
+  function cancelRename() { setEditingId(null); setEditName('') }
+  async function commitRename(s) {
+    const name = editName.trim()
+    if (!name || name === s.name) { cancelRename(); return }
+    const updated = { ...s, name }
+    await window.api.saveScenario(updated)
+    setScenarios(prev => prev.map(x => x.id === s.id ? updated : x))
+    if (active?.id === s.id) setActive(updated)
+    cancelRename()
+  }
+
   // Duplicate a scenario (+ its steps) within this profile, then select the copy.
   async function duplicateScenario(id) {
     const res = await window.api.duplicateScenario(id)
     const data = await window.api.getScenarios(profileId)
     setScenarios(data)
     if (res?.id) { const c = data.find(s => s.id === res.id); if (c) selectScenario(c) }
-  }
-
-  // Data-driven: run the active scenario once per data set in the chosen collection+group,
-  // logging out between iterations. Hands off to ActiveRun (which calls runDataDriven).
-  function runDataDriven(dataSetIds) {
-    if (!active || !dataSetIds.length) return
-    navigate('run', {
-      profileId, scenarioId: active.id, scenarioName: active.name,
-      dataDriven: { dataSetIds, logoutScenarioId: ddLogoutId || null }
-    })
   }
 
   async function addStep(actionKey) {
@@ -1563,13 +1640,25 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     color: active?.id === s.id ? 'var(--accent)' : 'var(--text)',
                     fontWeight: active?.id === s.id ? 700 : 400, fontSize: 13
                   }}>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                      {s.name}
-                    </span>
+                    {editingId === s.id ? (
+                      <input autoFocus value={editName} onClick={e => e.stopPropagation()}
+                        onChange={e => setEditName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') commitRename(s); else if (e.key === 'Escape') cancelRename() }}
+                        onBlur={() => commitRename(s)}
+                        style={{ fontSize: 13, flex: 1, minWidth: 0, padding: '2px 6px' }} />
+                    ) : (
+                      <span onDoubleClick={e => { e.stopPropagation(); startRename(s) }}
+                        title="Double-click to rename"
+                        style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        {s.name}
+                      </span>
+                    )}
                     <button onClick={e => { e.stopPropagation(); moveScenario(s.id, 'up') }} disabled={i === 0}
                       title="Move up (runs earlier)" style={{ ...iconBtn, fontSize: 11, opacity: i === 0 ? 0.3 : 1 }}>↑</button>
                     <button onClick={e => { e.stopPropagation(); moveScenario(s.id, 'down') }} disabled={i === scenarios.length - 1}
                       title="Move down (runs later)" style={{ ...iconBtn, fontSize: 11, opacity: i === scenarios.length - 1 ? 0.3 : 1 }}>↓</button>
+                    <button onClick={e => { e.stopPropagation(); startRename(s) }}
+                      title="Rename this scenario" style={{ ...iconBtn, fontSize: 12 }}>✎</button>
                     <button onClick={e => { e.stopPropagation(); duplicateScenario(s.id) }}
                       title="Duplicate this scenario" style={{ ...iconBtn, fontSize: 12 }}>⧉</button>
                     <button onClick={e => { e.stopPropagation(); navigate('run', { profileId, scenarioId: s.id, scenarioName: s.name }) }}
@@ -1689,6 +1778,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                           padding: '5px 8px', fontSize: 11, fontWeight: 600, color: 'var(--accent)', cursor: 'pointer' }}>
                           ⊞ Group
                         </button>
+                        <CopyStepsToScenarioButton scenarios={scenarios} currentScenarioId={active.id}
+                          stepIds={[...selectedIds]} onCopied={clearSelection} />
                         <button onClick={deleteSelected} style={{ background: 'rgba(239,68,68,0.1)',
                           border: '1px solid rgba(239,68,68,0.35)', borderRadius: 6, padding: '5px 8px',
                           fontSize: 11, fontWeight: 600, color: '#EF4444', cursor: 'pointer' }}>
@@ -1733,45 +1824,6 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                       : 'setup to run before this scenario when run on its own'}
                   </span>
                 </div>
-
-                {/* Data-driven: repeat this scenario for every data set in a group */}
-                {collections.length > 0 && (() => {
-                  const ddCollection = collections.find(c => c.id === ddCollectionId)
-                  const ddSets = ddCollection ? ddCollection.sets.filter(s => ddGroup === 'all' || s.group_type === ddGroup) : []
-                  return (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
-                        🔁 Run across
-                      </span>
-                      <select value={ddCollectionId} onChange={e => setDdCollectionId(e.target.value)} style={{ fontSize: 12, padding: '4px 8px' }}>
-                        <option value="">— Pick data collection —</option>
-                        {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
-                      {ddCollectionId && (
-                        <>
-                          <select value={ddGroup} onChange={e => setDdGroup(e.target.value)} style={{ fontSize: 12, padding: '4px 8px' }}>
-                            <option value="positive">📗 Positive</option>
-                            <option value="negative">📕 Negative</option>
-                            <option value="edge">📒 Edge</option>
-                            <option value="all">All groups</option>
-                          </select>
-                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>logout with</span>
-                          <select value={ddLogoutId} onChange={e => setDdLogoutId(e.target.value)} style={{ fontSize: 12, padding: '4px 8px', maxWidth: 180 }}>
-                            <option value="">— No logout —</option>
-                            {scenarios.filter(s => s.id !== active.id).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                          </select>
-                          <button className="btn-primary" disabled={!ddSets.length} onClick={() => runDataDriven(ddSets.map(s => s.id))}
-                            style={{ padding: '5px 12px', fontSize: 12 }}>
-                            ▶ Run × {ddSets.length}
-                          </button>
-                          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                            {ddSets.length ? `runs this scenario once per ${ddGroup === 'all' ? '' : ddGroup + ' '}set` : 'no sets in this group yet'}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  )
-                })()}
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
                 {steps.length === 0 ? (

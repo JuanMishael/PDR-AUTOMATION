@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('api', {
   saveStep: (step) => ipcRenderer.invoke('storage:saveStep', step),
   deleteStep: (id) => ipcRenderer.invoke('storage:deleteStep', id),
   reorderSteps: (scenarioId, orderedIds) => ipcRenderer.invoke('storage:reorderSteps', scenarioId, orderedIds),
+  copySteps: (stepIds, targetScenarioId) => ipcRenderer.invoke('storage:copySteps', stepIds, targetScenarioId),
 
   // Storage — History
   getHistory: (profileId) => ipcRenderer.invoke('storage:getHistory', profileId),

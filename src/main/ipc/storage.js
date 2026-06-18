@@ -200,6 +200,33 @@ export function registerStorageHandlers() {
     return { ok: true }
   })
 
+  // Copy selected steps into another scenario (same or different profile), appended after
+  // its current steps. Source order is preserved (we sort by the originals' sort_order, not
+  // the order ids happened to arrive in). New ids so the copies are independent.
+  ipcMain.handle('storage:copySteps', (_, stepIds, targetScenarioId) => {
+    const d = db()
+    const target = d.prepare('SELECT * FROM scenarios WHERE id = ?').get(targetScenarioId)
+    if (!target) return { error: 'Target scenario not found' }
+
+    const steps = (stepIds || [])
+      .map(id => d.prepare('SELECT * FROM steps WHERE id = ?').get(id))
+      .filter(Boolean)
+      .sort((a, b) => a.sort_order - b.sort_order)
+    if (!steps.length) return { error: 'No steps to copy' }
+
+    const existing = d.prepare('SELECT COUNT(*) AS c FROM steps WHERE scenario_id = ?').get(targetScenarioId)
+    let order = existing?.c || 0
+    const insert = d.prepare(`
+      INSERT INTO steps (id, scenario_id, action, params, label, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `)
+    const tx = d.transaction(() => {
+      for (const st of steps) insert.run(randomUUID(), targetScenarioId, st.action, st.params, st.label || '', order++)
+    })
+    tx()
+    return { ok: true, count: steps.length }
+  })
+
   // --- History ---
   ipcMain.handle('storage:getHistory', (_, profileId) => {
     const query = profileId

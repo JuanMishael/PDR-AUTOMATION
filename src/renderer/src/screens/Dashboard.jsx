@@ -29,6 +29,22 @@ function Streak({ runs }) {
   )
 }
 
+function ShareButton({ profileId }) {
+  const [msg, setMsg] = useState(null)
+  async function share(e) {
+    e.stopPropagation()
+    const res = await window.api.exportProfile(profileId)
+    setMsg(res?.ok ? '✓ Saved' : `✗ ${res?.error || 'Export failed'}`)
+    setTimeout(() => setMsg(null), 2500)
+  }
+  return (
+    <button className="btn btn-sm" onClick={share} title="Export this profile (+ its test data) to a shareable file"
+      style={{ justifyContent: 'center' }}>
+      {msg || '⬆ Share'}
+    </button>
+  )
+}
+
 function ProfileCard({ profile, scenarioCount, runs, navigate }) {
   const last = runs[0]
   // Prefer the per-scenario breakdown; fall back to steps for runs recorded before that existed.
@@ -89,6 +105,7 @@ function ProfileCard({ profile, scenarioCount, runs, navigate }) {
           onClick={() => navigate('scenarios', { profileId: profile.id, profileName: profile.name })}>
           <Icon name="builder" size={16} /> Edit Scenarios
         </button>
+        <ShareButton profileId={profile.id} />
         <button className="btn-primary btn-sm" style={{ flex: 1, justifyContent: 'center' }}
           onClick={() => navigate('run', { profileId: profile.id })}>
           <Icon name="run" size={15} fill /> Run
@@ -102,17 +119,27 @@ export default function Dashboard({ navigate }) {
   const [profiles, setProfiles] = useState([])
   const [history, setHistory] = useState([])
   const [counts, setCounts] = useState({})   // profileId -> scenario count
+  const [importMsg, setImportMsg] = useState(null)
 
-  useEffect(() => {
-    window.api.getProfiles().then(async (ps) => {
-      setProfiles(ps)
-      const entries = await Promise.all(
-        ps.map(async p => [p.id, (await window.api.getScenarios(p.id)).length])
-      )
-      setCounts(Object.fromEntries(entries))
-    })
+  async function load() {
+    const ps = await window.api.getProfiles()
+    setProfiles(ps)
+    const entries = await Promise.all(
+      ps.map(async p => [p.id, (await window.api.getScenarios(p.id)).length])
+    )
+    setCounts(Object.fromEntries(entries))
     window.api.getHistory().then(setHistory)
-  }, [])
+  }
+
+  useEffect(() => { load() }, [])
+
+  async function importProfile() {
+    const res = await window.api.importProfile()
+    if (res?.cancelled) return
+    if (res?.ok) { setImportMsg(`✓ Imported "${res.name}" (${res.scenarioCount} scenario${res.scenarioCount !== 1 ? 's' : ''})`); await load() }
+    else setImportMsg(`✗ ${res?.error || 'Import failed'}`)
+    setTimeout(() => setImportMsg(null), 4000)
+  }
 
   // history is returned newest-first; group by profile keeping that order.
   const runsByProfile = {}
@@ -128,9 +155,15 @@ export default function Dashboard({ navigate }) {
       {/* Profiles */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
         <h2 className="eyebrow">Profiles</h2>
-        <button className="btn btn-sm" onClick={() => navigate('profile')}>
-          <Icon name="plus" size={15} /> New Profile
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {importMsg && <span style={{ fontSize: 12, color: importMsg.startsWith('✓') ? 'var(--ok)' : 'var(--bad)' }}>{importMsg}</span>}
+          <button className="btn btn-sm" onClick={importProfile} title="Import a profile shared by another QA (.json)">
+            ⬇ Import Profile
+          </button>
+          <button className="btn btn-sm" onClick={() => navigate('profile')}>
+            <Icon name="plus" size={15} /> New Profile
+          </button>
+        </div>
       </div>
 
       {profiles.length === 0 ? (

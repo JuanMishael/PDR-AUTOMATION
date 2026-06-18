@@ -12,7 +12,8 @@ PDR-AUTOMATION (Electron desktop app)
 │
 ├── RENDERER (React UI — what the QA tester sees)
 │   ├── Dashboard            → a card per profile: scenario count, last-run status/time,
-│   │                          "X/Y scenarios passed" breakdown, recent-runs streak
+│   │                          "X/Y scenarios passed" breakdown, recent-runs streak;
+│   │                          ⬆ Share a profile / ⬇ Import a shared profile bundle
 │   ├── ProfileConfig        → define a "site under test" (base URL, browser, headless, timeout)
 │   ├── ScenarioBuilder      → THE CORE: build a test visually
 │   │     ├── Step Library (left)   — 30+ actions in 7 categories (incl. Flow: group/loop)
@@ -47,13 +48,16 @@ PDR-AUTOMATION (Electron desktop app)
     │   ├── stepReplay.js      → replays steps against a live page (picker/recorder/tester)
     │   ├── tokenResolver.js   → resolve {{Collection.field}}/{{faker.*}}/{{unique.*}} at gen-time
     │   ├── windowFocus.js     → re-assert keyboard focus after headful browser / native dialogs
-    │   └── injectedScripts.js → in-page selector generator + picker/recorder listeners
+    │   ├── injectedScripts.js → in-page selector generator + picker/recorder listeners
+    │   └── portability.js     → serialize/deserialize a profile bundle (scenarios + steps +
+    │                            referenced collections); remaps ids/names/prereqs on import
     └── ipc/
         ├── runner.js          → orchestrates runs (continuous, isolated, data-driven); expands
         │                         group/loop blocks; saves history
         ├── storage.js         → CRUD + duplicateProfile/copyScenarios + duplicate/reorder/rename
         │                         Scenarios + copySteps (append selected steps to another scenario)
         ├── dataLibrary.js     → Test Data Library CRUD + collection export/import (json/csv)
+        ├── transfer.js        → share a whole profile: export/import a self-contained .json bundle
         ├── reporter.js        → export HTML / CSV / Word (.docx) w/ screenshots
         ├── health.js          → verify Node + browser install
         ├── selectorTester.js  → check selector match (optionally after replaying steps)
@@ -90,6 +94,14 @@ Profiles and scenarios can be **replicated** to another environment (duplicate a
 profile, or copy scenarios into an existing one) — handy for staging → prebau. Scenarios
 can be **renamed inline** (double-click or ✎), and **selected steps copied** into another
 scenario (`copySteps`) to reuse a login/setup block without rebuilding it.
+
+Because there's **no central DB**, a whole profile can be **exported to one shareable file** and
+imported on another machine (`transfer.js` + `core/portability.js`). The bundle is self-contained:
+it carries the Test Data Library collections the profile references (detected via `{{Collection.field}}`
+tokens **and** repeating-group `collectionId` params, transitively). On import, names that clash are
+suffixed and every reference inside the copied steps is rewritten — collection ids (group bindings),
+`{{Name.field}}` tokens, and scenario `prerequisite_id` links — so the imported profile runs as-is.
+*Not bundled:* run history (excluded by design) and custom steps (global extensibility hook).
 
 ---
 
@@ -240,6 +252,8 @@ breakdown, recent-runs streak).
 - Replicate: duplicate profile / copy scenarios; reorder + duplicate + **inline-rename** scenarios
 - **Copy selected steps into another scenario** (append, order preserved, independent copies)
 - **Group-aware selection** — ticking a group selects its whole block (inner + nested groups)
+- **Share a profile** — export/import a self-contained `.botchi-profile.json` (scenarios + steps +
+  referenced test data); import remaps collection ids/names + prereqs so it runs on any machine
 - Collapsible step cards + drag-and-drop reordering for an at-a-glance, rearrangeable scenario
 
 **Test data & data-driven (done):**

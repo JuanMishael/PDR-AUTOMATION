@@ -24,6 +24,7 @@ Build and run browser automation scripts through a point-and-click UI — no cod
 - **Continuous runs** — "Run All" runs every scenario in order in **one browser session**; state carries over (stay logged in, keep created records). A failing scenario doesn't stop the rest — each gets its **own pass/fail** (see [How a run works](#how-a-run-works))
 - **Per-scenario isolated run** — run a single scenario in a fresh browser, optionally re-running a prerequisite (e.g. Login) first, for debugging
 - **Replicate environments** — duplicate a whole profile (e.g. staging → prebau) or copy scenarios into another profile; just change the Base URL
+- **📤 Share a profile (export / import)** — there's no central server, so export a whole profile to a single `.botchi-profile.json` file (its scenarios + steps **and** the Test Data Library collections it references) and another QA imports it from their Dashboard. The bundle is self-contained: referenced collections travel with it, and on import any name clashes are suffixed and the references inside the steps (`{{Collection.field}}` tokens **and** repeating-group bindings) are rewritten so it runs immediately
 - **Dashboard** — a card per profile showing scenario count, last-run status & time, the last run's "X/Y scenarios passed" breakdown, and a recent-runs streak
 - **Live run view** — real-time step-by-step log with pass/fail status
 - **Reports** — export results as HTML, CSV, or Word (.docx)
@@ -75,9 +76,10 @@ Output goes to `release/`.
 ```
 src/
   main/
-    core/       # db, scriptGenerator, webRunner, stepReplay, injectedScripts, tokenResolver, windowFocus
+    core/       # db, scriptGenerator, webRunner, stepReplay, injectedScripts, tokenResolver,
+                #   windowFocus, portability (profile export/import serialize/deserialize)
     ipc/        # IPC handlers: storage, runner, reporter, health,
-                #   selectorTester, elementPicker, recorder, dataLibrary
+                #   selectorTester, elementPicker, recorder, dataLibrary, transfer
   renderer/
     src/
       screens/  # Dashboard, ScenarioBuilder, ActiveRun, Results, History, Settings, HealthCheck, TestData
@@ -93,6 +95,8 @@ Key shared modules:
 - `core/scriptGenerator.js` — turns one or more scenarios into a single Playwright script (one browser per run)
 - `core/tokenResolver.js` — resolves `{{Collection.field}}` / `{{faker.*}}` / `{{unique.*}}` tokens to concrete values at generate-time, so the emitted script stays plain JS
 - `ipc/dataLibrary.js` — CRUD for the Test Data Library (collections, fields, data sets) + collection export/import
+- `core/portability.js` — serialize a profile (+ its scenarios/steps + referenced collections) into a shareable bundle and recreate it on import, remapping collection ids/names and prerequisite links so the copy is self-consistent
+- `ipc/transfer.js` — `transfer:exportProfile` / `transfer:importProfile` (file write + open dialog around `portability.js`)
 
 ## How a run works
 

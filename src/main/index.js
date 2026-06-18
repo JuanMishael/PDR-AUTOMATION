@@ -11,6 +11,7 @@ import { registerSelectorTesterHandlers } from './ipc/selectorTester'
 import { registerElementPickerHandlers } from './ipc/elementPicker'
 import { registerRecorderHandlers } from './ipc/recorder'
 import { registerDataLibraryHandlers } from './ipc/dataLibrary'
+import { registerTransferHandlers } from './ipc/transfer'
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -56,6 +57,7 @@ app.whenReady().then(async () => {
   registerElementPickerHandlers()
   registerRecorderHandlers()
   registerDataLibraryHandlers()
+  registerTransferHandlers()
 
   // Renderer asks for this after a native confirm/alert dismisses — Chromium leaves the
   // webContents without keyboard focus otherwise, killing all inputs until re-activation.

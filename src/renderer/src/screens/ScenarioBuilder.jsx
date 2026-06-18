@@ -1140,6 +1140,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [editName, setEditName]       = useState('')
   const [search, setSearch]           = useState('')
   const [exporting, setExporting]     = useState(false)
+  const [shareMsg, setShareMsg]       = useState(null)
   const [recording, setRecording]     = useState(false)
   const [expandedIds, setExpandedIds] = useState(() => new Set())
   const [selectedIds, setSelectedIds] = useState(() => new Set())
@@ -1268,6 +1269,14 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     const res = await window.api.duplicateProfile(profileId)
     if (res?.id) alert(`Profile duplicated as "${profileName} (copy)".\nOpen it from the Dashboard or the profile picker, then change its Base URL.`)
     else alert(res?.error || 'Could not duplicate profile')
+  }
+
+  // Export this whole profile (scenarios + steps + the test-data collections it references) to a
+  // shareable .json bundle another QA can import from their Dashboard.
+  async function shareProfile() {
+    const res = await window.api.exportProfile(profileId)
+    setShareMsg(res?.ok ? '✓ Saved' : `✗ ${res?.error || 'Export failed'}`)
+    setTimeout(() => setShareMsg(null), 2500)
   }
 
   async function createScenario() {
@@ -1578,6 +1587,12 @@ export default function ScenarioBuilder({ navigate, ctx }) {
             background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer'
           }}>
             ⧉ Duplicate Profile
+          </button>
+          <button onClick={shareProfile} title="Export this profile (+ its test data) to a file you can share with other QA" style={{
+            padding: '7px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+            background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer'
+          }}>
+            {shareMsg || '⬆ Share Profile'}
           </button>
           {active && (
             <button onClick={record} disabled={recording} title="Open the app and record your actions as steps" style={{

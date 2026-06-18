@@ -13,12 +13,44 @@ const sanitize = s => String(s).replace(/[^a-zA-Z0-9\-_]/g, '_')
 const csvCell = c => `"${String(c ?? '').replace(/"/g, '""')}"`
 
 // Read a full collection (fields + sets) shaped for export / sharing.
-function readCollection(db, id) {
+export function readCollection(db, id) {
   const collection = db.prepare('SELECT * FROM data_collections WHERE id = ?').get(id)
   if (!collection) return null
   const fields = db.prepare('SELECT name, type, default_token, selector, sort_order FROM data_fields WHERE collection_id = ? ORDER BY sort_order').all(id)
   const sets = db.prepare('SELECT name, group_type, field_values, sort_order FROM data_sets WHERE collection_id = ? ORDER BY group_type, sort_order').all(id)
   return { collection, fields, sets }
+}
+
+// Pick a collection name that doesn't clash with an existing one — suffix " (2)", " (3)"… if taken.
+export function uniqueCollectionName(db, name) {
+  const taken = new Set(db.prepare('SELECT name FROM data_collections').all().map(c => c.name.toLowerCase()))
+  if (!taken.has(name.toLowerCase())) return name
+  let n = 2
+  while (taken.has(`${name} (${n})`.toLowerCase())) n++
+  return `${name} (${n})`
+}
+
+// Create a NEW collection from an exported payload ({ collection|name, description, fields, sets }).
+// `name` overrides the payload name (callers pass a clash-free name). Sets' field_values may be an
+// object (json export) or already a string. Returns the new collection id.
+export function createCollectionFromPayload(db, payload, name) {
+  const cid = randomUUID()
+  db.prepare('INSERT INTO data_collections (id, name, description) VALUES (?, ?, ?)')
+    .run(cid, name, payload.collection?.description ?? payload.description ?? '')
+  let order = 0
+  for (const f of (payload.fields || [])) {
+    db.prepare(`INSERT INTO data_fields (id, collection_id, name, type, default_token, selector, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(randomUUID(), cid, f.name, f.type || 'text', f.default_token || '', f.selector || '', f.sort_order ?? order++)
+  }
+  let sOrder = 0
+  for (const s of (payload.sets || [])) {
+    const fv = typeof s.field_values === 'string' ? s.field_values : JSON.stringify(s.field_values || {})
+    db.prepare(`INSERT INTO data_sets (id, collection_id, name, group_type, field_values, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(randomUUID(), cid, s.name || `set ${sOrder + 1}`, s.group_type || 'positive', fv, s.sort_order ?? sOrder++)
+  }
+  return cid
 }
 
 // Test Data Library (Phase 1): CRUD for collections, their fields, and grouped data sets.
@@ -149,26 +181,8 @@ export function registerDataLibraryHandlers() {
 
     const database = db()
     // Avoid clobbering an existing collection — suffix the name if it's taken.
-    let name = payload.collection.name
-    const taken = new Set(database.prepare('SELECT name FROM data_collections').all().map(c => c.name.toLowerCase()))
-    if (taken.has(name.toLowerCase())) { let n = 2; while (taken.has(`${name} (${n})`.toLowerCase())) n++; name = `${name} (${n})` }
-
-    const cid = randomUUID()
-    database.prepare('INSERT INTO data_collections (id, name, description) VALUES (?, ?, ?)')
-      .run(cid, name, payload.collection.description || '')
-    let order = 0
-    for (const f of (payload.fields || [])) {
-      database.prepare(`INSERT INTO data_fields (id, collection_id, name, type, default_token, selector, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`)
-        .run(randomUUID(), cid, f.name, f.type || 'text', f.default_token || '', f.selector || '', f.sort_order ?? order++)
-    }
-    let sOrder = 0
-    for (const s of (payload.sets || [])) {
-      database.prepare(`INSERT INTO data_sets (id, collection_id, name, group_type, field_values, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?)`)
-        .run(randomUUID(), cid, s.name || `set ${sOrder + 1}`, s.group_type || 'positive',
-          JSON.stringify(s.field_values || {}), s.sort_order ?? sOrder++)
-    }
+    const name = uniqueCollectionName(database, payload.collection.name)
+    const cid = createCollectionFromPayload(database, payload, name)
     return { ok: true, id: cid, name }
   })
 }

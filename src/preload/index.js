@@ -71,6 +71,10 @@ contextBridge.exposeInMainWorld('api', {
   exportCollection: (id, format) => ipcRenderer.invoke('data:exportCollection', id, format),
   importCollection: () => ipcRenderer.invoke('data:importCollection'),
 
+  // Profile portability — share a whole profile (scenarios + steps + referenced test data)
+  exportProfile: (profileId) => ipcRenderer.invoke('transfer:exportProfile', profileId),
+  importProfile: () => ipcRenderer.invoke('transfer:importProfile'),
+
   // Re-assert keyboard focus on the app window (e.g. after a native confirm/alert that
   // otherwise leaves Electron's inputs dead until the window is manually re-activated).
   refocus: () => ipcRenderer.send('window:refocus'),

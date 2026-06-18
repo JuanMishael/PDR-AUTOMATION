@@ -16,14 +16,16 @@ PDR-AUTOMATION (Electron desktop app)
 │   ├── ProfileConfig        → define a "site under test" (base URL, browser, headless, timeout)
 │   ├── ScenarioBuilder      → THE CORE: build a test visually
 │   │     ├── Step Library (left)   — 30+ actions in 7 categories (incl. Flow: group/loop)
-│   │     ├── Scenario list (left)  — per-scenario ▶ Run, ↑↓ reorder, ⧉ duplicate
+│   │     ├── Scenario list (left)  — per-scenario ▶ Run, ↑↓ reorder, ✎ rename, ⧉ duplicate
 │   │     ├── Canvas (right)        — collapsible step cards; drag (⠿) to reorder / into groups
 │   │     ├── 🎯 Pick               — click a real element, get a selector
 │   │     ├── ⊙ Test                — test a selector after replaying steps above it
 │   │     ├── ● Record              — record clicks/typing (Pause/Resume + ✓ Assert mode)
 │   │     ├── ⊞ Group / 🔁 loop      — group steps (nestable); flip "repeat for each data set"
+│   │     │                           (the ONLY data-driven path — no top-level shortcut)
+│   │     ├── ☑ Select              — group-aware: ticking a group selects its whole block
+│   │     ├── ⧉ Copy to scenario    — append selected steps into another scenario
 │   │     ├── 💾 Capture / { } token — make test data from steps; insert {{Collection.field}}
-│   │     ├── 🔁 Run across          — repeat a scenario once per data set (logout between)
 │   │     ├── "Runs first"          — prerequisite for isolated single-scenario runs
 │   │     └── ⧉ Duplicate / Copy    — replicate profile or scenarios to another env
 │   ├── TestData             → Test Data Library: collections (form shape) + data sets
@@ -49,7 +51,8 @@ PDR-AUTOMATION (Electron desktop app)
     └── ipc/
         ├── runner.js          → orchestrates runs (continuous, isolated, data-driven); expands
         │                         group/loop blocks; saves history
-        ├── storage.js         → CRUD + duplicateProfile/copyScenarios + duplicate/reorderScenarios
+        ├── storage.js         → CRUD + duplicateProfile/copyScenarios + duplicate/reorder/rename
+        │                         Scenarios + copySteps (append selected steps to another scenario)
         ├── dataLibrary.js     → Test Data Library CRUD + collection export/import (json/csv)
         ├── reporter.js        → export HTML / CSV / Word (.docx) w/ screenshots
         ├── health.js          → verify Node + browser install
@@ -84,7 +87,9 @@ Custom Steps  (user-defined reusable action templates — extensibility hook)
 
 A tester builds **Steps** into a **Scenario** under a **Profile**, then hits Run.
 Profiles and scenarios can be **replicated** to another environment (duplicate a whole
-profile, or copy scenarios into an existing one) — handy for staging → prebau.
+profile, or copy scenarios into an existing one) — handy for staging → prebau. Scenarios
+can be **renamed inline** (double-click or ✎), and **selected steps copied** into another
+scenario (`copySteps`) to reuse a login/setup block without rebuilding it.
 
 ---
 
@@ -115,9 +120,11 @@ profile, or copy scenarios into an existing one) — handy for staging → preba
   Prerequisites are ignored here (scenario order *is* the setup).
 - **Per-scenario ▶ Run (isolated)** — runs one scenario in a fresh browser, first replaying
   its **prerequisite** chain (e.g. Login) if set. For debugging a single scenario.
-- **Data-driven** — a **repeating group** (or the "🔁 Run across" shortcut) repeats a step
-  range / scenario once per data set in a collection+group, resolving each row's tokens.
-  Per-iteration results are labeled by set name. Logout goes *inside* the loop body as the reset.
+- **Data-driven** — a **repeating group** repeats its step range once per data set in a
+  collection+group, resolving each row's tokens. Per-iteration results are labeled by set name.
+  Logout goes *inside* the loop body as the reset. This is now the **only** data-driven entry
+  point — the old top-level "🔁 Run across" scenario shortcut and its `runner:runDataDriven`
+  IPC path were removed entirely.
 
 **Test data & tokens:** steps reference values with `{{Collection.field}}` (from the active/chosen
 data set, falling back to the field default), `{{faker.*}}` (generated), or `{{unique.*}}`
@@ -230,7 +237,9 @@ breakdown, recent-runs streak).
 - **Per-scenario pass/fail** — Run All continues past a failing scenario; each scenario gets
   its own verdict (`scenarios_total/passed/failed` in history)
 - Per-scenario isolated run + prerequisite link
-- Replicate: duplicate profile / copy scenarios; reorder + duplicate scenarios
+- Replicate: duplicate profile / copy scenarios; reorder + duplicate + **inline-rename** scenarios
+- **Copy selected steps into another scenario** (append, order preserved, independent copies)
+- **Group-aware selection** — ticking a group selects its whole block (inner + nested groups)
 - Collapsible step cards + drag-and-drop reordering for an at-a-glance, rearrangeable scenario
 
 **Test data & data-driven (done):**

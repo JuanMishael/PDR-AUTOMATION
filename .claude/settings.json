@@ -8,7 +8,8 @@
       "Bash(grep -nA18 \"saveStep\" d:/SIDE_APPS/PDR-AUTOMATION/src/main/ipc/storage.js)",
       "Bash(node -e \"require\\('@babel/core'\\)\")",
       "Bash(grep -nA10 \"storage:getSteps\" d:/SIDE_APPS/PDR-AUTOMATION/src/main/ipc/storage.js)",
-      "Bash(git symbolic-ref *)"
+      "Bash(git symbolic-ref *)",
+      "Bash(echo \"exit: $?\")"
     ]
   }
 }

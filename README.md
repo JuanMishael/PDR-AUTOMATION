@@ -17,8 +17,10 @@ Build and run browser automation scripts through a point-and-click UI — no cod
 - **Selector tester (from the top)** — test a selector after replaying the steps above it, so mid-flow elements (modals, post-login content) actually match instead of misreporting "0 found"
 - **🗂 Test Data Library** — define a form once as a **collection** (fields + types), then store reusable **data sets** grouped by intent (positive / negative / edge). Reference values in steps with `{{Collection.field}}` tokens, plus `{{faker.*}}` and `{{unique.*}}` for fresh-per-run values. Capture data straight from a scenario's fill steps, **import** rows from CSV/Excel, and **export** a collection (.json/.csv) to share with other QA
 - **▦ Fill form / { } token insert** — drop a whole mapped form in as pre-wired fill cards, or insert a `{{token}}` into any value field from a dropdown — no need to remember the syntax
-- **🔁 Step groups & loops** — select steps → group them into a named, collapsible (and **nestable**) block; flip a group to **repeat for each data set** and it runs once per credential/row, resolving that row's tokens — login → logout → login again falls out naturally
-- **Reorder & arrange** — move steps and whole groups with ↑↓ (block-aware) or **drag-and-drop** (drop a step *into* a group to make it a member); reorder, duplicate, or copy scenarios across profiles
+- **🔁 Step groups & loops** — select steps → group them into a named, collapsible (and **nestable**) block; flip a group to **repeat for each data set** and it runs once per credential/row, resolving that row's tokens — login → logout → login again falls out naturally. This repeating group is now the **single** way to drive data-driven runs (the old top-level "Run across" shortcut was removed)
+- **☑ Group-aware selection** — ticking a group's checkbox selects the **whole block** — its inner steps and any nested groups — so you can group/copy/delete a unit in one click
+- **⧉ Copy steps to scenario** — select steps and append them into **another scenario** (same or different profile), source order preserved, as independent copies — reuse a login or setup block without rebuilding it
+- **Reorder & arrange** — move steps and whole groups with ↑↓ (block-aware) or **drag-and-drop** (drop a step *into* a group to make it a member); **rename** scenarios inline (double-click or ✎), reorder, duplicate, or copy scenarios across profiles
 - **Continuous runs** — "Run All" runs every scenario in order in **one browser session**; state carries over (stay logged in, keep created records). A failing scenario doesn't stop the rest — each gets its **own pass/fail** (see [How a run works](#how-a-run-works))
 - **Per-scenario isolated run** — run a single scenario in a fresh browser, optionally re-running a prerequisite (e.g. Login) first, for debugging
 - **Replicate environments** — duplicate a whole profile (e.g. staging → prebau) or copy scenarios into another profile; just change the Base URL
@@ -120,4 +122,4 @@ A run records **a pass/fail verdict for each scenario**, not just one verdict fo
 - Self-healing selector fallback chain (auto-try by-text / role+name / nearby-label on failure)
 - "Blocked" scenario marking — skip/flag scenarios whose prerequisite already failed
 
-**Recently shipped** (was Phase 2): assert-mode recording, smart waits, Test Data Library + data-driven loops, step groups, drag-and-drop reordering.
+**Recently shipped** (was Phase 2): assert-mode recording, smart waits, Test Data Library + data-driven loops, step groups, drag-and-drop reordering, inline scenario rename, copy steps between scenarios, group-aware selection.

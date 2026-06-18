@@ -29,15 +29,6 @@ function parseParams(p) {
   try { return JSON.parse(p) } catch { return {} }
 }
 
-// Pre-resolve a step list's {{tokens}} against a data context, producing plain steps with
-// concrete values (params as objects). The run's global resolver then leaves them untouched.
-function resolveStepList(steps, ctx) {
-  return steps.map((s, i) => ({
-    id: s.id, action: s.action, label: s.label,
-    params: resolveParams(parseParams(s.params), ctx), sort_order: i
-  }))
-}
-
 const isGroupStart = a => a === 'groupStart' || a === 'loopStart'
 const isGroupEnd = a => a === 'groupEnd' || a === 'loopEnd'
 
@@ -207,54 +198,6 @@ export function registerRunnerHandlers() {
 
       return await executeRun({
         profile, scenarios, settings: loadSettings(db), dataSetId,
-        scenarioMeta: { scenarioId: scenario.id, scenarioName: scenario.name },
-        send
-      })
-    } catch (err) { return failRun(send, err) }
-  })
-
-  // Data-driven run: repeat ONE scenario once per selected data set, with each iteration's
-  // {{tokens}} resolved from that set. An optional logout scenario runs BETWEEN iterations to
-  // reset the session (so credential #2 sees a fresh login). All in one browser; each
-  // iteration is its own "scenario" so results show pass/fail per data row.
-  ipcMain.handle('runner:runDataDriven', async (_event, { profileId, scenarioId, dataSetIds = [], logoutScenarioId = null }) => {
-    const send = sender()
-    try {
-      const db = getDb()
-      const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
-      if (!profile) return { error: 'Profile not found' }
-      const scenario = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(scenarioId)
-      if (!scenario) return { error: 'Scenario not found' }
-      if (!dataSetIds.length) return { error: 'No data sets selected' }
-
-      const logoutScenario = logoutScenarioId
-        ? db.prepare('SELECT * FROM scenarios WHERE id = ?').get(logoutScenarioId) : null
-      const targetSteps = collectSteps(db, scenario)
-      const logoutSteps = logoutScenario ? collectSteps(db, logoutScenario) : null
-
-      const scenarios = []
-      for (let i = 0; i < dataSetIds.length; i++) {
-        const setId = dataSetIds[i]
-        const set = db.prepare('SELECT * FROM data_sets WHERE id = ?').get(setId)
-        const ctx = await buildDataContext(db, setId)
-        scenarios.push({
-          id: `${scenario.id}::${setId}`,
-          name: `${scenario.name} — ${set?.name || 'set ' + (i + 1)}`,
-          steps: resolveStepList(targetSteps, ctx)
-        })
-        // Logout between iterations (not needed after the very last one).
-        if (logoutSteps && i < dataSetIds.length - 1) {
-          const lctx = await buildDataContext(db, null)
-          scenarios.push({
-            id: `logout::${setId}`,
-            name: logoutScenario.name,
-            steps: resolveStepList(logoutSteps, lctx)
-          })
-        }
-      }
-
-      return await executeRun({
-        profile, scenarios, settings: loadSettings(db), dataSetId: null,
         scenarioMeta: { scenarioId: scenario.id, scenarioName: scenario.name },
         send
       })

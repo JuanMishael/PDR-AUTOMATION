@@ -20,6 +20,7 @@ export default function TestData() {
   // Electron's renderer has no window.prompt(), so collection create/rename use inline inputs.
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
+  const [search, setSearch] = useState('')
 
   useEffect(() => { load() }, [])
 
@@ -92,6 +93,10 @@ export default function TestData() {
               <div style={{ fontSize: 10, color: 'var(--ink-faint)', marginTop: 4 }}>Enter to create · Esc to cancel</div>
             </div>
           )}
+          {collections.length > 4 && (
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="🔍 Filter collections…" style={{ width: '100%', fontSize: 12, marginBottom: 8 }} />
+          )}
           {collections.length === 0 && !creating ? (
             <div className="card empty-state" style={{ padding: 24 }}>
               <div className="empty-icon"><Icon name="data" size={30} /></div>
@@ -99,7 +104,13 @@ export default function TestData() {
             </div>
           ) : (
             <div style={{ display: 'grid', gap: 6 }}>
-              {collections.map(c => {
+              {(() => {
+                const q = search.trim().toLowerCase()
+                const visible = q ? collections.filter(c => c.name.toLowerCase().includes(q)) : collections
+                if (collections.length > 0 && visible.length === 0) {
+                  return <p style={{ fontSize: 12, color: 'var(--ink-soft)', textAlign: 'center', padding: '8px 0' }}>No matches</p>
+                }
+                return visible.map(c => {
                 const active = c.id === selectedId
                 return (
                   <div key={c.id} className={active ? 'card' : 'sketch'}
@@ -115,7 +126,8 @@ export default function TestData() {
                     </div>
                   </div>
                 )
-              })}
+              })
+              })()}
             </div>
           )}
         </div>

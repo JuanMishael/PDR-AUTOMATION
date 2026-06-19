@@ -1126,6 +1126,92 @@ function CopyStepsToScenarioButton({ scenarios, currentScenarioId, stepIds, onCo
   )
 }
 
+// ─── A single scenario row (drag handle + inline rename + ⋯ menu) ─────────────
+
+function ScenarioRow({
+  s, active, editing, editName, setEditName,
+  onSelect, onStartRename, onCommitRename, onCancelRename, onDuplicate, onDelete,
+  dragEnabled, isOver, isDragging, onDragStart, onDragEnd, onDragOver, onDrop
+}) {
+  const [menu, setMenu] = useState(false)
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
+  const menuRef = useRef(null)
+  const btnRef = useRef(null)
+  useEffect(() => {
+    if (!menu) return
+    const h = e => {
+      if (menuRef.current && !menuRef.current.contains(e.target) && btnRef.current && !btnRef.current.contains(e.target)) setMenu(false)
+    }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [menu])
+
+  // The scenario list scrolls (overflow:auto), which would clip an in-flow dropdown — so the menu
+  // is position:fixed, anchored to the ⋯ button via its on-screen rect.
+  function toggleMenu(e) {
+    e.stopPropagation()
+    if (!menu && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect()
+      setMenuPos({ top: r.bottom + 4, left: r.right - 150 })
+    }
+    setMenu(o => !o)
+  }
+
+  const item = { display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', borderRadius: 6,
+    background: 'transparent', border: 'none', color: 'var(--text)', cursor: 'pointer', fontSize: 12 }
+  const hov = e => e.currentTarget.style.background = 'var(--surface2)'
+  const out = e => e.currentTarget.style.background = 'transparent'
+
+  return (
+    <div onClick={() => onSelect(s)} onDragOver={onDragOver} onDrop={onDrop}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 4,
+        padding: '6px 6px 6px 4px', borderRadius: 6, cursor: 'pointer', marginBottom: 2,
+        opacity: isDragging ? 0.4 : 1,
+        background: active ? 'var(--accent-dim)' : 'transparent',
+        border: active ? '1px solid rgba(108,99,255,0.2)' : '1px solid transparent',
+        boxShadow: isOver ? '0 -2px 0 0 var(--accent)' : undefined,
+        color: active ? 'var(--accent)' : 'var(--text)',
+        fontWeight: active ? 700 : 400, fontSize: 13
+      }}>
+      {dragEnabled && editing !== s.id && (
+        <span draggable onDragStart={onDragStart} onDragEnd={onDragEnd} onClick={e => e.stopPropagation()}
+          title="Drag to reorder (Run All runs top → bottom)"
+          style={{ cursor: 'grab', color: 'var(--text-muted)', fontSize: 13, flexShrink: 0, lineHeight: 1 }}>⠿</span>
+      )}
+      {editing === s.id ? (
+        <input autoFocus value={editName} onClick={e => e.stopPropagation()}
+          onChange={e => setEditName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') onCommitRename(s); else if (e.key === 'Escape') onCancelRename() }}
+          onBlur={() => onCommitRename(s)}
+          style={{ fontSize: 13, flex: 1, minWidth: 0, padding: '2px 6px' }} />
+      ) : (
+        <span onDoubleClick={e => { e.stopPropagation(); onStartRename(s) }} title="Double-click to rename"
+          style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+          {s.name}
+        </span>
+      )}
+      <div style={{ flexShrink: 0 }}>
+        <button ref={btnRef} onClick={toggleMenu} title="More…"
+          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
+            fontSize: 16, lineHeight: 1, padding: '0 4px' }}>⋯</button>
+        {menu && (
+          <div ref={menuRef} style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000, width: 150,
+            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 5,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}>
+            <button style={item} onMouseEnter={hov} onMouseLeave={out}
+              onClick={e => { e.stopPropagation(); setMenu(false); onStartRename(s) }}>✎ Rename</button>
+            <button style={item} onMouseEnter={hov} onMouseLeave={out}
+              onClick={e => { e.stopPropagation(); setMenu(false); onDuplicate(s.id) }}>⧉ Duplicate</button>
+            <button style={{ ...item, color: '#EF4444' }} onMouseEnter={hov} onMouseLeave={out}
+              onClick={e => { e.stopPropagation(); setMenu(false); onDelete(s.id) }}>🗑 Delete</button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main ScenarioBuilder ─────────────────────────────────────────────────────
 
 export default function ScenarioBuilder({ navigate, ctx }) {
@@ -1138,6 +1224,9 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [newName, setNewName]         = useState('')
   const [editingId, setEditingId]     = useState(null)   // scenario being renamed inline
   const [editName, setEditName]       = useState('')
+  const [scenarioSearch, setScenarioSearch] = useState('')   // filter the scenario list
+  const [dragSid, setDragSid]         = useState(null)   // scenario being dragged
+  const [overSid, setOverSid]         = useState(null)   // scenario drop target (highlight)
   const [search, setSearch]           = useState('')
   const [exporting, setExporting]     = useState(false)
   const [shareMsg, setShareMsg]       = useState(null)
@@ -1301,14 +1390,18 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   }
 
   // Reorder scenarios — Run All executes them top→bottom (e.g. Login → Logout → Login).
-  async function moveScenario(id, dir) {
-    const idx = scenarios.findIndex(s => s.id === id)
-    const swap = dir === 'up' ? idx - 1 : idx + 1
-    if (idx < 0 || swap < 0 || swap >= scenarios.length) return
-    const next = [...scenarios]
-    ;[next[idx], next[swap]] = [next[swap], next[idx]]
+  // Drag a scenario's grip onto another row to drop it just before that row.
+  async function reorderScenarioByDrag(dragId, beforeId) {
+    if (!dragId || dragId === beforeId) return
+    const ids = scenarios.map(s => s.id)
+    const from = ids.indexOf(dragId)
+    if (from < 0) return
+    ids.splice(from, 1)
+    const to = beforeId == null ? ids.length : ids.indexOf(beforeId)
+    ids.splice(to < 0 ? ids.length : to, 0, dragId)
+    const next = ids.map(id => scenarios.find(s => s.id === id))
     setScenarios(next)
-    await window.api.reorderScenarios(profileId, next.map(s => s.id))
+    await window.api.reorderScenarios(profileId, ids)
   }
 
   // Inline rename: open the editor, then commit (keeps the same id / steps / order).
@@ -1640,50 +1733,38 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                   style={{ fontSize: 12, flex: 1 }} />
                 <button className="btn-primary" style={{ padding: '6px 10px' }} onClick={createScenario}>+</button>
               </div>
-              <div style={{ maxHeight: 130, overflowY: 'auto' }}>
+              {scenarios.length > 4 && (
+                <input value={scenarioSearch} onChange={e => setScenarioSearch(e.target.value)}
+                  placeholder="🔍 Filter scenarios…" style={{ fontSize: 12, width: '100%', marginBottom: 6 }} />
+              )}
+              <div style={{ maxHeight: 200, overflowY: 'auto' }}>
                 {scenarios.length === 0 && (
                   <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '10px 0' }}>No scenarios yet</p>
                 )}
-                {scenarios.map((s, i) => {
-                  const iconBtn = { background: 'none', border: 'none', color: 'var(--text-muted)', padding: '0 2px', flexShrink: 0, cursor: 'pointer' }
-                  return (
-                  <div key={s.id} onClick={() => selectScenario(s)} style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1,
-                    padding: '6px 8px', borderRadius: 6, cursor: 'pointer', marginBottom: 2,
-                    background: active?.id === s.id ? 'var(--accent-dim)' : 'transparent',
-                    border: active?.id === s.id ? '1px solid rgba(108,99,255,0.2)' : '1px solid transparent',
-                    color: active?.id === s.id ? 'var(--accent)' : 'var(--text)',
-                    fontWeight: active?.id === s.id ? 700 : 400, fontSize: 13
-                  }}>
-                    {editingId === s.id ? (
-                      <input autoFocus value={editName} onClick={e => e.stopPropagation()}
-                        onChange={e => setEditName(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') commitRename(s); else if (e.key === 'Escape') cancelRename() }}
-                        onBlur={() => commitRename(s)}
-                        style={{ fontSize: 13, flex: 1, minWidth: 0, padding: '2px 6px' }} />
-                    ) : (
-                      <span onDoubleClick={e => { e.stopPropagation(); startRename(s) }}
-                        title="Double-click to rename"
-                        style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                        {s.name}
-                      </span>
-                    )}
-                    <button onClick={e => { e.stopPropagation(); moveScenario(s.id, 'up') }} disabled={i === 0}
-                      title="Move up (runs earlier)" style={{ ...iconBtn, fontSize: 11, opacity: i === 0 ? 0.3 : 1 }}>↑</button>
-                    <button onClick={e => { e.stopPropagation(); moveScenario(s.id, 'down') }} disabled={i === scenarios.length - 1}
-                      title="Move down (runs later)" style={{ ...iconBtn, fontSize: 11, opacity: i === scenarios.length - 1 ? 0.3 : 1 }}>↓</button>
-                    <button onClick={e => { e.stopPropagation(); startRename(s) }}
-                      title="Rename this scenario" style={{ ...iconBtn, fontSize: 12 }}>✎</button>
-                    <button onClick={e => { e.stopPropagation(); duplicateScenario(s.id) }}
-                      title="Duplicate this scenario" style={{ ...iconBtn, fontSize: 12 }}>⧉</button>
-                    <button onClick={e => { e.stopPropagation(); navigate('run', { profileId, scenarioId: s.id, scenarioName: s.name }) }}
-                      title="Run just this scenario (with its prerequisite) in a fresh browser"
-                      style={{ ...iconBtn, fontSize: 11 }}>▶</button>
-                    <button onClick={e => { e.stopPropagation(); deleteScenario(s.id) }}
-                      style={{ ...iconBtn, fontSize: 14 }}>×</button>
-                  </div>
-                  )
-                })}
+                {(() => {
+                  const q = scenarioSearch.trim().toLowerCase()
+                  const visible = q ? scenarios.filter(s => s.name.toLowerCase().includes(q)) : scenarios
+                  if (scenarios.length > 0 && visible.length === 0) {
+                    return <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '10px 0' }}>No matches</p>
+                  }
+                  const dragEnabled = !q   // reordering only makes sense against the full, unfiltered order
+                  return visible.map(s => (
+                    <ScenarioRow key={s.id} s={s}
+                      active={active?.id === s.id}
+                      editing={editingId} editName={editName} setEditName={setEditName}
+                      onSelect={selectScenario}
+                      onStartRename={startRename} onCommitRename={commitRename} onCancelRename={cancelRename}
+                      onDuplicate={duplicateScenario} onDelete={deleteScenario}
+                      dragEnabled={dragEnabled}
+                      isOver={overSid === s.id && dragSid !== s.id}
+                      isDragging={dragSid === s.id}
+                      onDragStart={() => setDragSid(s.id)}
+                      onDragEnd={() => { setDragSid(null); setOverSid(null) }}
+                      onDragOver={e => { if (dragSid) { e.preventDefault(); setOverSid(s.id) } }}
+                      onDrop={e => { e.preventDefault(); reorderScenarioByDrag(dragSid, s.id); setDragSid(null); setOverSid(null) }}
+                    />
+                  ))
+                })()}
               </div>
             </div>
           </div>
@@ -1785,6 +1866,11 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     {steps.length} step{steps.length !== 1 ? 's' : ''}
                   </span>
                   <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <button className="btn-primary" onClick={() => navigate('run', { profileId, scenarioId: active.id, scenarioName: active.name })}
+                      title="Run just this scenario (with its 'Run needs' prerequisite) in a fresh browser"
+                      style={{ padding: '5px 12px', fontSize: 12 }}>
+                      ▶ Run scenario
+                    </button>
                     {selectedIds.size > 0 && (
                       <>
                         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{selectedIds.size} selected</span>

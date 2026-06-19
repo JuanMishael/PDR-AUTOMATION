@@ -3,6 +3,22 @@ import { confirmDialog } from '../lib/confirm'
 
 const EMPTY = { name: '', type: 'web', base_url: '', browser: 'chromium', headless: false, timeout: 30000 }
 
+// Export a profile (+ its scenarios/steps + referenced test data) to a shareable file.
+function ShareProfileButton({ profileId }) {
+  const [msg, setMsg] = useState(null)
+  async function share() {
+    const res = await window.api.exportProfile(profileId)
+    setMsg(res?.ok ? '✓ Saved' : `✗ ${res?.error || 'Failed'}`)
+    setTimeout(() => setMsg(null), 2500)
+  }
+  return (
+    <button className="btn-ghost" style={{ padding: '4px 10px', fontSize: 11 }} onClick={share}
+      title="Share — export this profile (+ its test data) to a file other QA can import">
+      {msg || '⬆ Share'}
+    </button>
+  )
+}
+
 export default function ProfileConfig({ navigate }) {
   const [profiles, setProfiles] = useState([])
   const [form, setForm] = useState(EMPTY)
@@ -143,6 +159,7 @@ export default function ProfileConfig({ navigate }) {
                       onClick={() => navigate('scenarios', { profileId: p.id, profileName: p.name })}>
                       Scenarios
                     </button>
+                    <ShareProfileButton profileId={p.id} />
                     <button className="btn-danger" style={{ padding: '4px 10px', fontSize: 11, marginLeft: 'auto' }} onClick={() => del(p.id)}>
                       Delete
                     </button>

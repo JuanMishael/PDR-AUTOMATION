@@ -34,13 +34,13 @@ function ShareButton({ profileId }) {
   async function share(e) {
     e.stopPropagation()
     const res = await window.api.exportProfile(profileId)
-    setMsg(res?.ok ? '✓ Saved' : `✗ ${res?.error || 'Export failed'}`)
+    setMsg(res?.ok ? '✓' : '✗')
     setTimeout(() => setMsg(null), 2500)
   }
   return (
-    <button className="btn btn-sm" onClick={share} title="Export this profile (+ its test data) to a shareable file"
-      style={{ justifyContent: 'center' }}>
-      {msg || '⬆ Share'}
+    <button className="btn btn-sm" onClick={share} title="Share — export this profile (+ its test data) to a file"
+      style={{ justifyContent: 'center', flexShrink: 0 }}>
+      {msg || '⬆'} Share
     </button>
   )
 }
@@ -105,11 +105,11 @@ function ProfileCard({ profile, scenarioCount, runs, navigate }) {
           onClick={() => navigate('scenarios', { profileId: profile.id, profileName: profile.name })}>
           <Icon name="builder" size={16} /> Edit Scenarios
         </button>
-        <ShareButton profileId={profile.id} />
         <button className="btn-primary btn-sm" style={{ flex: 1, justifyContent: 'center' }}
           onClick={() => navigate('run', { profileId: profile.id })}>
           <Icon name="run" size={15} fill /> Run
         </button>
+        <ShareButton profileId={profile.id} />
       </div>
     </div>
   )
@@ -120,6 +120,7 @@ export default function Dashboard({ navigate }) {
   const [history, setHistory] = useState([])
   const [counts, setCounts] = useState({})   // profileId -> scenario count
   const [importMsg, setImportMsg] = useState(null)
+  const [search, setSearch] = useState('')
 
   async function load() {
     const ps = await window.api.getProfiles()
@@ -145,6 +146,13 @@ export default function Dashboard({ navigate }) {
   const runsByProfile = {}
   for (const h of history) (runsByProfile[h.profile_id] ||= []).push(h)
 
+  // Float the most-recently-run profile to the top; never-run profiles sink (keep creation order).
+  const lastRunAt = p => { const r = runsByProfile[p.id]?.[0]; return r ? new Date(r.started_at).getTime() : -1 }
+  const q = search.trim().toLowerCase()
+  const visibleProfiles = [...profiles]
+    .filter(p => !q || p.name.toLowerCase().includes(q) || (p.base_url || '').toLowerCase().includes(q))
+    .sort((a, b) => lastRunAt(b) - lastRunAt(a))
+
   return (
     <div className="fade-in">
       <div className="page-header">
@@ -153,17 +161,19 @@ export default function Dashboard({ navigate }) {
       </div>
 
       {/* Profiles */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <h2 className="eyebrow">Profiles</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {importMsg && <span style={{ fontSize: 12, color: importMsg.startsWith('✓') ? 'var(--ok)' : 'var(--bad)' }}>{importMsg}</span>}
-          <button className="btn btn-sm" onClick={importProfile} title="Import a profile shared by another QA (.json)">
-            ⬇ Import Profile
-          </button>
-          <button className="btn btn-sm" onClick={() => navigate('profile')}>
-            <Icon name="plus" size={15} /> New Profile
-          </button>
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+        <h2 className="eyebrow" style={{ marginRight: 'auto' }}>Profiles</h2>
+        {profiles.length > 4 && (
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="🔍 Search profiles…" style={{ fontSize: 12, maxWidth: 220 }} />
+        )}
+        {importMsg && <span style={{ fontSize: 12, color: importMsg.startsWith('✓') ? 'var(--ok)' : 'var(--bad)' }}>{importMsg}</span>}
+        <button className="btn btn-sm" onClick={importProfile} title="Import a profile shared by another QA (.json)">
+          ⬇ Import Profile
+        </button>
+        <button className="btn btn-sm" onClick={() => navigate('profile')}>
+          <Icon name="plus" size={15} /> New Profile
+        </button>
       </div>
 
       {profiles.length === 0 ? (
@@ -174,7 +184,9 @@ export default function Dashboard({ navigate }) {
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', gap: 14, marginBottom: 34 }}>
-          {profiles.map(p => (
+          {visibleProfiles.length === 0 ? (
+            <p style={{ fontSize: 13, color: 'var(--ink-soft)' }}>No profiles match “{search}”.</p>
+          ) : visibleProfiles.map(p => (
             <ProfileCard key={p.id} profile={p}
               scenarioCount={counts[p.id] ?? 0}
               runs={runsByProfile[p.id] || []}

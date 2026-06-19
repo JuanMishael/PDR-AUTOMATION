@@ -13,11 +13,13 @@ PDR-AUTOMATION (Electron desktop app)
 ├── RENDERER (React UI — what the QA tester sees)
 │   ├── Dashboard            → a card per profile: scenario count, last-run status/time,
 │   │                          "X/Y scenarios passed" breakdown, recent-runs streak;
+│   │                          most-recently-run profile floats to top; search; per-card
 │   │                          ⬆ Share a profile / ⬇ Import a shared profile bundle
 │   ├── ProfileConfig        → define a "site under test" (base URL, browser, headless, timeout)
 │   ├── ScenarioBuilder      → THE CORE: build a test visually
 │   │     ├── Step Library (left)   — 30+ actions in 7 categories (incl. Flow: group/loop)
-│   │     ├── Scenario list (left)  — per-scenario ▶ Run, ↑↓ reorder, ✎ rename, ⧉ duplicate
+│   │     ├── Scenario list (left)  — drag (⠿) to reorder; ⋯ menu = rename / duplicate / delete;
+│   │     │                           filter box when there are many
 │   │     ├── Canvas (right)        — collapsible step cards; drag (⠿) to reorder / into groups
 │   │     ├── 🎯 Pick               — click a real element, get a selector
 │   │     ├── ⊙ Test                — test a selector after replaying steps above it

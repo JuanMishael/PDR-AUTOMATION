@@ -470,9 +470,9 @@ function SelectorChooser({ title, candidates, onUse, onFallback, onClose }) {
 
 // ─── Canvas Step ─────────────────────────────────────────────────────────────
 
-function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, priorSteps = [], collections = [], indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
+function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, priorSteps = [], collections = [], indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, dragGroupActive = false, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
   // Drag-and-drop wiring shared by the normal card and the group cards.
-  const dragging = dragId === step.id
+  const dragging = dragId === step.id || (dragGroupActive && selected)
   const showDropLine = overId === step.id && dragId && dragId !== step.id
   const dragHandlers = {
     onDragOver: dragId ? (e => { e.preventDefault(); onDragOverStep && onDragOverStep(step.id) }) : undefined,
@@ -491,6 +491,7 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
 
   const keyword = params._keyword || CATEGORY_KEYWORD[def.category] || 'When'
   const screenshot = !!params._screenshot
+  const skipped = !!params._skip
 
   let summary = ''
   try { summary = (def.summary ? def.summary(params) : (params.selector || params.url || '')) || '' } catch { summary = '' }
@@ -517,7 +518,7 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
     const repeat = step.action === 'loopStart' || !!params.repeat
     return (
       <div {...dragHandlers} style={{ border: `1px solid ${active ? 'var(--accent)' : 'var(--accent)'}`, borderRadius: 8, marginBottom: 8, marginLeft: indent * 18,
-        background: 'var(--accent-dim)', opacity: dragging ? 0.4 : 1,
+        background: 'var(--accent-dim)', opacity: dragging ? 0.4 : (skipped ? 0.55 : 1),
         boxShadow: showDropLine ? '0 -3px 0 -1px var(--accent)' : (active ? '0 0 0 2px var(--accent)' : undefined) }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', flexWrap: 'wrap' }}>
           <span {...gripProps}>⠿</span>
@@ -552,7 +553,17 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
               </select>
             </>
           )}
+          {skipped && (
+            <span title="This group is skipped — none of its steps run. Click ⊘ to re-enable."
+              style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--surface2)',
+                border: '1px solid var(--border)', borderRadius: 999, padding: '1px 7px' }}>SKIPPED</span>
+          )}
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
+            <button onClick={() => updateParam('_skip', !skipped)}
+              title={skipped ? 'Skipped — click to re-enable this group' : 'Skip this whole group (don’t run its steps)'}
+              style={{ background: skipped ? 'rgba(245,158,11,0.14)' : 'none',
+                border: skipped ? '1px solid rgba(245,158,11,0.4)' : '1px solid transparent',
+                color: skipped ? '#F59E0B' : 'var(--text-muted)', borderRadius: 6, padding: '3px 7px', fontSize: 13, cursor: 'pointer' }}>⊘</button>
             <button onClick={() => onMove(step.id, 'up')} title="Move group up"
               style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '3px 5px', cursor: 'pointer' }}>↑</button>
             <button onClick={() => onMove(step.id, 'down')} title="Move group down"
@@ -589,7 +600,7 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
       borderRadius: 8,
       marginBottom: 8,
       marginLeft: indent * 18,
-      opacity: dragging ? 0.4 : 1,
+      opacity: dragging ? 0.4 : (skipped ? 0.55 : 1),
       boxShadow: showDropLine ? '0 -3px 0 -1px var(--accent)' : (active ? '0 0 0 2px var(--accent)' : undefined),
       background: selected ? 'var(--accent-dim)' : (isLoop ? 'var(--accent-dim)' : 'var(--bg)')
     }}>
@@ -615,7 +626,15 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
           background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0
         }}>
           <span style={{ color: 'var(--text-muted)', fontSize: 10, flexShrink: 0, width: 10 }}>{expanded ? '▾' : '▸'}</span>
-          <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)', flexShrink: 0 }}>{def.label}</span>
+          <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text)', flexShrink: 0,
+            textDecoration: skipped ? 'line-through' : 'none' }}>{def.label}</span>
+          {skipped && (
+            <span title="This step is skipped — it won't run. Click ⊘ to re-enable."
+              style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--surface2)',
+                border: '1px solid var(--border)', borderRadius: 999, padding: '1px 7px', flexShrink: 0 }}>
+              SKIPPED
+            </span>
+          )}
           {params._smart && (
             <span title="Auto-suggested while recording — a smart wait inserted because this appeared during your pause. Delete it if not needed."
               style={{ fontSize: 10, fontWeight: 700, color: '#A78BFA', background: 'rgba(167,139,250,0.12)',
@@ -633,6 +652,14 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
         </button>
 
         <div style={{ display: 'flex', gap: 2, alignItems: 'center', flexShrink: 0 }}>
+          <button onClick={() => updateParam('_skip', !skipped)}
+            title={skipped ? 'Skipped — click to re-enable this step' : 'Skip this step (keep it, but don’t run it)'}
+            style={{
+              background: skipped ? 'rgba(245,158,11,0.14)' : 'none',
+              border: skipped ? '1px solid rgba(245,158,11,0.4)' : '1px solid transparent',
+              color: skipped ? '#F59E0B' : 'var(--text-muted)',
+              borderRadius: 6, padding: '3px 7px', fontSize: 13, cursor: 'pointer'
+            }}>⊘</button>
           <button onClick={() => updateParam('_screenshot', !screenshot)}
             title={screenshot ? 'Screenshot ON — click to disable' : 'Click to capture screenshot after this step'}
             style={{
@@ -1130,9 +1157,10 @@ function CopyStepsToScenarioButton({ scenarios, currentScenarioId, stepIds, onCo
 
 function ScenarioRow({
   s, active, editing, editName, setEditName,
-  onSelect, onStartRename, onCommitRename, onCancelRename, onDuplicate, onDelete,
+  onSelect, onStartRename, onCommitRename, onCancelRename, onDuplicate, onDelete, onToggleSkip,
   dragEnabled, isOver, isDragging, onDragStart, onDragEnd, onDragOver, onDrop
 }) {
+  const skipped = !!s.skipped
   const [menu, setMenu] = useState(false)
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
   const menuRef = useRef(null)
@@ -1167,7 +1195,7 @@ function ScenarioRow({
       style={{
         display: 'flex', alignItems: 'center', gap: 4,
         padding: '6px 6px 6px 4px', borderRadius: 6, cursor: 'pointer', marginBottom: 2,
-        opacity: isDragging ? 0.4 : 1,
+        opacity: isDragging ? 0.4 : (skipped ? 0.5 : 1),
         background: active ? 'var(--accent-dim)' : 'transparent',
         border: active ? '1px solid rgba(108,99,255,0.2)' : '1px solid transparent',
         boxShadow: isOver ? '0 -2px 0 0 var(--accent)' : undefined,
@@ -1186,9 +1214,11 @@ function ScenarioRow({
           onBlur={() => onCommitRename(s)}
           style={{ fontSize: 13, flex: 1, minWidth: 0, padding: '2px 6px' }} />
       ) : (
-        <span onDoubleClick={e => { e.stopPropagation(); onStartRename(s) }} title="Double-click to rename"
-          style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-          {s.name}
+        <span onDoubleClick={e => { e.stopPropagation(); onStartRename(s) }}
+          title={skipped ? 'Skipped — excluded from Run All' : 'Double-click to rename'}
+          style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+            textDecoration: skipped ? 'line-through' : 'none' }}>
+          {skipped && <span style={{ marginRight: 4 }}>⊘</span>}{s.name}
         </span>
       )}
       <div style={{ flexShrink: 0 }}>
@@ -1203,6 +1233,9 @@ function ScenarioRow({
               onClick={e => { e.stopPropagation(); setMenu(false); onStartRename(s) }}>✎ Rename</button>
             <button style={item} onMouseEnter={hov} onMouseLeave={out}
               onClick={e => { e.stopPropagation(); setMenu(false); onDuplicate(s.id) }}>⧉ Duplicate</button>
+            <button style={item} onMouseEnter={hov} onMouseLeave={out}
+              onClick={e => { e.stopPropagation(); setMenu(false); onToggleSkip(s.id) }}>
+              {skipped ? '✓ Unskip' : '⊘ Skip in Run All'}</button>
             <button style={{ ...item, color: '#EF4444' }} onMouseEnter={hov} onMouseLeave={out}
               onClick={e => { e.stopPropagation(); setMenu(false); onDelete(s.id) }}>🗑 Delete</button>
           </div>
@@ -1230,6 +1263,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [search, setSearch]           = useState('')
   const [exporting, setExporting]     = useState(false)
   const [shareMsg, setShareMsg]       = useState(null)
+  const [dupMsg, setDupMsg]           = useState(null)
   const [recording, setRecording]     = useState(false)
   const [expandedIds, setExpandedIds] = useState(() => new Set())
   const [selectedIds, setSelectedIds] = useState(() => new Set())
@@ -1354,10 +1388,15 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     setScenarios(await window.api.getScenarios(profileId))
   }
 
+  // Inline message instead of a native alert(): on Windows a native modal leaves the webContents
+  // without keyboard focus, so the NEXT screen's inputs go dead (e.g. renaming the copy in Edit
+  // Profile). lib/confirm + inline toasts exist precisely to avoid native modals.
   async function duplicateProfile() {
     const res = await window.api.duplicateProfile(profileId)
-    if (res?.id) alert(`Profile duplicated as "${profileName} (copy)".\nOpen it from the Dashboard or the profile picker, then change its Base URL.`)
-    else alert(res?.error || 'Could not duplicate profile')
+    setDupMsg(res?.id
+      ? `✓ Duplicated as "${profileName} (copy)" — open it from the Dashboard, then change its Base URL`
+      : `✗ ${res?.error || 'Could not duplicate profile'}`)
+    setTimeout(() => setDupMsg(null), 5000)
   }
 
   // Export this whole profile (scenarios + steps + the test-data collections it references) to a
@@ -1415,6 +1454,17 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     setScenarios(prev => prev.map(x => x.id === s.id ? updated : x))
     if (active?.id === s.id) setActive(updated)
     cancelRename()
+  }
+
+  // Skip / unskip a scenario — skipped scenarios are excluded from Run All (an explicit
+  // single-scenario ▶ run still runs them).
+  async function toggleSkipScenario(id) {
+    const s = scenarios.find(x => x.id === id)
+    if (!s) return
+    const updated = { ...s, skipped: s.skipped ? 0 : 1 }
+    await window.api.saveScenario(updated)
+    setScenarios(prev => prev.map(x => x.id === id ? updated : x))
+    if (active?.id === id) setActive(updated)
   }
 
   // Duplicate a scenario (+ its steps) within this profile, then select the copy.
@@ -1545,10 +1595,34 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   // to just BEFORE `beforeId` (or to the end when null). Dropping between a group's markers
   // makes the step a member of that group — membership is purely positional.
   async function reorderByDrag(dragStepId, beforeId) {
-    if (!dragStepId || dragStepId === beforeId) return
+    if (!dragStepId) return
     const arr = steps
     const di = arr.findIndex(s => s.id === dragStepId)
     if (di < 0) return
+
+    // Multi-move: dragging a step that's part of a (multi) checkbox selection moves the WHOLE
+    // selection together, dropped as a contiguous block before `beforeId` (or to the end).
+    // Each selected item is expanded to its whole unit (a selected group carries its body), so
+    // the moved block is always balanced; relative order is preserved.
+    if (selectedIds.has(dragStepId) && selectedIds.size > 1) {
+      const moveIdx = new Set()
+      arr.forEach((s, i) => { if (selectedIds.has(s.id)) { const [u, e] = unitRange(arr, i); for (let k = u; k <= e; k++) moveIdx.add(k) } })
+      const bi = beforeId == null ? -1 : arr.findIndex(s => s.id === beforeId)
+      if (bi >= 0 && moveIdx.has(bi)) return   // dropping inside the moving block — no-op
+      const ids = arr.map(s => s.id)
+      const moving = [...moveIdx].sort((a, b) => a - b).map(i => ids[i])
+      const movingSet = new Set(moving)
+      const remaining = ids.filter(id => !movingSet.has(id))
+      let at = beforeId == null ? remaining.length : remaining.indexOf(beforeId)
+      if (at < 0) at = remaining.length
+      const newIds = [...remaining.slice(0, at), ...moving, ...remaining.slice(at)]
+      if (newIds.join() === ids.join()) return
+      await window.api.reorderSteps(active.id, newIds)
+      setSteps(await window.api.getSteps(active.id))
+      return
+    }
+
+    if (dragStepId === beforeId) return
     const [us, ue] = unitRange(arr, di)
     if (beforeId != null) {
       const bi = arr.findIndex(s => s.id === beforeId)
@@ -1674,7 +1748,11 @@ export default function ScenarioBuilder({ navigate, ctx }) {
             Profile: <strong>{profileName}</strong>
           </p>
         </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {dupMsg && (
+            <span style={{ fontSize: 12, maxWidth: 300, lineHeight: 1.3,
+              color: dupMsg.startsWith('✓') ? '#10B981' : '#EF4444' }}>{dupMsg}</span>
+          )}
           <button onClick={duplicateProfile} title="Clone this profile and all its scenarios (e.g. staging → prebau)" style={{
             padding: '7px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600,
             background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)', cursor: 'pointer'
@@ -1754,7 +1832,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                       editing={editingId} editName={editName} setEditName={setEditName}
                       onSelect={selectScenario}
                       onStartRename={startRename} onCommitRename={commitRename} onCancelRename={cancelRename}
-                      onDuplicate={duplicateScenario} onDelete={deleteScenario}
+                      onDuplicate={duplicateScenario} onDelete={deleteScenario} onToggleSkip={toggleSkipScenario}
                       dragEnabled={dragEnabled}
                       isOver={overSid === s.id && dragSid !== s.id}
                       isDragging={dragSid === s.id}
@@ -1873,7 +1951,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     </button>
                     {selectedIds.size > 0 && (
                       <>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{selectedIds.size} selected</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{selectedIds.size} selected · drag any one to move them together</span>
                         <button onClick={groupSelected} title="Wrap these steps in a group (then name it / make it repeat)"
                           style={{ background: 'var(--accent-dim)', border: '1px solid var(--accent)', borderRadius: 6,
                           padding: '5px 8px', fontSize: 11, fontWeight: 600, color: 'var(--accent)', cursor: 'pointer' }}>
@@ -1960,6 +2038,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                           expanded={expandedIds.has(step.id)} onToggleExpand={() => toggleExpand(step.id)}
                           selected={selectedIds.has(step.id)} onToggleSelect={() => toggleSelect(step.id)}
                           dragId={dragId} overId={overId} active={activeId === step.id}
+                          dragGroupActive={!!dragId && selectedIds.has(dragId) && selectedIds.size > 1}
                           onDragStartStep={(id) => { setDragId(id); setActiveId(id) }}
                           onDragOverStep={(id) => setOverId(id)}
                           onDropStep={(id) => onDropBefore(id)}

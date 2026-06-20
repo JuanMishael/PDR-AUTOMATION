@@ -6,108 +6,67 @@ export default function ActiveRun({ navigate, ctx }) {
   const [status, setStatus] = useState('running')
   const [summary, setSummary] = useState(null)
   const [runId, setRunId] = useState(null)
-  const [started, setStarted] = useState(false)
-  const [dataSets, setDataSets] = useState(null)   // null = still loading; [] = none
-  const [dataSetId, setDataSetId] = useState('')   // '' = use field defaults
   const [runNonce, setRunNonce] = useState(0)      // bump to re-trigger the run effect
   const logRef = useRef(null)
+  const launchedNonce = useRef(null)               // which runNonce we've actually spawned
 
-  // Flatten every collection's sets into one pickable list. If there are none, skip the
-  // gate entirely and auto-run — so the run path is unchanged when the feature is unused.
+  // Runs start immediately — both Run All and a single-scenario run get their data from
+  // repeating-group bindings + field defaults (no global data-set picker). {{tokens}} resolve
+  // at generate-time; a group resolves its own set per iteration.
   useEffect(() => {
-    let cancelled = false
-    window.api.getCollections().then(cols => {
-      if (cancelled) return
-      const flat = []
-      for (const c of cols) for (const s of c.sets) flat.push({ id: s.id, label: `${c.name} · ${s.name}`, group: s.group_type })
-      setDataSets(flat)
-      // Skip the single-set gate when: there's nothing to pick, or it's Run All (no scenarioId
-      // — scenarios get data from repeating groups or field defaults; forcing one global set for
-      // the whole run isn't meaningful).
-      if (flat.length === 0 || !scenarioId) setStarted(true)
-    }).catch(() => { if (!cancelled) { setDataSets([]); setStarted(true) } })
-    return () => { cancelled = true }
-  }, [])
+    if (!profileId) return
 
-  useEffect(() => {
-    if (!profileId || !started) return
-
+    // Always (re)bind the log listeners — the effect's cleanup removes them, and React
+    // StrictMode (dev) mounts→unmounts→remounts, so we need them re-attached on the remount.
     window.api.offRunLog()
     window.api.offRunComplete()
-    setLogs([])
-    setSummary(null)
-    setStatus('running')
-
     window.api.onRunLog((data) => {
       setLogs(prev => [...prev, data])
     })
-
     window.api.onRunComplete((data) => {
       setStatus(data.status)
       setSummary(data)
       setRunId(data.runId)
     })
 
-    const setId = dataSetId || null
-    const runPromise = scenarioId
-      ? window.api.runScenario(profileId, scenarioId, setId)
-      : window.api.runProfile(profileId, setId)
-    runPromise.then(result => {
-      if (result?.error) {
-        setLogs(prev => [...prev, { type: 'error', text: result.error }])
-        setStatus('failed')
-      }
-    })
+    // Spawn the actual run ONCE per runNonce. Without this guard, StrictMode's double-invoke
+    // would launch two concurrent Playwright processes (duplicated/interleaved logs, the assert
+    // "running twice"). A real re-run bumps runNonce, which passes this guard again.
+    if (launchedNonce.current !== runNonce) {
+      launchedNonce.current = runNonce
+      setLogs([])
+      setSummary(null)
+      setStatus('running')
+      const runPromise = scenarioId
+        ? window.api.runScenario(profileId, scenarioId)
+        : window.api.runProfile(profileId)
+      runPromise.then(result => {
+        if (result?.error) {
+          setLogs(prev => [...prev, { type: 'error', text: result.error }])
+          setStatus('failed')
+        }
+      })
+    }
 
     return () => {
       window.api.offRunLog()
       window.api.offRunComplete()
     }
-  }, [profileId, scenarioId, started, runNonce])
+  }, [profileId, scenarioId, runNonce])
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [logs])
-
-  // Pre-run gate: only shown when data sets exist and the run hasn't started.
-  // NB: every hook must run BEFORE this conditional return — React requires a
-  // stable hook order across renders, so no useEffect may live below it.
-  if (!started) {
-    return (
-      <div className="fade-in" style={{ maxWidth: 560 }}>
-        <div className="page-header">
-          <h1>Choose Test Data</h1>
-          <p>{scenarioName ? `Scenario: ${scenarioName}` : 'Running all scenarios'} — pick a data set to fill {'{{token}}'} values, or run with field defaults.</p>
-        </div>
-        <div className="card" style={{ display: 'grid', gap: 16 }}>
-          <div>
-            <label>Active data set</label>
-            <select value={dataSetId} onChange={e => setDataSetId(e.target.value)}>
-              <option value="">— None (use field defaults) —</option>
-              {(dataSets || []).map(d => (
-                <option key={d.id} value={d.id}>{d.label}</option>
-              ))}
-            </select>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn-primary" onClick={() => setStarted(true)}>▶ Start Run</button>
-            <button className="btn-ghost" onClick={() => navigate('dashboard')}>Cancel</button>
-          </div>
-        </div>
-      </div>
-    )
-  }
 
   function stopRun() {
     if (runId) window.api.stopRun(runId)
     setStatus('stopped')
   }
 
-  // Restart the same run (same scenario/data set) without leaving the screen — the run
-  // effect re-fires on runNonce and resets logs/summary/status at its top.
+  // Restart the same run without leaving the screen — the run effect re-fires on runNonce
+  // and resets logs/summary/status at its top.
   function rerun() {
     setRunId(null)
-    setStarted(true)
     setRunNonce(n => n + 1)
   }
   const finished = status === 'passed' || status === 'failed' || status === 'stopped'

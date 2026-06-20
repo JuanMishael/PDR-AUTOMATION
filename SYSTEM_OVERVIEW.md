@@ -75,6 +75,7 @@ PDR-AUTOMATION (Electron desktop app)
 Profile  (a site/app under test: base URL + browser config)
   └── Scenario  (one test case: "Login flow")
         ├── prerequisite_id → another scenario to run first (isolated runs only)
+        ├── skipped → excluded from Run All when set (single-scenario run still runs it)
         └── Step  (one action: Navigate, Fill, Click, Assert…)
               └── params (JSON: selector, value, waits, etc.)
                   └── may contain {{Collection.field}} / {{faker.*}} / {{unique.*}} tokens
@@ -140,12 +141,15 @@ suffixed and every reference inside the copied steps is rewritten — collection
   point — the old top-level "🔁 Run across" scenario shortcut and its `runner:runDataDriven`
   IPC path were removed entirely.
 
-**Test data & tokens:** steps reference values with `{{Collection.field}}` (from the active/chosen
-data set, falling back to the field default), `{{faker.*}}` (generated), or `{{unique.*}}`
-(fresh-per-run, stable within a run). Tokens resolve in the MAIN process at generate-time
-(`tokenResolver.js`), so the emitted Playwright script stays plain JS with no runtime data dep.
-Group/loop blocks are expanded (`runner.js` → `expandGroups`) *before* generation: a repeating
-group unrolls its body once per set with that set's tokens; non-repeating groups just inline.
+**Test data & tokens:** steps reference values with `{{Collection.field}}` (resolves to the field
+**default**, or — inside a repeating group — that iteration's set value), `{{faker.*}}` (generated),
+or `{{unique.*}}` (fresh-per-run, stable within a run). Tokens resolve in the MAIN process at
+generate-time (`tokenResolver.js`), so the emitted Playwright script stays plain JS with no runtime
+data dep. Group/loop blocks are expanded (`runner.js` → `expandGroups`) *before* generation: a
+repeating group unrolls its body once per set with that set's tokens; non-repeating groups just
+inline. There is **no global data-set picker** — both Run All and a single-scenario run start
+immediately; data comes from group bindings + field defaults. (An older pre-run "Choose Test Data"
+gate was removed as redundant with repeating groups.)
 
 **Pass/fail is PER SCENARIO** (`scriptGenerator.js` wraps each scenario in its own try/catch):
 
@@ -188,8 +192,13 @@ group unrolls its body once per set with that set's tokens; non-repeating groups
 | **Util** | Take Screenshot, Execute JS |
 
 Each step card also has: **Gherkin keyword badge** (Given/When/Then), a **⠿ drag grip**,
-↑↓ move, screenshot toggle, a **{ }** token-insert button on value fields, **Notes**, and
+↑↓ move, screenshot toggle, a **⊘ skip toggle** (disable the step/group without deleting — it's
+dropped from the generated script), a **{ }** token-insert button on value fields, **Notes**, and
 **Expected Result** fields — so non-technical users read it like a test spec.
+
+**Skip / disable:** a step or group flips `params._skip`; a scenario flips its `skipped` column
+(via the ⋯ menu). The runner drops `_skip` steps/groups in `expandGroups`, and Run All excludes
+`skipped` scenarios (an explicit single-scenario ▶ run still runs them).
 
 ---
 

@@ -52,6 +52,7 @@ async function expandGroupsInner(db, steps) {
         body.push(steps[j]); j++
       }
       const p = parseParams(s.params)
+      if (p._skip) { i = j + 1; continue }   // skipped group — drop the whole block
       const repeat = s.action === 'loopStart' || !!p.repeat
       const expandedBody = await expandGroupsInner(db, body)   // resolve any nested groups first
 
@@ -72,7 +73,8 @@ async function expandGroupsInner(db, steps) {
     } else if (isGroupEnd(s.action)) {
       i++   // stray end — ignore
     } else {
-      out.push({ id: s.id, action: s.action, label: s.label, params: parseParams(s.params) })
+      const sp = parseParams(s.params)
+      if (!sp._skip) out.push({ id: s.id, action: s.action, label: s.label, params: sp })   // skip disabled steps
       i++   // ← advance past this regular step (omitting this spun forever → heap OOM)
     }
   }
@@ -171,8 +173,11 @@ export function registerRunnerHandlers() {
       const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
       if (!profile) return { error: 'Profile not found' }
 
-      const scenarioRows = db.prepare('SELECT * FROM scenarios WHERE profile_id = ? ORDER BY sort_order').all(profileId)
-      if (!scenarioRows.length) return { error: 'No scenarios configured for this profile' }
+      const allRows = db.prepare('SELECT * FROM scenarios WHERE profile_id = ? ORDER BY sort_order').all(profileId)
+      if (!allRows.length) return { error: 'No scenarios configured for this profile' }
+      // Skipped scenarios are excluded from Run All (an explicit single-scenario run still runs).
+      const scenarioRows = allRows.filter(s => !s.skipped)
+      if (!scenarioRows.length) return { error: 'All scenarios are skipped — nothing to run' }
 
       const scenarios = []
       for (const s of scenarioRows) {

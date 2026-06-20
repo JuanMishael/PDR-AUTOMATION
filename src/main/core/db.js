@@ -199,6 +199,9 @@ export async function initDb() {
 
   // --- migrations (idempotent: sql.js throws on duplicate column, which we ignore) ---
   try { _db.run('ALTER TABLE scenarios ADD COLUMN prerequisite_id TEXT') } catch { /* already migrated */ }
+  // A scenario can be temporarily disabled — skipped scenarios are excluded from a Run All
+  // (an explicit single-scenario run still runs it). Steps skip via params._skip (no column).
+  try { _db.run('ALTER TABLE scenarios ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0') } catch { /* already migrated */ }
   // Per-scenario run outcomes: a Run All now continues past a failing scenario and
   // records each scenario's own pass/fail (see runner.js / webRunner.js).
   try { _db.run('ALTER TABLE history ADD COLUMN scenarios_total  INTEGER NOT NULL DEFAULT 0') } catch { /* already migrated */ }

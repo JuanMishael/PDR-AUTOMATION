@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import appIcon from '../../resources/favicon/icon-512.png?asset'
 import { initDb, flushDb } from './core/db'
 import { nudgeWindowFocus } from './core/windowFocus'
 import { registerRunnerHandlers } from './ipc/runner'
@@ -21,6 +22,7 @@ function createWindow() {
     minHeight: 700,
     show: false,
     autoHideMenuBar: true,
+    icon: appIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false

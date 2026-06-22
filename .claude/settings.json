@@ -9,7 +9,8 @@
       "Bash(node -e \"require\\('@babel/core'\\)\")",
       "Bash(grep -nA10 \"storage:getSteps\" d:/SIDE_APPS/PDR-AUTOMATION/src/main/ipc/storage.js)",
       "Bash(git symbolic-ref *)",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(node -e ' *)"
     ]
   }
 }

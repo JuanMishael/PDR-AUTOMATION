@@ -30,7 +30,7 @@ export default function Sidebar({ current, navigate, appName = 'PDR-AUTOMATION' 
           {appName.split('-')[0] || appName}<span style={{ color: 'var(--accent)' }}>{appName.includes('-') ? '-' + appName.split('-').slice(1).join('-') : ''}</span>
         </div>
         <div style={{ fontFamily: 'var(--font-hand)', fontSize: 12, color: 'var(--ink-soft)', letterSpacing: '1px', textTransform: 'uppercase', marginTop: 2 }}>
-          Playwright · V2
+          Automation Tool
         </div>
       </div>
 

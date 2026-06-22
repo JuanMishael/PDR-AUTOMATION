@@ -10,7 +10,12 @@
       "Bash(grep -nA10 \"storage:getSteps\" d:/SIDE_APPS/PDR-AUTOMATION/src/main/ipc/storage.js)",
       "Bash(git symbolic-ref *)",
       "Bash(echo \"exit: $?\")",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "PowerShell(npx electron-vite build)",
+      "PowerShell(git add src/main/core/scriptGenerator.js src/main/ipc/recorder.js src/preload/index.js src/renderer/src/components/actionDefs.js src/renderer/src/screens/ScenarioBuilder.jsx)"
+    ],
+    "additionalDirectories": [
+      "D:\\SIDE_APPS\\PDR-AUTOMATION\\.git"
     ]
   }
 }

@@ -53,11 +53,20 @@ export function registerRecorderHandlers() {
 
       // Replay existing steps so recording continues from the current flow state.
       // The recorder stays disarmed (tester hasn't pressed Start), so replayed
-      // actions aren't captured.
+      // actions aren't captured. A replay failure (e.g. a stale prior-step selector)
+      // is NON-FATAL here: we keep the browser open so the tester can carry on by
+      // hand — finding/fixing that very component is often why they're recording.
       if (runSteps && steps.length) {
         const replay = await replaySteps(page, steps, baseUrl)
-        if (!replay.ok) return replay
+        if (!replay.ok) {
+          try { event.sender.send('recorder:notice', replay.error || 'Some earlier steps could not be replayed — continuing from where they stopped.') } catch { /* renderer gone */ }
+        }
       }
+
+      // Interactive phase: the tester now drives the browser to find/record elements.
+      // Disable the action timeout so the session never closes itself while they hunt
+      // for the right component — they can take as long as they need before Start.
+      page.setDefaultTimeout(0)
 
       await donePromise
       return { ok: true, recorded }

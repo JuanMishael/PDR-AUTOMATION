@@ -352,6 +352,11 @@ function actionToCode(action, p, baseUrl) {
       // of the old raw interpolation; if it evaluates to a function (e.g. `() => ...`) we call it.
       return `await page.evaluate((__s) => { const __r = eval(__s); return typeof __r === 'function' ? __r() : __r; }, ${JSON.stringify(p.script ?? '')});`
 
+    // --- Notes ---
+    case 'comment':
+      // Author note — collapse newlines so it stays a single // comment line.
+      return `// 📝 ${String(p.text || '').replace(/\r?\n/g, ' ')}`
+
     default:
       return `// Unknown action: ${action}`
   }

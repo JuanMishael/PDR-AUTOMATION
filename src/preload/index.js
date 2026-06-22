@@ -59,6 +59,8 @@ contextBridge.exposeInMainWorld('api', {
   startRecording: (opts) => ipcRenderer.invoke('recorder:start', opts),
   onRecorderStep: (cb) => ipcRenderer.on('recorder:step', (_, data) => cb(data)),
   offRecorderStep: () => ipcRenderer.removeAllListeners('recorder:step'),
+  onRecorderNotice: (cb) => ipcRenderer.on('recorder:notice', (_, msg) => cb(msg)),
+  offRecorderNotice: () => ipcRenderer.removeAllListeners('recorder:notice'),
 
   // Storage — Test Data Library
   getCollections: () => ipcRenderer.invoke('data:getCollections'),

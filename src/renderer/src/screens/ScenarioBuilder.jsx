@@ -470,7 +470,7 @@ function SelectorChooser({ title, candidates, onUse, onFallback, onClose }) {
 
 // ─── Canvas Step ─────────────────────────────────────────────────────────────
 
-function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, priorSteps = [], collections = [], indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, dragGroupActive = false, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
+function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGroupEnd, profile, priorSteps = [], collections = [], indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, dragGroupActive = false, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
   // Drag-and-drop wiring shared by the normal card and the group cards.
   const dragging = dragId === step.id || (dragGroupActive && selected)
   const showDropLine = overId === step.id && dragId && dragId !== step.id
@@ -581,14 +581,40 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, profile, p
     )
   }
 
-  // --- Group end: a thin closing marker (also a drop target → drop here = last in group) ---
+  // --- Group end: a thin closing marker (also a drop target → drop here = last in group).
+  // Has its own grip (drag moves the whole group, kept balanced) and an ✕ to remove it. ---
   if (isGroupEnd(step.action)) {
     return (
-      <div {...dragHandlers} style={{ marginLeft: indent * 18, marginBottom: 8, padding: '3px 12px',
-        borderLeft: '2px dashed var(--accent)', fontSize: 10, fontWeight: 700, letterSpacing: '0.05em',
-        textTransform: 'uppercase', color: 'var(--accent)', opacity: 0.7,
-        boxShadow: showDropLine ? '0 -3px 0 -1px var(--accent)' : undefined }}>
-        ⊞ end group
+      <div {...dragHandlers} style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: indent * 18,
+        marginBottom: 8, padding: '3px 12px', borderLeft: '2px dashed var(--accent)',
+        opacity: dragging ? 0.4 : 0.75,
+        boxShadow: showDropLine ? '0 -3px 0 -1px var(--accent)' : (active ? '0 0 0 2px var(--accent)' : undefined) }}>
+        <span {...gripProps}>⠿</span>
+        <span style={{ flex: 1, fontSize: 10, fontWeight: 700, letterSpacing: '0.05em',
+          textTransform: 'uppercase', color: 'var(--accent)' }}>⊞ end group</span>
+        <button onClick={() => onRemoveGroupEnd && onRemoveGroupEnd(step.id)} title="Remove this group marker"
+          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
+            fontSize: 13, padding: '0 4px', lineHeight: 1 }}>✕</button>
+      </div>
+    )
+  }
+
+  // --- Comment: a free-text note for human readers; does nothing at run time ---
+  if (step.action === 'comment') {
+    return (
+      <div {...dragHandlers} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginLeft: indent * 18,
+        marginBottom: 8, padding: '8px 10px', border: '1px dashed #E2C770', borderRadius: 8,
+        background: 'rgba(245,200,80,0.10)', opacity: dragging ? 0.4 : 1,
+        boxShadow: showDropLine ? '0 -3px 0 -1px var(--accent)' : (active ? '0 0 0 2px var(--accent)' : undefined) }}>
+        <span {...gripProps} style={{ ...gripProps.style, paddingTop: 2 }}>⠿</span>
+        <span style={{ fontSize: 13, flexShrink: 0, paddingTop: 1 }}>💬</span>
+        <textarea value={params.text || ''} onChange={e => updateParam('text', e.target.value)} rows={1}
+          placeholder="Note for QA readers — ignored when running…"
+          style={{ flex: 1, resize: 'vertical', border: 'none', background: 'transparent', fontSize: 12,
+            color: 'var(--text)', fontStyle: 'italic', outline: 'none', padding: 0, lineHeight: 1.5 }} />
+        <button onClick={() => onDelete(step.id)} title="Delete note"
+          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
+            fontSize: 13, padding: '0 4px', lineHeight: 1 }}>✕</button>
       </div>
     )
   }
@@ -1352,6 +1378,23 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     setSteps(await window.api.getSteps(active.id))
   }
 
+  // Remove an "End group" marker. If it has a depth-matched start it's a real group, so we
+  // ungroup the pair (markers go, inner steps stay). A stray/orphan end just gets deleted.
+  async function removeGroupEnd(endId) {
+    const arr = steps
+    const idx = arr.findIndex(s => s.id === endId)
+    if (idx < 0) return
+    let depth = 1, j = idx - 1
+    while (j >= 0) {
+      if (isGroupEnd(arr[j].action)) depth++
+      else if (isGroupStart(arr[j].action)) { depth--; if (depth === 0) break }
+      j--
+    }
+    await window.api.deleteStep(endId)
+    if (j >= 0 && depth === 0) await window.api.deleteStep(arr[j].id)   // matched pair → drop the start too
+    setSteps(await window.api.getSteps(active.id))
+  }
+
   useEffect(() => {
     if (profileId) {
       loadScenarios()
@@ -1486,6 +1529,13 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       label: '',
       sort_order: steps.length
     })
+    // A group is always a balanced pair: adding a Group start drops in its matching End
+    // right after it, so an orphan end can never be created from the palette.
+    if (isGroupStart(actionKey)) {
+      await window.api.saveStep({
+        scenario_id: active.id, action: 'groupEnd', params: {}, label: '', sort_order: steps.length + 1
+      })
+    }
     const updated = await window.api.getSteps(active.id)
     setSteps(updated)
     if (res?.id) setExpandedIds(prev => new Set(prev).add(res.id))   // open the new step for editing
@@ -1681,6 +1731,9 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       })
     }
     window.api.onRecorderStep(onStep)
+    // Non-fatal heads-up if some prior steps couldn't replay (stale selector etc.) —
+    // the browser stays open so the tester can keep going by hand.
+    window.api.onRecorderNotice?.(msg => alert('Recorder: ' + msg))
 
     try {
       const res = await window.api.startRecording({
@@ -1710,6 +1763,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       alert('Recorder error: ' + (e?.message || 'unknown'))
     } finally {
       window.api.offRecorderStep()
+      window.api.offRecorderNotice?.()
       setRecording(false)
     }
   }
@@ -2031,7 +2085,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
 
                       out.push(
                         <CanvasStep key={step.id} step={step} index={i} total={steps.length} indent={indent}
-                          onChange={updateStep} onDelete={deleteStep} onMove={moveStep}
+                          onChange={updateStep} onDelete={deleteStep} onMove={moveStep} onRemoveGroupEnd={removeGroupEnd}
                           profile={profile} priorSteps={steps.slice(0, i)} collections={collections}
                           groupCollapsed={collapsedGroups.has(step.id)} onToggleGroup={() => toggleGroupCollapse(step.id)}
                           onUngroup={() => ungroupGroup(step.id)}

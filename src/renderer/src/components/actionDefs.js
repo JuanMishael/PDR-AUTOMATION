@@ -229,7 +229,9 @@ export const ACTION_DEFS = {
       { key: 'group', label: 'Group', type: 'select', options: ['positive', 'negative', 'edge', 'all'], default: 'positive' }
     ]
   },
-  groupEnd: { label: 'Group end', category: 'Flow', params: [] },
+  // groupEnd is hidden from the palette (groups are added as a balanced pair via groupStart
+  // or the "⊞ Group" button) so a stray, un-paired end can't be created from the menu.
+  groupEnd: { label: 'Group end', category: 'Flow', hidden: true, params: [] },
 
   // --- Util ---
   screenshot: {
@@ -242,6 +244,14 @@ export const ACTION_DEFS = {
   executeScript: {
     label: 'Execute JS', category: 'Util',
     params: [{ key: 'script', label: 'JavaScript Expression', type: 'textarea', placeholder: '() => document.title' }]
+  },
+
+  // --- Notes ---
+  // A free-text note for human readers. Does nothing at run time (emits a // comment line).
+  comment: {
+    label: 'Comment', category: 'Util',
+    summary: p => p.text || '',
+    params: [{ key: 'text', label: 'Note', type: 'textarea', placeholder: 'Note for readers — ignored when running' }]
   }
 }
 
@@ -249,7 +259,7 @@ export const ACTION_CATEGORIES = ['Navigation', 'Interaction', 'Mouse', 'Asserti
 
 export const ACTIONS_BY_CATEGORY = ACTION_CATEGORIES.reduce((acc, cat) => {
   acc[cat] = Object.entries(ACTION_DEFS)
-    .filter(([, def]) => def.category === cat)
+    .filter(([, def]) => def.category === cat && !def.hidden)
     .map(([key, def]) => ({ key, ...def }))
   return acc
 }, {})

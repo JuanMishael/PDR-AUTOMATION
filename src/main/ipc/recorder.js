@@ -4,6 +4,13 @@ import { installSelectorGen, recorderListener } from '../core/injectedScripts'
 import { refocusMainWindow } from '../core/windowFocus'
 import { launchSessionContext } from '../core/browserSession'
 
+// During the recorder's pre-Start replay we're only repositioning the browser to the
+// current flow state — not asserting an exact element like the picker does. So cap how
+// long a single replayed action waits on a (possibly stale) element: failing in a few
+// seconds lets the tester take over by hand quickly, instead of stalling the full 20s.
+// It's a cap, not a floor — profiles with a shorter timeout keep their own value.
+const REPLAY_ACTION_TIMEOUT_CAP = 8000
+
 /**
  * Live recorder. Opens a headful browser, optionally replays existing steps so the
  * tester can continue an in-progress flow, then injects a Start/Stop bar that captures
@@ -57,6 +64,10 @@ export function registerRecorderHandlers() {
       // is NON-FATAL here: we keep the browser open so the tester can carry on by
       // hand — finding/fixing that very component is often why they're recording.
       if (runSteps && steps.length) {
+        // Fail fast on a stale element (the painful wait the tester sees), but still
+        // give slow pages the full navigation budget so a real load isn't cut short.
+        page.setDefaultTimeout(Math.min(timeout, REPLAY_ACTION_TIMEOUT_CAP))
+        page.setDefaultNavigationTimeout(timeout)
         const replay = await replaySteps(page, steps, baseUrl)
         if (!replay.ok) {
           try { event.sender.send('recorder:notice', replay.error || 'Some earlier steps could not be replayed — continuing from where they stopped.') } catch { /* renderer gone */ }
@@ -64,9 +75,13 @@ export function registerRecorderHandlers() {
       }
 
       // Interactive phase: the tester now drives the browser to find/record elements.
-      // Disable the action timeout so the session never closes itself while they hunt
-      // for the right component — they can take as long as they need before Start.
-      page.setDefaultTimeout(0)
+      // Disable BOTH the action and navigation timeouts so the session never times out
+      // while they hunt for the right component — they can take as long as they need
+      // before Start. Set it on the whole CONTEXT (not just this page) so any new tab or
+      // popup opened during the hunt is covered too; otherwise Playwright's 30s default
+      // quietly comes back on those pages and the timeout "reappears".
+      context.setDefaultTimeout(0)
+      context.setDefaultNavigationTimeout(0)
 
       await donePromise
       return { ok: true, recorded }

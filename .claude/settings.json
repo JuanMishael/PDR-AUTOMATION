@@ -12,7 +12,8 @@
       "Bash(echo \"exit: $?\")",
       "Bash(node -e ' *)",
       "PowerShell(npx electron-vite build)",
-      "PowerShell(git add src/main/core/scriptGenerator.js src/main/ipc/recorder.js src/preload/index.js src/renderer/src/components/actionDefs.js src/renderer/src/screens/ScenarioBuilder.jsx)"
+      "PowerShell(git add src/main/core/scriptGenerator.js src/main/ipc/recorder.js src/preload/index.js src/renderer/src/components/actionDefs.js src/renderer/src/screens/ScenarioBuilder.jsx)",
+      "Bash(npx vite *)"
     ],
     "additionalDirectories": [
       "D:\\SIDE_APPS\\PDR-AUTOMATION\\.git"

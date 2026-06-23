@@ -10,6 +10,7 @@ import ActiveRun from './screens/ActiveRun'
 import Results from './screens/Results'
 import History from './screens/History'
 import Settings from './screens/Settings'
+import Help from './screens/Help'
 import HealthCheck from './screens/HealthCheck'
 
 const SCREENS = {
@@ -21,6 +22,7 @@ const SCREENS = {
   results: Results,
   history: History,
   settings: Settings,
+  help: Help,
   health: HealthCheck
 }
 

@@ -8,6 +8,7 @@ const NAV = [
   { id: 'history',    label: 'History',    icon: 'history'   },
   { id: 'health',     label: 'Health',     icon: 'health'    },
   { id: 'settings',   label: 'Settings',   icon: 'settings'  },
+  { id: 'help',       label: 'Help',       icon: 'help'      },
 ]
 
 export default function Sidebar({ current, navigate, appName = 'PDR-AUTOMATION' }) {

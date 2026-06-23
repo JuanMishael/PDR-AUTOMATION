@@ -241,6 +241,9 @@ label {
    ========================================================================= */
 .divider { height: 0; border-top: 1.5px dashed var(--line-soft); margin: 20px 0; }
 
+/* Help-page search matches (CSS Custom Highlight API — no DOM mutation). */
+::highlight(help-search) { background: var(--accent-soft); color: var(--accent-ink); }
+
 .page-header { margin-bottom: 28px; }
 .page-header h1 { font-family: var(--font-hand); font-size: 26px; color: var(--ink); }
 .page-header p  { color: var(--ink-soft); margin-top: 3px; font-size: 13px; }

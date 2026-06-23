@@ -1183,10 +1183,11 @@ function CopyStepsToScenarioButton({ scenarios, currentScenarioId, stepIds, onCo
 
 function ScenarioRow({
   s, active, editing, editName, setEditName,
-  onSelect, onStartRename, onCommitRename, onCancelRename, onDuplicate, onDelete, onToggleSkip,
+  onSelect, onStartRename, onCommitRename, onCancelRename, onDuplicate, onDelete, onToggleSkip, onToggleLock,
   dragEnabled, isOver, isDragging, onDragStart, onDragEnd, onDragOver, onDrop
 }) {
   const skipped = !!s.skipped
+  const locked = !!s.locked
   const [menu, setMenu] = useState(false)
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
   const menuRef = useRef(null)
@@ -1240,11 +1241,11 @@ function ScenarioRow({
           onBlur={() => onCommitRename(s)}
           style={{ fontSize: 13, flex: 1, minWidth: 0, padding: '2px 6px' }} />
       ) : (
-        <span onDoubleClick={e => { e.stopPropagation(); onStartRename(s) }}
-          title={skipped ? 'Skipped — excluded from Run All' : 'Double-click to rename'}
+        <span onDoubleClick={e => { e.stopPropagation(); if (!locked) onStartRename(s) }}
+          title={locked ? 'Locked — steps are read-only' : (skipped ? 'Skipped — excluded from Run All' : 'Double-click to rename')}
           style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
             textDecoration: skipped ? 'line-through' : 'none' }}>
-          {skipped && <span style={{ marginRight: 4 }}>⊘</span>}{s.name}
+          {locked && <span style={{ marginRight: 4 }}>🔒</span>}{skipped && <span style={{ marginRight: 4 }}>⊘</span>}{s.name}
         </span>
       )}
       <div style={{ flexShrink: 0 }}>
@@ -1255,13 +1256,20 @@ function ScenarioRow({
           <div ref={menuRef} style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 1000, width: 150,
             background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 5,
             boxShadow: '0 8px 24px rgba(0,0,0,0.35)' }}>
-            <button style={item} onMouseEnter={hov} onMouseLeave={out}
-              onClick={e => { e.stopPropagation(); setMenu(false); onStartRename(s) }}>✎ Rename</button>
+            {!locked && (
+              <button style={item} onMouseEnter={hov} onMouseLeave={out}
+                onClick={e => { e.stopPropagation(); setMenu(false); onStartRename(s) }}>✎ Rename</button>
+            )}
             <button style={item} onMouseEnter={hov} onMouseLeave={out}
               onClick={e => { e.stopPropagation(); setMenu(false); onDuplicate(s.id) }}>⧉ Duplicate</button>
             <button style={item} onMouseEnter={hov} onMouseLeave={out}
-              onClick={e => { e.stopPropagation(); setMenu(false); onToggleSkip(s.id) }}>
-              {skipped ? '✓ Unskip' : '⊘ Skip in Run All'}</button>
+              onClick={e => { e.stopPropagation(); setMenu(false); onToggleLock(s.id) }}>
+              {locked ? '🔓 Unlock editing' : '🔒 Lock editing'}</button>
+            {!locked && (
+              <button style={item} onMouseEnter={hov} onMouseLeave={out}
+                onClick={e => { e.stopPropagation(); setMenu(false); onToggleSkip(s.id) }}>
+                {skipped ? '✓ Unskip' : '⊘ Skip in Run All'}</button>
+            )}
             <button style={{ ...item, color: '#EF4444' }} onMouseEnter={hov} onMouseLeave={out}
               onClick={e => { e.stopPropagation(); setMenu(false); onDelete(s.id) }}>🗑 Delete</button>
           </div>
@@ -1329,7 +1337,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const clearSelection  = () => setSelectedIds(new Set())
 
   async function deleteSelected() {
-    if (selectedIds.size === 0) return
+    if (selectedIds.size === 0 || active?.locked) return
     const n = selectedIds.size
     if (!(await confirmDialog(`Delete ${n} selected step${n !== 1 ? 's' : ''}? This can't be undone.`, { confirmText: 'Delete' }))) return
     for (const id of selectedIds) await window.api.deleteStep(id)
@@ -1339,7 +1347,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
 
   // Wrap the selected steps (by their span min..max) in a groupStart/groupEnd pair.
   async function groupSelected() {
-    if (!active || selectedIds.size === 0) return
+    if (!active || active.locked || selectedIds.size === 0) return
     const idxs = steps.map((s, i) => selectedIds.has(s.id) ? i : -1).filter(i => i >= 0)
     const min = Math.min(...idxs), max = Math.max(...idxs)
     // The span must contain whole groups only (balanced markers) — else wrapping it would
@@ -1369,6 +1377,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
 
   // Remove a group's markers (keep the inner steps in place).
   async function ungroupGroup(groupStartId) {
+    if (active?.locked) return
     const i = steps.findIndex(s => s.id === groupStartId)
     if (i < 0) return
     let j = i + 1
@@ -1381,6 +1390,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   // Remove an "End group" marker. If it has a depth-matched start it's a real group, so we
   // ungroup the pair (markers go, inner steps stay). A stray/orphan end just gets deleted.
   async function removeGroupEnd(endId) {
+    if (active?.locked) return
     const arr = steps
     const idx = arr.findIndex(s => s.id === endId)
     if (idx < 0) return
@@ -1424,7 +1434,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   }
 
   async function setPrerequisite(preId) {
-    if (!active) return
+    if (!active || active.locked) return
     const updated = { ...active, prerequisite_id: preId || null }
     await window.api.saveScenario(updated)
     setActive(updated)
@@ -1510,6 +1520,17 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     if (active?.id === id) setActive(updated)
   }
 
+  // Lock / unlock a scenario — a locked scenario's steps are read-only (no add, edit, reorder,
+  // delete or record), so a finished/approved scenario can't be changed by accident. It still runs.
+  async function toggleLockScenario(id) {
+    const s = scenarios.find(x => x.id === id)
+    if (!s) return
+    const updated = { ...s, locked: s.locked ? 0 : 1 }
+    await window.api.saveScenario(updated)
+    setScenarios(prev => prev.map(x => x.id === id ? updated : x))
+    if (active?.id === id) setActive(updated)
+  }
+
   // Duplicate a scenario (+ its steps) within this profile, then select the copy.
   async function duplicateScenario(id) {
     const res = await window.api.duplicateScenario(id)
@@ -1519,7 +1540,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   }
 
   async function addStep(actionKey) {
-    if (!active) return
+    if (!active || active.locked) return
     const def = ACTION_DEFS[actionKey]
     const keyword = CATEGORY_KEYWORD[def?.category] || 'When'
     const res = await window.api.saveStep({
@@ -1545,7 +1566,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   // from the collection. Fields without a selector still get a card to complete with 🎯 Pick.
   async function insertFormFill(collection) {
     setFillMenu(false)
-    if (!active || !collection?.fields?.length) return
+    if (!active || active.locked || !collection?.fields?.length) return
     let order = steps.length
     for (const f of collection.fields) {
       await window.api.saveStep({
@@ -1575,6 +1596,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   }
 
   function updateStep(step) {
+    if (active?.locked) return
     // Update the in-memory state synchronously so a controlled input reflects the new
     // value on the same render as the keystroke. Awaiting the DB save before setState
     // makes the value lag the keystroke, which forces React to reset the caret to the end
@@ -1587,6 +1609,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   }
 
   async function deleteStep(id) {
+    if (active?.locked) return
     await window.api.deleteStep(id)
     setSteps(prev => prev.filter(s => s.id !== id))
     setSelectedIds(prev => { if (!prev.has(id)) return prev; const n = new Set(prev); n.delete(id); return n })
@@ -1620,6 +1643,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   // Move a step OR a whole group, swapping with the adjacent sibling at the same nesting
   // level. Won't move a unit out of (or into) its parent group — that keeps pairing intact.
   async function moveStep(id, direction) {
+    if (active?.locked) return
     const arr = steps
     const idx = arr.findIndex(s => s.id === id)
     if (idx < 0) return
@@ -1645,7 +1669,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   // to just BEFORE `beforeId` (or to the end when null). Dropping between a group's markers
   // makes the step a member of that group — membership is purely positional.
   async function reorderByDrag(dragStepId, beforeId) {
-    if (!dragStepId) return
+    if (!dragStepId || active?.locked) return
     const arr = steps
     const di = arr.findIndex(s => s.id === dragStepId)
     if (di < 0) return
@@ -1692,7 +1716,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const onDropBefore = (beforeId) => { const d = dragId; setDragId(null); setOverId(null); if (d) reorderByDrag(d, beforeId) }
 
   async function record() {
-    if (!active || !profile) return
+    if (!active || active.locked || !profile) return
     if (!profile.base_url?.trim()) { alert('Set a Base URL in this profile before recording.'); return }
     setRecording(true)
 
@@ -1775,6 +1799,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     finally { setExporting(false) }
   }
 
+  const locked = !!active?.locked
+
   const filteredCategories = ACTION_CATEGORIES.map(cat => ({
     cat,
     actions: ACTIONS_BY_CATEGORY[cat].filter(a =>
@@ -1819,7 +1845,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
           }}>
             {shareMsg || '⬆ Share Profile'}
           </button>
-          {active && (
+          {active && !locked && (
             <button onClick={record} disabled={recording} title="Open the app and record your actions as steps" style={{
               padding: '7px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600,
               background: recording ? 'rgba(239,68,68,0.12)' : 'transparent',
@@ -1887,6 +1913,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                       onSelect={selectScenario}
                       onStartRename={startRename} onCommitRename={commitRename} onCancelRename={cancelRename}
                       onDuplicate={duplicateScenario} onDelete={deleteScenario} onToggleSkip={toggleSkipScenario}
+                      onToggleLock={toggleLockScenario}
                       dragEnabled={dragEnabled}
                       isOver={overSid === s.id && dragSid !== s.id}
                       isDragging={dragSid === s.id}
@@ -1910,7 +1937,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
               <input value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Search actions…" style={{ fontSize: 12, width: '100%' }} />
               {/* Create/capture test data without leaving the builder. */}
-              {active && (
+              {active && !locked && (
                 <button onClick={() => setDataModal(true)} title="Turn this scenario's values into reusable test data, or add fields by hand"
                   style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
                     marginTop: 6, padding: '6px 10px', borderRadius: 6, background: 'var(--surface2)',
@@ -1920,7 +1947,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                 </button>
               )}
               {/* One-click: drop a mapped Test Data collection in as pre-wired fill steps. */}
-              {active && collections.length > 0 && (
+              {active && !locked && collections.length > 0 && (
                 <div style={{ position: 'relative', marginTop: 6 }}>
                   <button onClick={() => setFillMenu(o => !o)} style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%',
@@ -1956,6 +1983,10 @@ export default function ScenarioBuilder({ navigate, ctx }) {
               {!active ? (
                 <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '20px 8px' }}>
                   Select a scenario first
+                </p>
+              ) : locked ? (
+                <p style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', padding: '20px 8px', lineHeight: 1.5 }}>
+                  🔒 This scenario is locked.<br />Unlock it to add or edit steps.
                 </p>
               ) : (
                 filteredCategories.map(({ cat, actions }) => (
@@ -1994,6 +2025,13 @@ export default function ScenarioBuilder({ navigate, ctx }) {
               <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ fontWeight: 700, fontSize: 15 }}>{active.name}</span>
+                  {locked && (
+                    <span title="This scenario is locked — its steps are read-only"
+                      style={{ fontSize: 10, fontWeight: 700, color: '#F59E0B', background: 'rgba(245,158,11,0.12)',
+                        border: '1px solid rgba(245,158,11,0.4)', borderRadius: 999, padding: '2px 9px' }}>
+                      🔒 LOCKED
+                    </span>
+                  )}
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                     {steps.length} step{steps.length !== 1 ? 's' : ''}
                   </span>
@@ -2003,7 +2041,15 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                       style={{ padding: '5px 12px', fontSize: 12 }}>
                       ▶ Run scenario
                     </button>
-                    {selectedIds.size > 0 && (
+                    <button onClick={() => toggleLockScenario(active.id)}
+                      title={locked ? 'Unlock — allow editing the steps again' : 'Lock — make these steps read-only so they can’t be changed by accident'}
+                      style={{ padding: '5px 10px', fontSize: 12, fontWeight: 600, borderRadius: 6, cursor: 'pointer',
+                        background: locked ? 'rgba(245,158,11,0.12)' : 'transparent',
+                        border: `1px solid ${locked ? 'rgba(245,158,11,0.4)' : 'var(--border)'}`,
+                        color: locked ? '#F59E0B' : 'var(--text-muted)' }}>
+                      {locked ? '🔓 Unlock' : '🔒 Lock'}
+                    </button>
+                    {selectedIds.size > 0 && !locked && (
                       <>
                         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{selectedIds.size} selected · drag any one to move them together</span>
                         <button onClick={groupSelected} title="Wrap these steps in a group (then name it / make it repeat)"
@@ -2025,11 +2071,13 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     <CopyToProfileButton currentProfileId={profileId} scenarioId={active.id} />
                     {steps.length > 1 && (
                       <>
-                        <button onClick={selectedIds.size === steps.length ? clearSelection : selectAll}
-                          style={{ background: 'none', border: '1px solid var(--border)',
-                          borderRadius: 6, padding: '5px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>
-                          {selectedIds.size === steps.length ? 'Deselect all' : 'Select all'}
-                        </button>
+                        {!locked && (
+                          <button onClick={selectedIds.size === steps.length ? clearSelection : selectAll}
+                            style={{ background: 'none', border: '1px solid var(--border)',
+                            borderRadius: 6, padding: '5px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                            {selectedIds.size === steps.length ? 'Deselect all' : 'Select all'}
+                          </button>
+                        )}
                         <button onClick={expandAll} style={{ background: 'none', border: '1px solid var(--border)',
                           borderRadius: 6, padding: '5px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>Expand all</button>
                         <button onClick={collapseAll} style={{ background: 'none', border: '1px solid var(--border)',
@@ -2045,7 +2093,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     ▶ Run needs
                   </span>
                   <select value={active.prerequisite_id || ''} onChange={e => setPrerequisite(e.target.value)}
-                    style={{ fontSize: 12, padding: '4px 8px', maxWidth: 240 }}>
+                    disabled={locked}
+                    style={{ fontSize: 12, padding: '4px 8px', maxWidth: 240, opacity: locked ? 0.6 : 1 }}>
                     <option value="">— Nothing —</option>
                     {scenarios.filter(s => s.id !== active.id).map(s => (
                       <option key={s.id} value={s.id}>{s.name}</option>
@@ -2059,10 +2108,13 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                 </div>
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+                {/* When locked, the cards become non-interactive (read-only) while the
+                    scroll container above stays scrollable. */}
+                <div style={{ pointerEvents: locked ? 'none' : 'auto', opacity: locked ? 0.9 : 1 }}>
                 {steps.length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '60px 0', color: 'var(--text-muted)' }}>
                     <div style={{ fontSize: 36, marginBottom: 10 }}>←</div>
-                    <p>Click any action from the Step Library to add it here.</p>
+                    <p>{locked ? 'This scenario is locked and has no steps.' : 'Click any action from the Step Library to add it here.'}</p>
                   </div>
                 ) : (
                   (() => {
@@ -2112,6 +2164,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     return out
                   })()
                 )}
+                </div>
               </div>
             </>
           )}

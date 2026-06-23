@@ -56,18 +56,18 @@ export function registerStorageHandlers() {
   ipcMain.handle('storage:saveScenario', (_, scenario) => {
     if (scenario.id) {
       db().prepare(`
-        UPDATE scenarios SET name=?, description=?, sort_order=?, prerequisite_id=?, skipped=?, updated_at=datetime('now')
+        UPDATE scenarios SET name=?, description=?, sort_order=?, prerequisite_id=?, skipped=?, locked=?, updated_at=datetime('now')
         WHERE id=?
       `).run(scenario.name, scenario.description || '', scenario.sort_order ?? 0,
-          scenario.prerequisite_id || null, scenario.skipped ? 1 : 0, scenario.id)
+          scenario.prerequisite_id || null, scenario.skipped ? 1 : 0, scenario.locked ? 1 : 0, scenario.id)
       return { id: scenario.id }
     }
     const id = randomUUID()
     db().prepare(`
-      INSERT INTO scenarios (id, profile_id, name, description, sort_order, prerequisite_id, skipped)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO scenarios (id, profile_id, name, description, sort_order, prerequisite_id, skipped, locked)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, scenario.profile_id, scenario.name, scenario.description || '',
-        scenario.sort_order ?? 0, scenario.prerequisite_id || null, scenario.skipped ? 1 : 0)
+        scenario.sort_order ?? 0, scenario.prerequisite_id || null, scenario.skipped ? 1 : 0, scenario.locked ? 1 : 0)
     return { id }
   })
 

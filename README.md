@@ -11,6 +11,7 @@ Build and run browser automation scripts through a point-and-click UI — no cod
 ## Features
 
 - **Profile-based runs** — configure URL, browser, timeout, and headless mode per environment
+- **🔌 API profiles (beta)** — a second profile type that swaps the browser step-cards for a Postman/SoapUI-style **request collection** for testing **SOAP & REST** APIs. Send requests, a profile-wide **variable store** (`{{token}}`) shared across requests, **click-to-extract** values from a response tree into variables, a token **auth policy** (inject + auto re-fetch on 401), and **WSDL import** that follows the schema imports and scaffolds one SOAP request per operation (envelope + `SOAPAction` + `ServiceHeader`). *Still in progress — SOAP-fault token refresh and API-shaped reports are pending.*
 - **Scenario builder** — assemble test steps from 30+ action types (click, fill, assert, screenshot, etc.) across Navigation, Interaction, Mouse, Assertions, Waits, Flow, and Util, with collapsible step cards for a clean overview
 - **🎯 Element picker** — click "Pick", then click the real element in a live browser; a robust selector is generated for you (no CSS knowledge needed)
 - **● Recorder** — open the site, hit Start, and just *use it* — your clicks, typing, and dropdowns become step cards live. Recording survives navigations (e.g. a login redirect). **Pause/Resume** to navigate without recording, and an **✓ Assert** mode that turns the next click into a "verify this is visible" check
@@ -79,12 +80,14 @@ Output goes to `release/`.
 src/
   main/
     core/       # db, scriptGenerator, webRunner, stepReplay, injectedScripts, tokenResolver,
-                #   windowFocus, portability (profile export/import serialize/deserialize)
-    ipc/        # IPC handlers: storage, runner, reporter, health,
-                #   selectorTester, elementPicker, recorder, dataLibrary, transfer
+                #   windowFocus, portability (profile export/import serialize/deserialize),
+                #   apiEngine (HTTP + {{var}}/extract/token engine), wsdlImport (WSDL → SOAP collection)
+    ipc/        # IPC handlers: storage, runner, apiRunner (API send/run/WSDL-import), reporter,
+                #   health, selectorTester, elementPicker, recorder, dataLibrary, transfer
   renderer/
     src/
-      screens/  # Dashboard, ScenarioBuilder, ActiveRun, Results, History, Settings, HealthCheck, TestData
+      screens/  # Dashboard, ScenarioBuilder, ApiWorkspace (API profiles), ActiveRun, Results,
+                #   History, Settings, HealthCheck, TestData, Help
       components/ # Sidebar, StepCard, action definitions
       lib/      # confirm (in-app dialog used instead of native confirm/prompt)
   preload/      # Context bridge
@@ -129,3 +132,5 @@ A run records **a pass/fail verdict for each scenario**, not just one verdict fo
 - "Blocked" scenario marking — skip/flag scenarios whose prerequisite already failed
 
 **Recently shipped** (was Phase 2): assert-mode recording, smart waits, Test Data Library + data-driven loops, step groups, drag-and-drop reordering, inline scenario rename, copy steps between scenarios, group-aware selection.
+
+**In progress:** 🔌 **API profiles (beta)** — SOAP/REST request collections with a shared `{{token}}` store, click-to-extract, an auth/token policy, and WSDL import. Remaining: SOAP-fault token auto-refresh and API-shaped report formatting.

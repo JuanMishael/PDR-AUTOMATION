@@ -15,8 +15,12 @@ PDR-AUTOMATION (Electron desktop app)
 │   │                          "X/Y scenarios passed" breakdown, recent-runs streak;
 │   │                          most-recently-run profile floats to top; search; per-card
 │   │                          ⬆ Share a profile / ⬇ Import a shared profile bundle
-│   ├── ProfileConfig        → define a "site under test" (base URL, browser, headless, timeout)
-│   ├── ScenarioBuilder      → THE CORE: build a test visually
+│   ├── ProfileConfig        → define a "site under test" (base URL, browser, headless, timeout);
+│   │                          Web vs 🔌 API profile type chooser
+│   ├── ApiWorkspace (beta)   → for type='api' profiles: Postman/SoapUI-style request collection —
+│   │                          requests (SOAP/REST), {{var}} store, click-to-extract response tree,
+│   │                          auth/token policy, WSDL import, run collection
+│   ├── ScenarioBuilder      → THE CORE: build a test visually (forks to ApiWorkspace when type='api')
 │   │     ├── Step Library (left)   — 30+ actions in 7 categories (incl. Flow: group/loop)
 │   │     ├── Scenario list (left)  — drag (⠿) to reorder; ⋯ menu = rename / duplicate / delete;
 │   │     │                           filter box when there are many
@@ -51,11 +55,17 @@ PDR-AUTOMATION (Electron desktop app)
     │   ├── tokenResolver.js   → resolve {{Collection.field}}/{{faker.*}}/{{unique.*}} at gen-time
     │   ├── windowFocus.js     → re-assert keyboard focus after headful browser / native dialogs
     │   ├── injectedScripts.js → in-page selector generator + picker/recorder listeners
-    │   └── portability.js     → serialize/deserialize a profile bundle (scenarios + steps +
-    │                            referenced collections); remaps ids/names/prereqs on import
+    │   ├── portability.js     → serialize/deserialize a profile bundle (scenarios + steps +
+    │   │                        referenced collections); remaps ids/names/prereqs on import
+    │   ├── apiEngine.js (beta)→ in-process HTTP (Node http/https, insecure TLS); {{var}} substitution,
+    │   │                        JSON/XML/header/status extraction, assertions, token refetch+retry
+    │   └── wsdlImport.js (beta)→ follows wsdl/xsd imports → one SOAP request per operation
+    │                            (envelope + SOAPAction + ServiceHeader, recursive type expansion)
     └── ipc/
         ├── runner.js          → orchestrates runs (continuous, isolated, data-driven); expands
         │                         group/loop blocks; saves history
+        ├── apiRunner.js (beta)→ api:send (interactive), api:runCollection (sequential → history),
+        │                         api:importWsdl; shares the runner:log/complete stream
         ├── storage.js         → CRUD + duplicateProfile/copyScenarios + duplicate/reorder/rename
         │                         Scenarios + copySteps (append selected steps to another scenario)
         ├── dataLibrary.js     → Test Data Library CRUD + collection export/import (json/csv)
@@ -274,6 +284,21 @@ breakdown, recent-runs streak).
 - Import rows (CSV/Excel paste); export/import a collection (json/csv) to share with other QA
 - 🔁 Step groups — named, collapsible, **nestable**; flip "repeat for each data set" → loop
   (runs a step range once per row, e.g. login→logout per credential)
+
+**API profiles (beta, in progress):**
+- A second profile type (`profiles.type='api'`) renders the **ApiWorkspace** instead of step-cards —
+  a Postman/SoapUI-style **request collection** for **SOAP & REST** APIs.
+- New tables: `api_requests`, `api_variables` (profile-wide shared store), `api_auth`.
+- `apiEngine.js` runs requests **in-process** (Node `http`/`https`, insecure TLS — the API mirror of
+  `ignoreHTTPSErrors`), substitutes `{{var}}`, extracts JSON/XML/header/status values into the store,
+  and runs a **token policy** (inject auth header + proactive mint + 401 re-fetch-and-retry).
+- **Click-to-extract**: the response renders as a tree; clicking a value saves it into a variable.
+- **WSDL import** (`wsdlImport.js`) follows `wsdl:import`/`xsd:import` chains and scaffolds one SOAP
+  request per operation (full envelope, `SOAPAction`, and the `ServiceHeader` block).
+- A collection run streams over the existing `runner:log`/`complete` and saves to **History**.
+- *Remaining:* SOAP-fault-based token refresh (WCF returns a Fault on expiry, not 401) and
+  API-shaped report formatting (HTML/CSV/Word currently render the browser/screenshot shape).
+- New dep: **fast-xml-parser** (pure JS, no native build — consistent with the sql.js choice).
 
 **Setup gotcha:** `npx playwright install chromium` must be run once per machine.
 

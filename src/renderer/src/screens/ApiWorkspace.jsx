@@ -4,6 +4,56 @@ import TokenField from '../components/TokenField'
 
 const ITERATE_GROUPS = [['all', 'All sets'], ['positive', '📗 Positive'], ['negative', '📕 Negative'], ['edge', '📒 Edge']]
 
+// Detect a request's INPUT fields from its body so a Test Data collection can be auto-built.
+// SOAP: the leaf elements under the Body's request wrapper (e.g. getUserRequest → userName,
+// userRole, …). JSON: the top-level keys. Returns { fields, wrapper, kind }.
+function detectRequestFields(body, bodyType) {
+  const t = (body || '').trim()
+  if (bodyType === 'soap' || bodyType === 'xml' || t.startsWith('<')) {
+    try {
+      const doc = new DOMParser().parseFromString(t, 'application/xml')
+      if (doc.getElementsByTagName('parsererror').length || !doc.documentElement) return { fields: [], wrapper: null, kind: 'soap' }
+      const bodyEl = Array.from(doc.getElementsByTagName('*')).find(e => e.localName === 'Body')
+      const wrapper = bodyEl && Array.from(bodyEl.children)[0]
+      if (!wrapper) return { fields: [], wrapper: null, kind: 'soap' }
+      const fields = []
+      const walk = (el) => {
+        const kids = Array.from(el.children)
+        if (!kids.length) { if (el !== wrapper) fields.push(el.localName) }
+        else kids.forEach(walk)
+      }
+      walk(wrapper)
+      return { fields: [...new Set(fields)], wrapper: wrapper.localName, kind: 'soap' }
+    } catch { return { fields: [], wrapper: null, kind: 'soap' } }
+  }
+  try {
+    const o = JSON.parse(t)
+    if (o && typeof o === 'object' && !Array.isArray(o)) return { fields: Object.keys(o), wrapper: null, kind: 'json' }
+  } catch { /* not JSON */ }
+  return { fields: [], wrapper: null, kind: 'json' }
+}
+
+// Replace each detected field's placeholder value with a {{Collection.field}} token.
+function rewireBody(body, bodyType, fields, collName, kind) {
+  if (kind === 'json') {
+    try { const o = JSON.parse(body); for (const f of fields) if (f in o) o[f] = `{{${collName}.${f}}}`; return JSON.stringify(o, null, 2) } catch { return body }
+  }
+  let out = body
+  for (const f of fields) {
+    const esc = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const re = new RegExp(`(<([\\w.-]+:)?${esc}>)[^<]*(</([\\w.-]+:)?${esc}>)`, 'g')
+    out = out.replace(re, `$1{{${collName}.${f}}}$3`)
+  }
+  return out
+}
+
+function uniqueCollName(base, collections) {
+  const taken = new Set((collections || []).map(c => c.name.toLowerCase()))
+  let name = base || 'Request', i = 2
+  while (taken.has(name.toLowerCase())) name = `${base} ${i++}`
+  return name
+}
+
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 const BODY_TYPES = [['none', 'None'], ['json', 'JSON'], ['xml', 'XML'], ['soap', 'SOAP'], ['form', 'Form'], ['raw', 'Raw']]
 const EXTRACT_FROM = [['json', 'JSON body'], ['xml', 'XML body'], ['header', 'Header'], ['status', 'Status code']]
@@ -159,6 +209,24 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
 
   async function refreshVars() {
     setVariables(await window.api.getApiVariables(profile.id))
+  }
+
+  // Auto-build a Test Data collection from this request's input fields, wire the body to
+  // {{Collection.field}} tokens, and bind the request to iterate over it.
+  const [dataMsg, setDataMsg] = useState(null)
+  async function createCollectionFromRequest() {
+    if (!draft) return
+    const { fields, wrapper, kind } = detectRequestFields(draft.body, draft.body_type)
+    if (!fields.length) { setDataMsg('✗ No input fields found in the body — add a body first (or import a WSDL).'); return }
+    const base = (wrapper ? wrapper.replace(/Request$/i, '') : draft.name) || 'Request'
+    const name = uniqueCollName(base, collections)
+    const { id } = await window.api.saveCollection({ name })
+    for (let i = 0; i < fields.length; i++) await window.api.saveField({ collection_id: id, name: fields[i], type: 'text', sort_order: i })
+    await window.api.saveDataSet({ collection_id: id, name: 'Row 1', group_type: 'positive', values: {} })
+    const body = rewireBody(draft.body, draft.body_type, fields, name, kind)
+    patch({ body, iterate_collection_id: id, iterate_group: 'all' })
+    setCollections(await window.api.getCollections())
+    setDataMsg(`✓ Created “${name}” with ${fields.length} field${fields.length === 1 ? '' : 's'}; body wired to {{${name}.*}}. Fill rows in Test Data.`)
   }
 
   // Add an extraction rule from a clicked response field, then jump to the Extract tab.
@@ -389,7 +457,8 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
                   <ExtractEditor rows={draft.extract} onChange={v => patch({ extract: v })} />
                 )}
                 {tab === 'data' && (
-                  <DataIterateTab draft={draft} collections={collections} patch={patch} navigate={navigate} />
+                  <DataIterateTab draft={draft} collections={collections} patch={patch} navigate={navigate}
+                    onAutoCreate={createCollectionFromRequest} autoMsg={dataMsg} />
                 )}
               </div>
 
@@ -444,28 +513,49 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
 
 // Bind a request to a Test Data collection+group so it runs once per data set (during Run
 // collection) — the API analog of a repeating group. Each row resolves its own {{tokens}}.
-function DataIterateTab({ draft, collections, patch, navigate }) {
+function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, autoMsg }) {
   const colId = draft.iterate_collection_id || ''
   const col = collections.find(c => c.id === colId)
   const group = draft.iterate_group || 'all'
   const setCount = col
     ? (group === 'all' ? (col.sets || []).length : (col.sets || []).filter(s => s.group_type === group).length)
     : 0
+  const detected = detectRequestFields(draft.body, draft.body_type).fields
+
+  // Auto-build action — the fast path to a test-case collection from the request's own fields.
+  const autoCreate = (
+    <div className="sketch" style={{ padding: '10px 12px', background: 'var(--accent-soft)', display: 'grid', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: 12 }}>✨ Auto-create test data</strong>
+        {detected.length > 0 && <span className="badge badge-busy" style={{ fontSize: 10 }}>{detected.length} field{detected.length === 1 ? '' : 's'} detected</span>}
+        <button className="btn-primary" style={{ marginLeft: 'auto', padding: '4px 10px', fontSize: 11 }}
+          onClick={onAutoCreate} disabled={!detected.length}>Create collection from request fields</button>
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--ink-soft)', margin: 0 }}>
+        {detected.length
+          ? <>Builds a collection (<code>{detected.slice(0, 4).join(', ')}{detected.length > 4 ? '…' : ''}</code>), wires the body to <code>{'{{tokens}}'}</code>, and binds iteration. Then fill rows in Test Data.</>
+          : <>Add a request body (or import a WSDL) — the input fields are detected from it.</>}
+      </p>
+      {autoMsg && <p style={{ fontSize: 11, margin: 0, color: autoMsg.startsWith('✓') ? 'var(--ok)' : 'var(--bad)' }}>{autoMsg}</p>}
+    </div>
+  )
 
   if (!collections.length) {
     return (
-      <div>
-        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
-          No Test Data collections yet. Define a form once (fields + data sets) and reference its values
-          in this request with <code>{'{{Collection.field}}'}</code> tokens.
+      <div style={{ display: 'grid', gap: 10 }}>
+        {autoCreate}
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+          No Test Data collections yet. Use ✨ above, or define one by hand and reference its values
+          with <code>{'{{Collection.field}}'}</code> tokens.
         </p>
-        <button className="btn-ghost" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => navigate('testdata')}>Open Test Data →</button>
+        <button className="btn-ghost" style={{ fontSize: 11, padding: '4px 10px', justifySelf: 'start' }} onClick={() => navigate('testdata')}>Open Test Data →</button>
       </div>
     )
   }
 
   return (
     <div style={{ display: 'grid', gap: 10 }}>
+      {autoCreate}
       <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
         Run this request <strong>once per data set</strong> in a collection (applied during <strong>▶ Run collection</strong>).
         Insert a value with the <code>{'{ }'}</code> picker on the Body — e.g. <code>{'{{' + (col?.name || 'Collection') + '.field}}'}</code>.
@@ -482,6 +572,7 @@ function DataIterateTab({ draft, collections, patch, navigate }) {
           </select>
         )}
         {colId && <span className="badge badge-busy" style={{ fontSize: 10 }}>{setCount} run{setCount === 1 ? '' : 's'}</span>}
+        {colId && <button className="btn-ghost" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => navigate('testdata')}>Edit rows →</button>}
       </div>
       {colId && setCount === 0 && (
         <p style={{ fontSize: 11, color: 'var(--bad)', margin: 0 }}>No data sets in this group — add some in Test Data, or this request is skipped.</p>

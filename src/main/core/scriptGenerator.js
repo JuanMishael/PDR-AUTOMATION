@@ -2,10 +2,11 @@
  * Generates a self-contained Playwright script as a JS string at runtime.
  * No .js files are written to disk. The script is passed directly to the runner.
  *
- * Action types (28 total):
+ * Action types:
  * Navigation  : navigate, reload, goBack, goForward, waitForUrl
  * Interaction : click, dblclick, rightClick, hover, focus, selectOption,
  *               fill, type, clearInput, pressKey, uploadFile, dragAndDrop
+ * Mouse / Map : clickAt, dragByOffset, zoom, pinCoordinate, mapZoom
  * Assertions  : assertVisible, assertHidden, assertText, assertValue,
  *               assertUrl, assertTitle, assertEnabled, assertChecked
  * Waits       : waitForSelector, waitForTimeout, waitForNetworkIdle
@@ -14,6 +15,7 @@
 
 import { resolveParams } from './tokenResolver'
 import { findDragHandleRect, synthDrag } from './dragHelpers'
+import { mapPickPixel, mapSetZoom } from './mapHelpers'
 
 export function generateScript({ profile, scenarios = [], settings = {}, outputDir = '', dataContext = null, downloadsDir = '' }) {
   const timeout = profile.timeout || 30000
@@ -354,6 +356,34 @@ function actionToCode(action, p, baseUrl) {
       const _b = await ${loc}.boundingBox();
       if (_b) await page.mouse.move(_b.x + _b.width / 2, _b.y + _b.height / 2);
       ${loop}
+    }`
+    }
+
+    case 'pinCoordinate': {
+      // Ask the live OpenLayers map to project the exact lat/lng to its pixel, then click
+      // that pixel for real (still exercises the app's click handler, just deterministically).
+      const lat = Number(p.lat), lng = Number(p.lng)
+      const zoom = (p.zoom === '' || p.zoom === null || p.zoom === undefined) ? 'null' : Number(p.zoom)
+      const recenter = p.recenter !== false // default true; only an explicit uncheck disables it
+      const mapVar = (p.mapVar || 'map').trim() || 'map'
+      return `{
+      const _r = await page.evaluate((${mapPickPixel.toString()}), { mapVar: ${JSON.stringify(mapVar)}, lon: ${lng}, lat: ${lat}, zoom: ${zoom}, recenter: ${recenter} });
+      if (_r.error) throw new Error('Pin coordinate: ' + _r.error);
+      if (!_r.inView) throw new Error('Pin coordinate: (${lng}, ${lat}) is off-screen' + (${recenter} ? ' even after recentering — try a lower zoom level' : ' — enable "Recenter" or navigate there first'));
+      await page.mouse.click(_r.pageX, _r.pageY);
+    }`
+    }
+
+    case 'mapZoom': {
+      // Zoom via the OL view API → zooms about the centre, deterministic (not cursor-based).
+      const zoom = (p.zoom === '' || p.zoom === null || p.zoom === undefined) ? 'null' : Number(p.zoom)
+      const delta = (p.delta === '' || p.delta === null || p.delta === undefined) ? 'null' : Number(p.delta)
+      const lon = (p.lng === '' || p.lng === null || p.lng === undefined) ? 'null' : Number(p.lng)
+      const lat = (p.lat === '' || p.lat === null || p.lat === undefined) ? 'null' : Number(p.lat)
+      const mapVar = (p.mapVar || 'map').trim() || 'map'
+      return `{
+      const _r = await page.evaluate((${mapSetZoom.toString()}), { mapVar: ${JSON.stringify(mapVar)}, zoom: ${zoom}, delta: ${delta}, lon: ${lon}, lat: ${lat} });
+      if (_r.error) throw new Error('Map zoom: ' + _r.error);
     }`
     }
 

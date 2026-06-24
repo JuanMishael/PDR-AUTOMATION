@@ -147,6 +147,31 @@ export const ACTION_DEFS = {
       { key: 'times', label: 'Repeat', type: 'number', placeholder: '1' }
     ]
   },
+  // GIS map actions — talk to the live OpenLayers map (window.map) instead of guessing
+  // pixels. pinCoordinate projects an exact lat/lng to its pixel and clicks it; mapZoom
+  // drives the view API so it zooms about the CENTRE, not the cursor (unlike a scroll wheel).
+  pinCoordinate: {
+    label: 'Pin Coordinate (lat/lng)', category: 'Mouse',
+    summary: p => `${p.lat ?? '?'}, ${p.lng ?? '?'}${p.zoom ? ` @ z${p.zoom}` : ''}`,
+    params: [
+      { key: 'lat', label: 'Latitude', type: 'number', placeholder: '14.3294' },
+      { key: 'lng', label: 'Longitude', type: 'number', placeholder: '120.9367' },
+      { key: 'zoom', label: 'Zoom level when recentering (blank = keep current)', type: 'number', placeholder: '18' },
+      { key: 'recenter', label: 'Recenter map to this coordinate first (recommended)', type: 'boolean', default: true },
+      { key: 'mapVar', label: 'Map global name (advanced)', placeholder: 'map' }
+    ]
+  },
+  mapZoom: {
+    label: 'Map Zoom (level)', category: 'Mouse',
+    summary: p => (p.zoom != null && p.zoom !== '') ? `level ${p.zoom}` : `${Number(p.delta) >= 0 ? '+' : ''}${p.delta || 0} step`,
+    params: [
+      { key: 'zoom', label: 'Zoom to level (absolute, e.g. 18)', type: 'number', placeholder: '18' },
+      { key: 'delta', label: 'OR step relative (− = out)', type: 'number', placeholder: '+1 / -1' },
+      { key: 'lat', label: 'Anchor latitude (optional — recenters here)', type: 'number', placeholder: '14.3294' },
+      { key: 'lng', label: 'Anchor longitude (optional)', type: 'number', placeholder: '120.9367' },
+      { key: 'mapVar', label: 'Map global name (advanced)', placeholder: 'map' }
+    ]
+  },
 
   // --- Assertions ---
   assertVisible: {

@@ -9,12 +9,13 @@
  */
 
 import { findDragHandleRect, synthDrag } from './dragHelpers'
+import { mapPickPixel, mapSetZoom } from './mapHelpers'
 
 export const REPLAYABLE = new Set([
   'navigate', 'reload', 'goBack', 'goForward', 'waitForUrl',
   'click', 'dblclick', 'rightClick', 'hover', 'focus', 'selectOption',
   'fill', 'type', 'clearInput', 'pressKey', 'uploadFile', 'dragAndDrop',
-  'dragByOffset', 'clickAt', 'zoom',
+  'dragByOffset', 'clickAt', 'zoom', 'pinCoordinate', 'mapZoom',
   'waitForSelector', 'waitForTimeout', 'waitForNetworkIdle'
 ])
 
@@ -128,6 +129,31 @@ export async function replayStep(page, action, p, baseUrl) {
         if (b) await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2)
       }
       for (let i = 0; i < times; i++) { await page.mouse.wheel(0, deltaY); await page.waitForTimeout(150) }
+      return undefined
+    }
+
+    case 'pinCoordinate': {
+      const lat = Number(p.lat), lng = Number(p.lng)
+      const zoom = (p.zoom === '' || p.zoom === null || p.zoom === undefined) ? null : Number(p.zoom)
+      const recenter = p.recenter !== false
+      const mapVar = (p.mapVar || 'map').trim() || 'map'
+      const r = await page.evaluate(mapPickPixel, { mapVar, lon: lng, lat, zoom, recenter })
+      if (r.error) throw new Error('Pin coordinate: ' + r.error)
+      if (!r.inView) {
+        throw new Error(`Pin coordinate: (${lng}, ${lat}) is off-screen` +
+          (recenter ? ' even after recentering — try a lower zoom level' : ' — enable "Recenter" or navigate there first'))
+      }
+      return page.mouse.click(r.pageX, r.pageY)
+    }
+
+    case 'mapZoom': {
+      const zoom = (p.zoom === '' || p.zoom === null || p.zoom === undefined) ? null : Number(p.zoom)
+      const delta = (p.delta === '' || p.delta === null || p.delta === undefined) ? null : Number(p.delta)
+      const lon = (p.lng === '' || p.lng === null || p.lng === undefined) ? null : Number(p.lng)
+      const lat = (p.lat === '' || p.lat === null || p.lat === undefined) ? null : Number(p.lat)
+      const mapVar = (p.mapVar || 'map').trim() || 'map'
+      const r = await page.evaluate(mapSetZoom, { mapVar, zoom, delta, lon, lat })
+      if (r.error) throw new Error('Map zoom: ' + r.error)
       return undefined
     }
 

@@ -102,9 +102,11 @@ export const ACTION_DEFS = {
   },
   uploadFile: {
     label: 'Upload File', category: 'Interaction',
+    summary: p => p.filePath ? `${p.trigger ? `via ${p.trigger}` : p.selector} ← ${p.filePath}` : (p.trigger || p.selector),
     params: [
-      { key: 'selector', label: 'File Input Selector', placeholder: 'input[type=file]' },
-      { key: 'filePath', label: 'Absolute File Path', placeholder: 'C:\\Users\\user\\file.pdf' }
+      { key: 'selector', label: 'File input selector — the hidden <input type=file>, NOT the read-only display box', placeholder: 'input[type=file]' },
+      { key: 'filePath', label: 'Absolute File Path', placeholder: 'C:\\Users\\user\\file.csv' },
+      { key: 'trigger', label: 'OR — Upload/Browse button that opens the file dialog (use when there is no file input to target)', placeholder: '#BIMSBUfileUpload (optional)' }
     ]
   },
   dragAndDrop: {

@@ -15,7 +15,7 @@
 import { resolveParams } from './tokenResolver'
 import { findDragHandleRect, synthDrag } from './dragHelpers'
 
-export function generateScript({ profile, scenarios = [], settings = {}, outputDir = '', dataContext = null }) {
+export function generateScript({ profile, scenarios = [], settings = {}, outputDir = '', dataContext = null, downloadsDir = '' }) {
   const timeout = profile.timeout || 30000
   const baseUrl = profile.base_url || ''
   const traceOnFail = settings.trace_on_fail === '1'
@@ -64,6 +64,32 @@ ${indent(stepCode, 2)}
       process.stderr.write(JSON.stringify({ type: 'trace', path: tracePath }) + '\\n');
     }` : ''
 
+  // Persist anything the app downloads (CSV export, etc.). Playwright accepts the
+  // download into a temp dir and deletes it on close, so without saveAs the tester
+  // never sees the file. We save it to the OS Downloads folder with a browser-style
+  // " (n)" suffix on name clashes, and attach to popups too (target=_blank exports).
+  const downloadHandler = downloadsDir ? `
+    const _downloadsDir = ${JSON.stringify(downloadsDir)};
+    const _saveDownload = async (download) => {
+      try {
+        const _fs = require('fs'), _path = require('path');
+        _fs.mkdirSync(_downloadsDir, { recursive: true });
+        const _name = download.suggestedFilename() || 'download';
+        let _dest = _path.join(_downloadsDir, _name);
+        if (_fs.existsSync(_dest)) {
+          const _ext = _path.extname(_name), _base = _path.basename(_name, _ext);
+          let _i = 1;
+          do { _dest = _path.join(_downloadsDir, _base + ' (' + (_i++) + ')' + _ext); } while (_fs.existsSync(_dest));
+        }
+        await download.saveAs(_dest);
+        process.stdout.write(JSON.stringify({ type: 'download', path: _dest, name: _path.basename(_dest) }) + '\\n');
+      } catch (e) {
+        process.stdout.write(JSON.stringify({ type: 'raw', text: 'Download could not be saved: ' + ((e && e.message) || e) }) + '\\n');
+      }
+    };
+    page.on('download', _saveDownload);
+    context.on('page', (_p) => _p.on('download', _saveDownload));` : ''
+
   return `
 const { chromium, firefox, webkit } = require('playwright');
 const { expect } = require('playwright/test');
@@ -72,11 +98,38 @@ const { expect } = require('playwright/test');
   const results = [];
   let browser, context, page;
 
+  // Smart file upload so testers don't have to understand hidden file inputs.
+  //  - trigger set     → click that button and catch the OS file dialog it opens.
+  //  - selector is a real <input type=file> → set the file directly on it.
+  //  - selector is anything else (the read-only display box, blank, a button) but the
+  //    page has exactly one file input → use that input automatically.
+  //  - otherwise treat the selector as the button that opens the dialog (file chooser).
+  async function _uploadFile(selector, trigger, filePath) {
+    if (trigger) {
+      const [fc] = await Promise.all([ page.waitForEvent('filechooser'), page.locator(trigger).click() ]);
+      return fc.setFiles(filePath);
+    }
+    if (selector) {
+      const isFileInput = await page.evaluate((s) => {
+        try { const el = document.querySelector(s); return !!el && el.matches('input[type=file]'); } catch { return false; }
+      }, selector);
+      if (isFileInput) return page.setInputFiles(selector, filePath);
+    }
+    const inputs = await page.locator('input[type=file]').elementHandles();
+    if (inputs.length === 1) return inputs[0].setInputFiles(filePath);
+    if (selector) {
+      const [fc] = await Promise.all([ page.waitForEvent('filechooser'), page.locator(selector).click() ]);
+      return fc.setFiles(filePath);
+    }
+    throw new Error('Upload File: could not find a file input. Set the Upload/Browse button in the step.');
+  }
+
   try {
     browser = await ${browserLaunchExpr(profile)}
-    context = await browser.newContext({ ignoreHTTPSErrors: true });
+    context = await browser.newContext({ ignoreHTTPSErrors: true, acceptDownloads: true });
     page = await context.newPage();
     page.setDefaultTimeout(${timeout});
+    ${downloadHandler}
     ${traceStart}
 
 ${indent(stepBlocks, 4)}
@@ -244,7 +297,10 @@ function actionToCode(action, p, baseUrl) {
       return `await page.press(${sel}, ${JSON.stringify(p.key)});`
 
     case 'uploadFile':
-      return `await page.setInputFiles(${sel}, ${JSON.stringify(p.filePath)});`
+      // Routed through the smart _uploadFile helper: handles a hidden file input, the
+      // read-only display box, a blank selector (lone file input), or a button that opens
+      // the OS dialog — so a non-technical tester doesn't have to know which is which.
+      return `await _uploadFile(${JSON.stringify(p.selector || '')}, ${JSON.stringify((p.trigger || '').trim())}, ${JSON.stringify(p.filePath)});`
 
     case 'dragAndDrop':
       return `await page.dragAndDrop(${JSON.stringify(p.source)}, ${JSON.stringify(p.target)});`

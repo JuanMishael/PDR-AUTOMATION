@@ -45,6 +45,12 @@ export default function Results({ ctx, navigate }) {
 
   return (
     <div className="fade-in" style={{ maxWidth: 900 }}>
+      {/* Back to the scenario builder for this run's profile */}
+      <button className="btn-ghost" style={{ padding: '6px 12px', fontSize: 12, marginBottom: 14 }}
+        onClick={() => navigate('scenarios', { profileId: run.profile_id, profileName: run.profile_name })}>
+        ← Back to Scenarios
+      </button>
+
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 24 }}>
         <div style={{ flex: 1 }}>

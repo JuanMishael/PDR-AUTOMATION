@@ -36,6 +36,30 @@ function resolveUrl(raw, baseUrl) {
   return (raw.startsWith('http') || raw.startsWith('file')) ? raw : (baseUrl || '') + raw
 }
 
+// Smart file upload — mirrors the _uploadFile helper in scriptGenerator. Handles a hidden
+// file input, the read-only display box, a blank selector (lone file input), or a button
+// that opens the OS dialog, so a tester doesn't have to know which the page uses.
+async function smartUpload(page, p) {
+  const trigger = (p.trigger || '').trim()
+  if (trigger) {
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator(trigger).click()])
+    return chooser.setFiles(p.filePath)
+  }
+  if (p.selector) {
+    const isFileInput = await page.evaluate((s) => {
+      try { const el = document.querySelector(s); return !!el && el.matches('input[type=file]') } catch { return false }
+    }, p.selector)
+    if (isFileInput) return page.setInputFiles(p.selector, p.filePath)
+  }
+  const inputs = await page.locator('input[type=file]').elementHandles()
+  if (inputs.length === 1) return inputs[0].setInputFiles(p.filePath)
+  if (p.selector) {
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator(p.selector).click()])
+    return chooser.setFiles(p.filePath)
+  }
+  throw new Error('Upload File: could not find a file input. Set the Upload/Browse button in the step.')
+}
+
 export async function replayStep(page, action, p, baseUrl) {
   switch (action) {
     case 'navigate':           return page.goto(resolveUrl(p.url, baseUrl))
@@ -61,7 +85,7 @@ export async function replayStep(page, action, p, baseUrl) {
     case 'type':               return page.type(p.selector, p.value ?? '', { delay: p.delay ?? 50 })
     case 'clearInput':         return page.fill(p.selector, '')
     case 'pressKey':           return page.press(p.selector || 'body', p.key)
-    case 'uploadFile':         return page.setInputFiles(p.selector, p.filePath)
+    case 'uploadFile':         return smartUpload(page, p)
     case 'dragAndDrop':        return page.dragAndDrop(p.source, p.target)
 
     case 'dragByOffset': {

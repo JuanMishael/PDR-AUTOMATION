@@ -4,6 +4,12 @@ import { installSelectorGen, pickerListener } from '../core/injectedScripts'
 import { refocusMainWindow } from '../core/windowFocus'
 import { launchSessionContext, clearSession } from '../core/browserSession'
 
+// Cap how long a single replayed setup step waits on a (possibly stale) element. The
+// replay is only repositioning to the target — failing in a few seconds lets the tester
+// take over and pick by hand, instead of stalling the full profile timeout. Cap, not
+// floor: a profile with a shorter timeout keeps its own value.
+const REPLAY_ACTION_TIMEOUT_CAP = 8000
+
 export function registerElementPickerHandlers() {
   // Log out / switch users — wipes the shared persistent browser profile.
   ipcMain.handle('session:clear', () => clearSession())
@@ -46,9 +52,19 @@ export function registerElementPickerHandlers() {
       // The listener stays disarmed during replay so generated clicks aren't captured.
       let ranSteps = 0
       if (runSteps && steps.length) {
+        // Fail fast on a stale setup step (don't stall the full timeout); give slow pages
+        // the full navigation budget.
+        page.setDefaultTimeout(Math.min(timeout, REPLAY_ACTION_TIMEOUT_CAP))
+        page.setDefaultNavigationTimeout(timeout)
         const replay = await replaySteps(page, steps, baseUrl)
-        if (!replay.ok) return replay
-        ranSteps = replay.ranSteps
+        ranSteps = replay.ranSteps || 0
+        // A replay miss is NON-FATAL: keep the browser open at wherever it got to so the
+        // tester can navigate to the element by hand and still pick it, instead of aborting.
+        // Disable timeouts (page + whole context, for new tabs/popups) for the manual pick.
+        page.setDefaultTimeout(0)
+        page.setDefaultNavigationTimeout(0)
+        context.setDefaultTimeout(0)
+        context.setDefaultNavigationTimeout(0)
       }
 
       // Arm the picker on the final page and wait for the tester's click.

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { ACTION_DEFS, ACTION_CATEGORIES, ACTIONS_BY_CATEGORY } from '../components/actionDefs'
 import { confirmDialog } from '../lib/confirm'
+import { TOKEN_GROUPS } from '../lib/tokens'
 
 // Default keyword per action category
 const CATEGORY_KEYWORD = {
@@ -470,7 +471,7 @@ function SelectorChooser({ title, candidates, onUse, onFallback, onClose }) {
 
 // ─── Canvas Step ─────────────────────────────────────────────────────────────
 
-function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGroupEnd, profile, priorSteps = [], collections = [], indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, dragGroupActive = false, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
+function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGroupEnd, profile, priorSteps = [], collections = [], groupCollectionId = null, indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, dragGroupActive = false, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
   // Drag-and-drop wiring shared by the normal card and the group cards.
   const dragging = dragId === step.id || (dragGroupActive && selected)
   const showDropLine = overId === step.id && dragId && dragId !== step.id
@@ -733,7 +734,7 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                     onChange={e => updateParam(p.key, e.target.value)} style={{ fontSize: 12 }} />
                   {collections.length > 0 && (
                     <div style={{ justifySelf: 'end' }}>
-                      <TokenButton collections={collections} onInsert={tok => updateParam(p.key, (params[p.key] || '') + tok)} />
+                      <TokenButton collections={collections} groupCollectionId={groupCollectionId} onInsert={tok => updateParam(p.key, (params[p.key] || '') + tok)} />
                     </div>
                   )}
                 </div>
@@ -764,7 +765,7 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                     onChange={e => updateParam(p.key, e.target.value)} style={{ fontSize: 12, flex: 1, minWidth: 0 }} />
                   {/* Token insert — only where a {{token}} makes sense (skip numeric params). */}
                   {collections.length > 0 && p.type !== 'number' && (
-                    <TokenButton collections={collections} onInsert={tok => updateParam(p.key, (params[p.key] || '') + tok)} />
+                    <TokenButton collections={collections} groupCollectionId={groupCollectionId} onInsert={tok => updateParam(p.key, (params[p.key] || '') + tok)} />
                   )}
                 </div>
               )}
@@ -788,19 +789,15 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
   )
 }
 
-// Insert a Test Data token ({{Collection.field}}) or a dynamic value into a param —
-// so testers don't have to remember the token syntax. Appends to the current value.
-const DYNAMIC_TOKENS = [
-  { label: 'Unique ref', token: '{{unique.ref}}' },
-  { label: 'Unique email', token: '{{unique.email}}' },
-  { label: 'Unique number', token: '{{unique.number}}' },
-  { label: 'Timestamp', token: '{{unique.timestamp}}' },
-  { label: 'Faker — first name', token: '{{faker.person.firstName}}' },
-  { label: 'Faker — email', token: '{{faker.internet.email}}' }
-]
-
-function TokenButton({ collections, onInsert }) {
+// Insert a Test Data token ({{Collection.field}}) or a dynamic value into a param — so
+// testers don't have to remember the token syntax. Context-aware: when the step sits inside
+// a repeat group, that group's collection is surfaced first (its fields are the ones that
+// actually vary per pass); other collections collapse behind a toggle so a project with many
+// collections doesn't flood the menu. The "Dynamic" section is the shared catalog (lib/tokens.js).
+function TokenButton({ collections, onInsert, groupCollectionId = null }) {
   const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const [showOthers, setShowOthers] = useState(false)
   const ref = useRef(null)
 
   useEffect(() => {
@@ -810,42 +807,93 @@ function TokenButton({ collections, onInsert }) {
     return () => document.removeEventListener('mousedown', handle)
   }, [open])
 
-  function pick(token) { onInsert(token); setOpen(false) }
+  function pick(token) { onInsert(token); setOpen(false); setQ('') }
+
+  const primary = groupCollectionId != null
+    ? collections.find(c => String(c.id) === String(groupCollectionId)) : null
+  const others = collections.filter(c => c !== primary)
+
+  const needle = q.trim().toLowerCase()
+  const fieldHit = f => !needle || f.name.toLowerCase().includes(needle)
+  // A collection is shown if its name OR any field matches; when only the name matches we keep
+  // all its fields, otherwise just the matching ones.
+  const fieldsFor = c => (needle && !c.name.toLowerCase().includes(needle)) ? c.fields.filter(fieldHit) : c.fields
+  const colHit = c => !needle || c.name.toLowerCase().includes(needle) || c.fields.some(fieldHit)
+  const dynGroups = TOKEN_GROUPS
+    .map(g => ({ ...g, tokens: g.tokens.filter(t => !needle ||
+      t.token.toLowerCase().includes(needle) || t.label.toLowerCase().includes(needle) || t.desc.toLowerCase().includes(needle)) }))
+    .filter(g => g.tokens.length)
+
+  // Collections are collapsed by default — only the repeat group's collection (the "primary")
+  // is promoted, because that's the only one whose fields actually vary per pass. Every other
+  // collection token just yields the field's stored default, so they live behind a toggle (or
+  // a search) rather than flooding the menu. Searching always reveals them.
+  const othersVisible = others.filter(colHit)
+  const showOtherList = showOthers || !!needle
 
   const hdr = { fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em',
-    color: 'var(--text-muted)', padding: '6px 10px 2px' }
+    color: 'var(--text-muted)', padding: '8px 10px 2px' }
   const item = { display: 'block', width: '100%', textAlign: 'left', padding: '5px 10px', background: 'none',
     border: 'none', color: 'var(--text)', fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-mono)' }
+  const Field = ({ c, f }) => (
+    <button type="button" style={item} onClick={() => pick(`{{${c.name}.${f.name}}}`)}>{f.name}</button>
+  )
+  const CollectionBlock = ({ c, tag }) => {
+    const fields = fieldsFor(c)
+    return (
+      <div>
+        <div style={hdr}>{c.name}{tag && <span style={{ color: 'var(--accent)', marginLeft: 6 }}>{tag}</span>}</div>
+        {fields.length === 0
+          ? <div style={{ ...item, color: 'var(--text-muted)', cursor: 'default', fontFamily: 'inherit' }}>no fields</div>
+          : fields.map(f => <Field key={f.id} c={c} f={f} />)}
+      </div>
+    )
+  }
+
+  const nothing = (primary ? fieldsFor(primary).length === 0 : true) && othersVisible.length === 0 && dynGroups.length === 0
 
   return (
     <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
-      <button type="button" title="Insert Test Data token" onClick={() => setOpen(o => !o)}
+      <button type="button" title="Insert a token" onClick={() => setOpen(o => !o)}
         style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6,
           color: 'var(--accent)', padding: '5px 8px', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
         {'{ }'}
       </button>
       {open && (
-        <div style={{ position: 'absolute', top: '100%', right: 0, zIndex: 30, marginTop: 4, minWidth: 200, maxHeight: 280,
-          overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6,
-          boxShadow: '0 6px 20px rgba(0,0,0,.18)' }}>
-          {collections.map(c => (
-            <div key={c.id}>
-              <div style={hdr}>{c.name}</div>
-              {c.fields.length === 0 ? (
-                <div style={{ ...item, color: 'var(--text-muted)', cursor: 'default', fontFamily: 'inherit' }}>no fields</div>
-              ) : c.fields.map(f => (
-                <button key={f.id} type="button" style={item} onClick={() => pick(`{{${c.name}.${f.name}}}`)}>
-                  {f.name}
-                </button>
-              ))}
+        <div style={{ position: 'absolute', top: '100%', right: 0, zIndex: 30, marginTop: 4, width: 250, maxHeight: 320,
+          display: 'flex', flexDirection: 'column', background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 6, boxShadow: '0 6px 20px rgba(0,0,0,.18)' }}>
+          {others.length > 0 && (
+            <div style={{ padding: 6, borderBottom: '1px solid var(--border)' }}>
+              <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 Search tokens…"
+                style={{ width: '100%', fontSize: 12 }} />
             </div>
-          ))}
-          <div style={hdr}>Dynamic</div>
-          {DYNAMIC_TOKENS.map(d => (
-            <button key={d.token} type="button" style={{ ...item, fontFamily: 'inherit' }} onClick={() => pick(d.token)}>
-              {d.label}
-            </button>
-          ))}
+          )}
+          <div style={{ overflowY: 'auto' }}>
+            {primary && <CollectionBlock c={primary} tag="· this group's set" />}
+
+            {showOtherList && othersVisible.map(c => <CollectionBlock key={c.id} c={c} />)}
+            {!showOthers && !needle && others.length > 0 && (
+              <button type="button" onClick={() => setShowOthers(true)}
+                style={{ ...item, color: 'var(--accent)', fontFamily: 'inherit', fontSize: 11 }}>
+                + {primary ? 'Other collections' : 'Collections'} ({others.length}) — fields use their stored default
+              </button>
+            )}
+
+            {dynGroups.map(g => (
+              <div key={g.name}>
+                <div style={hdr}>{g.name}</div>
+                {g.tokens.map(t => (
+                  <button key={t.token} type="button" style={{ ...item, fontFamily: 'inherit' }}
+                    title={t.token} onClick={() => pick(t.token)}>{t.label}</button>
+                ))}
+              </div>
+            ))}
+
+            {nothing && (
+              <div style={{ ...item, color: 'var(--text-muted)', cursor: 'default', fontFamily: 'inherit' }}>No matches.</div>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -1299,6 +1347,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [shareMsg, setShareMsg]       = useState(null)
   const [dupMsg, setDupMsg]           = useState(null)
   const [recording, setRecording]     = useState(false)
+  const [recNotice, setRecNotice]     = useState(null)  // non-blocking replay heads-up (never a native modal)
   const [expandedIds, setExpandedIds] = useState(() => new Set())
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set())   // groupStart ids hidden
@@ -1719,6 +1768,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     if (!active || active.locked || !profile) return
     if (!profile.base_url?.trim()) { alert('Set a Base URL in this profile before recording.'); return }
     setRecording(true)
+    setRecNotice(null)
 
     // Track everything created this session so the tester can discard the whole
     // recording on Stop (e.g. a misclick run, or the flow errored partway).
@@ -1755,9 +1805,11 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       })
     }
     window.api.onRecorderStep(onStep)
-    // Non-fatal heads-up if some prior steps couldn't replay (stale selector etc.) —
-    // the browser stays open so the tester can keep going by hand.
-    window.api.onRecorderNotice?.(msg => alert('Recorder: ' + msg))
+    // Non-fatal heads-up if some prior steps couldn't replay (stale selector etc.) — the
+    // browser stays open so the tester keeps finding components by hand. Show it as a
+    // dismissible toast, NEVER a native modal: a blocking alert here steals focus and
+    // interrupts the hunt before they've even pressed Start.
+    window.api.onRecorderNotice?.(msg => setRecNotice(msg))
 
     try {
       const res = await window.api.startRecording({
@@ -1789,6 +1841,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       window.api.offRecorderStep()
       window.api.offRecorderNotice?.()
       setRecording(false)
+      setRecNotice(null)   // clear the replay heads-up once the session ends
     }
   }
 
@@ -1855,6 +1908,19 @@ export default function ScenarioBuilder({ navigate, ctx }) {
             }}>
               {recording ? '● Recording…' : '● Record'}
             </button>
+          )}
+          {recNotice && (
+            <div style={{
+              position: 'fixed', left: '50%', bottom: 22, transform: 'translateX(-50%)', zIndex: 200,
+              maxWidth: 540, display: 'flex', alignItems: 'flex-start', gap: 10,
+              padding: '11px 14px', borderRadius: 10, fontSize: 13, lineHeight: 1.5,
+              background: 'var(--warn-bg)', border: '1.5px solid var(--warn-line)',
+              color: 'var(--ink)', boxShadow: '0 6px 20px rgba(0,0,0,.18)'
+            }}>
+              <span style={{ flex: 1 }}>{recNotice} <span style={{ color: 'var(--ink-soft)' }}>— keep going; pick up from here by hand.</span></span>
+              <button onClick={() => setRecNotice(null)} title="Dismiss"
+                style={{ background: 'none', border: 'none', color: 'var(--ink-soft)', fontSize: 16, cursor: 'pointer', lineHeight: 1, flexShrink: 0 }}>×</button>
+            </div>
           )}
           {active && steps.length > 0 && (
             <button onClick={exportTestCase} disabled={exporting} style={{
@@ -2118,6 +2184,25 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                   </div>
                 ) : (
                   (() => {
+                    // Map each step to the collection of its nearest enclosing *repeat* group, so
+                    // the token picker can surface that collection's fields first (a {{Collection.field}}
+                    // only resolves to a set's row while repeating over that collection).
+                    const enclosingCol = {}
+                    {
+                      const stack = []
+                      const top = () => stack.slice().reverse().find(Boolean) || null
+                      for (const s of steps) {
+                        if (isGroupStart(s.action)) {
+                          enclosingCol[s.id] = top()
+                          const sp = stepParams(s)
+                          stack.push(sp.repeat ? (sp.collectionId || null) : null)
+                        } else if (isGroupEnd(s.action)) {
+                          stack.pop(); enclosingCol[s.id] = top()
+                        } else {
+                          enclosingCol[s.id] = top()
+                        }
+                      }
+                    }
                     let depth = 0
                     let hideDepth = null      // depth to return to before un-hiding (nest-aware)
                     const out = []
@@ -2139,6 +2224,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                         <CanvasStep key={step.id} step={step} index={i} total={steps.length} indent={indent}
                           onChange={updateStep} onDelete={deleteStep} onMove={moveStep} onRemoveGroupEnd={removeGroupEnd}
                           profile={profile} priorSteps={steps.slice(0, i)} collections={collections}
+                          groupCollectionId={enclosingCol[step.id]}
                           groupCollapsed={collapsedGroups.has(step.id)} onToggleGroup={() => toggleGroupCollapse(step.id)}
                           onUngroup={() => ungroupGroup(step.id)}
                           expanded={expandedIds.has(step.id)} onToggleExpand={() => toggleExpand(step.id)}

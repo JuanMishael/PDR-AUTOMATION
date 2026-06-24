@@ -33,7 +33,9 @@ export async function runWeb({ runId, profile, scenarios = [], settings = {}, da
   mkdirSync(outputDir, { recursive: true })
   const scriptPath = join(outputDir, `run.js`)
 
-  const script = generateScript({ profile, scenarios, settings, outputDir, dataContext })
+  // Files the tested app downloads (CSV exports, etc.) land in the OS Downloads folder.
+  const downloadsDir = app.getPath('downloads')
+  const script = generateScript({ profile, scenarios, settings, outputDir, dataContext, downloadsDir })
   writeFileSync(scriptPath, script, 'utf-8')
 
   return new Promise((resolve) => {
@@ -74,6 +76,8 @@ export async function runWeb({ runId, profile, scenarios = [], settings = {}, da
             current = { id: msg.id || null, name: msg.name || 'Scenario', status: 'passed', stepsTotal: 0, stepsPassed: 0, stepsFailed: 0 }
             scenarioResults.push(current)
             onLog({ type: 'info', text: `▶ Scenario: ${msg.name}` })
+          } else if (msg.type === 'download') {
+            onLog({ type: 'info', text: `⬇ Saved download: ${msg.name} → ${msg.path}` })
           } else if (msg.type === 'done') {
             // final summary already in results
           }

@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect, useMemo } from 'react'
 import { Icon } from '../components/SketchDefs'
 import { ACTION_CATEGORIES, ACTIONS_BY_CATEGORY } from '../components/actionDefs'
+import { TOKEN_GROUPS } from '../lib/tokens'
 
 // In-app user manual. Everything a (non-technical) QA needs to know about the
 // app lives here: what it is, the workflow, every feature, the step catalog,
@@ -366,32 +367,32 @@ export default function Help() {
               </p>
             </div>
             <p style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
-              Instead, hand the file straight to the hidden <Code>{'<input type="file">'}</Code> that the button is
-              really driving. The <strong>Upload File</strong> step does exactly this — it sets the file directly and
-              fires the same change event the page listens for, so the upload proceeds just as if a person picked it.
+              Good news: the <strong>Upload File</strong> step is smart about this, so you usually don't have to think
+              about the hidden input at all. It figures out the right target for you:
             </p>
             <div className="card" style={{ marginBottom: 12 }}>
-              <Step n="1" title="Add an Upload File step">
-                From the palette (Interaction → <strong>Upload File</strong>). Skip the visible Browse/Upload button entirely.
+              <Step n="1" title="Add an Upload File step + set the file path">
+                Most of the time that's it. If the page has a single file input (even a hidden one), the step finds and
+                uses it automatically — leave the selector blank.
               </Step>
-              <Step n="2" title="Point it at the hidden file input">
-                In <strong>File Input Selector</strong>, use <Code>input[type=file]</Code> (works when there's only one
-                on the page), or the input's own id if it has one. To find it: in the running app, right-click near the
-                button → Inspect, and look for a nearby <Code>{'<input type="file" ... style="display:none">'}</Code>.
-                The 🎯 Picker can't grab it (you can't click an invisible element), so type this selector by hand.
+              <Step n="2" title="If the page has several uploads — name the button">
+                Put the visible Upload/Browse button in the <strong>Upload button…</strong> field (e.g.
+                <Code>#BIMSBUfileUpload</Code>). The step clicks it and catches the file dialog it opens — you can even
+                🎯 Pick that button since it's visible.
               </Step>
-              <Step n="3" title="Set the file path">
-                In <strong>File Path</strong>, put the full path to the file, e.g. <Code>C:\test-data\bims.csv</Code>.
+              <Step n="3" title="(Advanced) Point straight at the file input">
+                If you know it, put the hidden <Code>{'<input type="file">'}</Code>'s selector (e.g.
+                <Code>#BIMSBUuploadhidden</Code>) in <strong>File input selector</strong>. The file is set directly.
               </Step>
               <Step n="4" title="(Optional) Assert it registered">
-                Add an <strong>Assert Input Value</strong> on the read-only display box (e.g. <Code>#BIMSfileDisplay</Code>)
-                to confirm the filename shows up after the upload.
+                Add an <strong>Assert Input Value</strong> on the read-only display box (e.g. <Code>#BIMSBUfileDisplay</Code>)
+                to confirm the filename appears, then a Click on the submit button (e.g. <strong>BULK UPLOAD</strong>).
               </Step>
             </div>
             <p style={{ fontSize: 12.5, color: 'var(--ink-faint)' }}>
-              Rare case: a few sites only <em>create</em> the file input the moment you click the button. If you inspect
-              and there's genuinely no <Code>{'<input type="file">'}</Code> in the page until then, the Upload File step
-              can't find it — tell your QA lead, as that pattern needs a different (file-chooser) handler.
+              One thing to avoid: don't rely on the read-only display box (<Code>{'<input type="text" readonly>'}</Code>)
+              as the target by itself — it isn't a file input. The step will still try to recover (it falls back to the
+              page's lone file input), but naming the Upload button is the reliable choice when several uploads exist.
             </p>
           </Section>
 
@@ -420,13 +421,24 @@ export default function Help() {
             subtitle="Dynamic values you can drop into any step or default.">
             <div className="card">
               <Define term={<Code>{'{{Collection.field}}'}</Code>}>A value from a test-data set, e.g. <Code>{'{{Login.username}}'}</Code>.</Define>
-              <Define term={<Code>{'{{unique.email}}'}</Code>}>A one-off unique email — never collides between runs.</Define>
-              <Define term={<Code>{'{{unique.ref}}'}</Code>}>A unique reference string (also <Code>unique.number</Code>, <Code>unique.timestamp</Code>).</Define>
-              <Define term={<Code>{'{{faker.person.firstName}}'}</Code>}>Realistic fake data via Faker (names, addresses, …).</Define>
-              <Define term={<Code>{'{{faker.internet.email}}'}</Code>}>A realistic random email address.</Define>
             </div>
-            <p style={{ fontSize: 12.5, color: 'var(--ink-faint)', marginTop: 12 }}>
-              The step editor has a token picker (the <Kbd>{'{ }'}</Kbd> button) so you don't have to remember the syntax.
+            <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 14, marginBottom: 8 }}>
+              You don't have to memorize any of these — click the <Kbd>{'{ }'}</Kbd> button beside any value box
+              (in a step or in Test Data) to search and insert one. The full menu:
+            </p>
+            {TOKEN_GROUPS.map(g => (
+              <div key={g.name} className="card" style={{ marginBottom: 10 }}>
+                <div style={{ fontFamily: 'var(--font-hand)', fontSize: 17, color: 'var(--ink)' }}>{g.name}</div>
+                {g.hint && <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginBottom: 8 }}>{g.hint}</div>}
+                {g.tokens.map(t => (
+                  <Define key={t.token} term={<Code>{t.token}</Code>}>{t.desc}</Define>
+                ))}
+              </div>
+            ))}
+            <p style={{ fontSize: 12.5, color: 'var(--ink-faint)', marginTop: 4 }}>
+              <strong>faker</strong> gives realistic random data; <strong>unique</strong> guarantees a value won't
+              collide between runs. Any other <Code>{'{{faker.*}}'}</Code> path from the
+              {' '}<a href="https://fakerjs.dev/api/" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-ink)' }}>Faker catalog</a> also works.
             </p>
           </Section>
 

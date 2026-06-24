@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '../components/SketchDefs'
 import { confirmDialog } from '../lib/confirm'
+import TokenField from '../components/TokenField'
 
 // Fixed intent groups (Phase 1). Each data set is tagged into exactly one.
 const GROUPS = [
@@ -261,7 +262,7 @@ function FieldsSection({ collection, reload }) {
         </div>
       )}
       <p style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 12, marginBottom: 0 }}>
-        Default fills in when a data set leaves the field blank. Tokens: <code>{'{{faker.internet.email}}'}</code>, <code>{'{{faker.person.firstName}}'}</code>, <code>{'{{unique.email}}'}</code>, <code>{'{{unique.ref}}'}</code>.
+        Default fills in when a data set leaves the field blank. Click the <code>{'{ }'}</code> button in any value box to insert a token — random names, emails, sentences, dates and more.
         Give a field a <strong>selector</strong> and you can drop the whole form into a scenario in one click (▦ Fill form).
       </p>
     </div>
@@ -307,9 +308,8 @@ function FieldRow({ field, formUrl, reload }) {
       <select value={draft.type} onChange={e => setDraft(d => ({ ...d, type: e.target.value }))} onBlur={() => changed && persist()}>
         {FIELD_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
       </select>
-      <input value={draft.default_token} placeholder="(optional)"
-        onChange={e => setDraft(d => ({ ...d, default_token: e.target.value }))} onBlur={() => changed && persist()}
-        style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+      <TokenField value={draft.default_token || ''} placeholder="(optional)"
+        onChange={v => setDraft(d => ({ ...d, default_token: v }))} onBlur={() => changed && persist()} />
       <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
         <input value={draft.selector || ''} placeholder={pickMsg || '#email or 🎯 Pick'} title={pickMsg || ''}
           onChange={e => setDraft(d => ({ ...d, selector: e.target.value }))} onBlur={() => changed && persist()}
@@ -395,9 +395,8 @@ function SetRow({ set, fields, reload }) {
         {fields.map(f => (
           <div key={f.id}>
             <label style={{ fontSize: 11, color: 'var(--ink-soft)', fontFamily: 'var(--font-mono)' }}>{f.name}</label>
-            <input value={values[f.name] ?? ''} placeholder={f.default_token || '(default)'}
-              onChange={e => setVal(f.name, e.target.value)} onBlur={() => persist()}
-              style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+            <TokenField value={values[f.name] ?? ''} placeholder={f.default_token || '(default)'}
+              onChange={v => setVal(f.name, v)} onBlur={() => persist()} />
           </div>
         ))}
       </div>

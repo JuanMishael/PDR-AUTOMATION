@@ -13,7 +13,11 @@
       "Bash(node -e ' *)",
       "PowerShell(npx electron-vite build)",
       "PowerShell(git add src/main/core/scriptGenerator.js src/main/ipc/recorder.js src/preload/index.js src/renderer/src/components/actionDefs.js src/renderer/src/screens/ScenarioBuilder.jsx)",
-      "Bash(npx vite *)"
+      "Bash(npx vite *)",
+      "Bash(node -e \"console.log\\(require\\('@faker-js/faker/package.json'\\).version\\)\")",
+      "Bash(node -e \"const s=require\\('./package.json'\\).scripts; console.log\\(JSON.stringify\\(s,null,2\\)\\)\")",
+      "PowerShell(npm run build)",
+      "PowerShell($bk = \"C:\\\\Users\\\\user\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\d--SIDE-APPS-PDR-AUTOMATION\\\\5de6be7a-1369-4811-bd22-1b6cd090e9e2\\\\scratchpad\\\\mapbk\"; New-Item -ItemType Directory -Force $bk | Out-Null; Copy-Item \"src\\\\main\\\\core\\\\scriptGenerator.js\" \"$bk\\\\scriptGenerator.js\"; Copy-Item \"src\\\\main\\\\core\\\\stepReplay.js\" \"$bk\\\\stepReplay.js\"; Copy-Item \"src\\\\renderer\\\\src\\\\components\\\\actionDefs.js\" \"$bk\\\\actionDefs.js\"; Get-ChildItem $bk | Select-Object Name,Length)"
     ],
     "additionalDirectories": [
       "D:\\SIDE_APPS\\PDR-AUTOMATION\\.git"

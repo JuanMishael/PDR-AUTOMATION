@@ -195,6 +195,51 @@ export async function initDb() {
       sort_order    INTEGER NOT NULL DEFAULT 0,
       created_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- API profiles (profiles.type = 'api'): a Postman/SoapUI-style request collection.
+    -- Separate from scenarios/steps; runs reuse the history table (API-shaped log).
+    CREATE TABLE IF NOT EXISTS api_requests (
+      id          TEXT PRIMARY KEY,
+      profile_id  TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      name        TEXT NOT NULL,
+      description TEXT,
+      method      TEXT NOT NULL DEFAULT 'GET',
+      url         TEXT NOT NULL DEFAULT '',
+      headers     TEXT NOT NULL DEFAULT '[]',   -- JSON [{key,value,enabled}]
+      query       TEXT NOT NULL DEFAULT '[]',   -- JSON [{key,value,enabled}]
+      body        TEXT NOT NULL DEFAULT '',
+      body_type   TEXT NOT NULL DEFAULT 'none', -- none|json|xml|soap|form|raw
+      soap_action TEXT NOT NULL DEFAULT '',
+      extract     TEXT NOT NULL DEFAULT '[]',   -- JSON [{var,from:'json'|'xml'|'header'|'status',path}]
+      assertions  TEXT NOT NULL DEFAULT '[]',   -- JSON [{type,expected}]
+      sort_order  INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    -- Profile-scoped shared variable store. Extractions (e.g. a token) are written back here
+    -- so a value fetched by one request is reused by the next — across interactive Sends too.
+    CREATE TABLE IF NOT EXISTS api_variables (
+      id         TEXT PRIMARY KEY,
+      profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      name       TEXT NOT NULL,
+      value      TEXT NOT NULL DEFAULT '',
+      secret     INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+    -- One auth/token policy per profile: which request mints the token, where the token lives
+    -- in its response, how to inject it, and when to silently re-fetch + retry.
+    CREATE TABLE IF NOT EXISTS api_auth (
+      id               TEXT PRIMARY KEY,
+      profile_id       TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      type             TEXT NOT NULL DEFAULT 'none', -- none|bearer|basic|apikey
+      token_request_id TEXT,
+      token_path       TEXT NOT NULL DEFAULT '',
+      token_var        TEXT NOT NULL DEFAULT 'token',
+      header_name      TEXT NOT NULL DEFAULT 'Authorization',
+      header_prefix    TEXT NOT NULL DEFAULT 'Bearer ',
+      refetch_on       TEXT NOT NULL DEFAULT '401', -- 401|manual
+      config           TEXT NOT NULL DEFAULT '{}',
+      created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
 
   // --- migrations (idempotent: sql.js throws on duplicate column, which we ignore) ---

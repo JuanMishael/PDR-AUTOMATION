@@ -1,0 +1,637 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { confirmDialog } from '../lib/confirm'
+
+const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
+const BODY_TYPES = [['none', 'None'], ['json', 'JSON'], ['xml', 'XML'], ['soap', 'SOAP'], ['form', 'Form'], ['raw', 'Raw']]
+const EXTRACT_FROM = [['json', 'JSON body'], ['xml', 'XML body'], ['header', 'Header'], ['status', 'Status code']]
+
+const methodColor = (m) => ({
+  GET: 'var(--busy)', POST: 'var(--ok)', PUT: 'var(--warn)', PATCH: 'var(--warn)', DELETE: 'var(--bad)'
+}[m] || 'var(--ink-soft)')
+
+// Pretty-print a response body when it's JSON; otherwise return as-is.
+function pretty(body) {
+  if (!body) return ''
+  const t = body.trim()
+  if (t.startsWith('{') || t.startsWith('[')) {
+    try { return JSON.stringify(JSON.parse(t), null, 2) } catch { /* fall through */ }
+  }
+  return body
+}
+
+// Editable key/value/enabled rows (headers & query params).
+function KeyValueEditor({ rows, onChange, placeholder = ['key', 'value'] }) {
+  const list = Array.isArray(rows) ? rows : []
+  const set = (i, patch) => onChange(list.map((r, idx) => idx === i ? { ...r, ...patch } : r))
+  const add = () => onChange([...list, { key: '', value: '', enabled: true }])
+  const del = (i) => onChange(list.filter((_, idx) => idx !== i))
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      {list.map((r, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input type="checkbox" checked={r.enabled !== false} style={{ width: 'auto' }}
+            onChange={e => set(i, { enabled: e.target.checked })} />
+          <input value={r.key} placeholder={placeholder[0]} style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }}
+            onChange={e => set(i, { key: e.target.value })} />
+          <input value={r.value} placeholder={placeholder[1]} style={{ flex: 2, fontFamily: 'var(--font-mono)', fontSize: 12 }}
+            onChange={e => set(i, { value: e.target.value })} />
+          <button className="btn-ghost" style={{ padding: '2px 8px' }} onClick={() => del(i)}>✕</button>
+        </div>
+      ))}
+      <button className="btn-ghost" style={{ alignSelf: 'start', padding: '4px 10px', fontSize: 11 }} onClick={add}>+ Add</button>
+    </div>
+  )
+}
+
+export default function ApiWorkspace({ profile, profileName, navigate }) {
+  const [requests, setRequests] = useState([])
+  const [activeId, setActiveId] = useState(null)
+  const [draft, setDraft] = useState(null)         // editable copy of the active request
+  const [variables, setVariables] = useState([])
+  const [auth, setAuth] = useState({ type: 'none', token_request_id: '', token_var: 'token', token_path: '', header_name: 'Authorization', header_prefix: 'Bearer ', refetch_on: '401' })
+  const [tab, setTab] = useState('body')           // body | headers | params | extract
+  const [response, setResponse] = useState(null)
+  const [sending, setSending] = useState(false)
+  const [respTab, setRespTab] = useState('body')   // body | headers | assertions
+  const [savedFlash, setSavedFlash] = useState(false)
+  const [run, setRun] = useState(null)             // { logs:[], summary }
+  const [wsdl, setWsdl] = useState(null)           // { url, busy, msg } when the import modal is open
+  const saveTimer = useRef(null)
+
+  useEffect(() => { loadAll() }, [profile.id])
+
+  async function loadAll() {
+    const [reqs, vars, a] = await Promise.all([
+      window.api.getApiRequests(profile.id),
+      window.api.getApiVariables(profile.id),
+      window.api.getApiAuth(profile.id)
+    ])
+    setRequests(reqs)
+    setVariables(vars)
+    if (a) setAuth({ ...a, token_request_id: a.token_request_id || '' })
+    if (reqs.length && !activeId) select(reqs[0])
+  }
+
+  // ── Request selection / drafting ──────────────────────────────────────────
+  function parseReq(r) {
+    const arr = (v, d = []) => { try { return Array.isArray(v) ? v : JSON.parse(v || JSON.stringify(d)) } catch { return d } }
+    return { ...r, headers: arr(r.headers), query: arr(r.query), extract: arr(r.extract), assertions: arr(r.assertions) }
+  }
+
+  function select(r) {
+    flushSave()
+    setActiveId(r.id)
+    setDraft(parseReq(r))
+    setResponse(null)
+  }
+
+  function patch(p) {
+    setDraft(d => {
+      const next = { ...d, ...p }
+      scheduleSave(next)
+      return next
+    })
+  }
+
+  function scheduleSave(next) {
+    clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => saveDraft(next), 500)
+  }
+  function flushSave() {
+    clearTimeout(saveTimer.current)
+    if (draft) saveDraft(draft)
+  }
+  async function saveDraft(d) {
+    if (!d?.id) return
+    await window.api.saveApiRequest(d)
+    setRequests(rs => rs.map(r => r.id === d.id ? { ...r, ...d, headers: JSON.stringify(d.headers), query: JSON.stringify(d.query) } : r))
+    setSavedFlash(true); setTimeout(() => setSavedFlash(false), 800)
+  }
+
+  async function newRequest() {
+    const res = await window.api.saveApiRequest({
+      profile_id: profile.id, name: 'New request', method: 'GET',
+      url: profile.base_url || '', sort_order: requests.length
+    })
+    const reqs = await window.api.getApiRequests(profile.id)
+    setRequests(reqs)
+    const created = reqs.find(r => r.id === res.id)
+    if (created) select(created)
+  }
+
+  async function deleteRequest(id) {
+    if (!(await confirmDialog('Delete this request?', { confirmText: 'Delete' }))) return
+    await window.api.deleteApiRequest(id)
+    const reqs = await window.api.getApiRequests(profile.id)
+    setRequests(reqs)
+    if (activeId === id) { setActiveId(null); setDraft(null); if (reqs[0]) select(reqs[0]) }
+  }
+
+  // ── Send / Run ─────────────────────────────────────────────────────────────
+  async function send() {
+    if (!draft) return
+    flushSave()
+    setSending(true); setResponse(null)
+    try {
+      const res = await window.api.sendApiRequest(draft.id)
+      setResponse(res)
+      setRespTab(res.assertions?.length ? 'assertions' : 'body')
+      if (res.variables) await refreshVars()
+    } catch (e) {
+      setResponse({ response: { error: e?.message || 'Send failed', status: 0, timeMs: 0 } })
+    } finally { setSending(false) }
+  }
+
+  async function refreshVars() {
+    setVariables(await window.api.getApiVariables(profile.id))
+  }
+
+  // Add an extraction rule from a clicked response field, then jump to the Extract tab.
+  function addExtraction(rule) {
+    if (!draft) return
+    const list = draft.extract || []
+    const exists = list.some(e => e.var === rule.var && e.path === rule.path && e.from === rule.from)
+    if (!exists) patch({ extract: [...list, rule] })
+    setTab('extract')
+  }
+
+  async function runCollection() {
+    flushSave()
+    setRun({ logs: [], summary: null })
+    window.api.onRunLog(d => {
+      if (d.type === 'step' || d.type === 'info' || d.type === 'error')
+        setRun(r => r ? { ...r, logs: [...r.logs, d] } : r)
+    })
+    window.api.onRunComplete(summary => {
+      setRun(r => r ? { ...r, summary } : r)
+      window.api.offRunLog(); window.api.offRunComplete()
+      refreshVars()
+    })
+    const res = await window.api.runApiCollection(profile.id)
+    if (res?.error) {
+      setRun(r => ({ ...r, logs: [...(r?.logs || []), { type: 'error', text: res.error }], summary: { status: 'failed' } }))
+      window.api.offRunLog(); window.api.offRunComplete()
+    }
+  }
+
+  // ── Variables ───────────────────────────────────────────────────────────────
+  async function saveVar(v) { await window.api.saveApiVariable({ ...v, profile_id: profile.id }); refreshVars() }
+  async function addVar() { await window.api.saveApiVariable({ profile_id: profile.id, name: 'newVar', value: '', sort_order: variables.length }); refreshVars() }
+  async function delVar(id) { await window.api.deleteApiVariable(id); refreshVars() }
+
+  // ── Auth ─────────────────────────────────────────────────────────────────────
+  function patchAuth(p) {
+    const next = { ...auth, ...p }
+    setAuth(next)
+    window.api.saveApiAuth({ ...next, profile_id: profile.id })
+  }
+
+  // ── WSDL import ───────────────────────────────────────────────────────────
+  async function importWsdl() {
+    const url = (wsdl.url || '').trim()
+    if (!url) return
+    setWsdl(w => ({ ...w, busy: true, msg: null }))
+    const res = await window.api.importWsdl(profile.id, url)
+    if (res?.error) {
+      setWsdl(w => ({ ...w, busy: false, msg: `✗ ${res.error}` }))
+      return
+    }
+    const reqs = await window.api.getApiRequests(profile.id)
+    setRequests(reqs)
+    setWsdl({ url, busy: false, msg: `✓ Imported ${res.count} operation${res.count === 1 ? '' : 's'} from ${res.endpoint || 'service'}` })
+    // Jump to the first newly-imported request.
+    const created = reqs.find(r => r.name === res.operations?.[0])
+    if (created) select(created)
+  }
+
+  useEffect(() => () => { window.api.offRunLog?.(); window.api.offRunComplete?.() }, [])
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 80px)', overflow: 'hidden' }}>
+      {/* Top bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexShrink: 0 }}>
+        <div>
+          <h1 style={{ fontSize: 20, fontWeight: 800 }}>
+            API Workspace <span className="badge badge-warn" style={{ fontSize: 10, verticalAlign: 'middle' }}>BETA</span>
+          </h1>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 2 }}>
+            Profile: <strong>{profileName || profile.name}</strong> · still in progress — see Help → API Profiles
+          </p>
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button className="btn-ghost" title="Generate a collection from a WCF/SOAP service's ?wsdl URL"
+            onClick={() => setWsdl({ url: '', busy: false, msg: null })}>⬇ Import WSDL</button>
+          <button className="btn-primary" onClick={runCollection} disabled={!requests.length}>▶ Run collection</button>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 14, flex: 1, minHeight: 0 }}>
+        {/* ── Left: collection + variables + auth ── */}
+        <div style={{ width: 270, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+          <div className="card" style={{ padding: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+              <span className="eyebrow">Requests</span>
+              <button className="btn-ghost" style={{ marginLeft: 'auto', padding: '2px 10px', fontSize: 11 }} onClick={newRequest}>＋ New</button>
+            </div>
+            {requests.length === 0
+              ? <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>No requests yet.</p>
+              : <div style={{ display: 'grid', gap: 4 }}>
+                  {requests.map(r => (
+                    <div key={r.id} onClick={() => select(r)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
+                        background: r.id === activeId ? 'var(--accent-soft)' : 'transparent' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 800, color: methodColor(r.method), width: 38, flexShrink: 0 }}>{r.method}</span>
+                      <span style={{ flex: 1, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+                      <button className="btn-ghost" style={{ padding: '0 6px' }} onClick={e => { e.stopPropagation(); deleteRequest(r.id) }}>✕</button>
+                    </div>
+                  ))}
+                </div>}
+          </div>
+
+          {/* Variables — the shared store */}
+          <div className="card" style={{ padding: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+              <span className="eyebrow">Variables</span>
+              <button className="btn-ghost" style={{ marginLeft: 'auto', padding: '2px 10px', fontSize: 11 }} onClick={addVar}>＋</button>
+            </div>
+            {variables.length === 0
+              ? <p style={{ color: 'var(--text-muted)', fontSize: 11, margin: 0 }}>Extracted values (e.g. token) land here and feed <code>{'{{name}}'}</code>.</p>
+              : <div style={{ display: 'grid', gap: 6 }}>
+                  {variables.map(v => (
+                    <div key={v.id} style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                      <input value={v.name} style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11 }}
+                        onChange={e => setVariables(vs => vs.map(x => x.id === v.id ? { ...x, name: e.target.value } : x))}
+                        onBlur={e => saveVar({ ...v, name: e.target.value })} />
+                      <input value={v.value} placeholder="—" style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11 }}
+                        onChange={e => setVariables(vs => vs.map(x => x.id === v.id ? { ...x, value: e.target.value } : x))}
+                        onBlur={e => saveVar({ ...v, value: e.target.value })} />
+                      <button className="btn-ghost" style={{ padding: '0 6px' }} onClick={() => delVar(v.id)}>✕</button>
+                    </div>
+                  ))}
+                </div>}
+          </div>
+
+          {/* Auth / token policy */}
+          <div className="card" style={{ padding: 12 }}>
+            <div className="eyebrow" style={{ marginBottom: 8 }}>Auth & token</div>
+            <label style={{ fontSize: 11 }}>Type</label>
+            <select value={auth.type} onChange={e => patchAuth({ type: e.target.value })} style={{ fontSize: 12, marginBottom: 8 }}>
+              <option value="none">None</option>
+              <option value="bearer">Bearer / token</option>
+            </select>
+            {auth.type !== 'none' && (
+              <div style={{ display: 'grid', gap: 6 }}>
+                <label style={{ fontSize: 11 }}>Token request (mints the token)</label>
+                <select value={auth.token_request_id} onChange={e => patchAuth({ token_request_id: e.target.value })} style={{ fontSize: 12 }}>
+                  <option value="">— none —</option>
+                  {requests.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+                <label style={{ fontSize: 11 }}>Store token in variable</label>
+                <input value={auth.token_var} onChange={e => patchAuth({ token_var: e.target.value })}
+                  style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }} placeholder="token" />
+                <label style={{ fontSize: 11 }}>Header</label>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <input value={auth.header_name} onChange={e => patchAuth({ header_name: e.target.value })}
+                    style={{ flex: 1, fontSize: 11, fontFamily: 'var(--font-mono)' }} />
+                  <input value={auth.header_prefix} onChange={e => patchAuth({ header_prefix: e.target.value })}
+                    style={{ flex: 1, fontSize: 11, fontFamily: 'var(--font-mono)' }} placeholder="Bearer " />
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, textTransform: 'none', letterSpacing: 'normal' }}>
+                  <input type="checkbox" checked={auth.refetch_on === '401'} style={{ width: 'auto' }}
+                    onChange={e => patchAuth({ refetch_on: e.target.checked ? '401' : 'manual' })} />
+                  Auto re-fetch token on 401 & retry
+                </label>
+                <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0 }}>
+                  On the token request, add an Extract rule into <code>{auth.token_var}</code>. Other requests inject <code>{auth.header_name}: {auth.header_prefix}{'{{'}{auth.token_var}{'}}'}</code> automatically.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Center: request editor + response ── */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+          {!draft ? (
+            <div className="card empty-state" style={{ padding: 40, textAlign: 'center' }}>
+              <div style={{ fontSize: 28 }}>🔌</div>
+              <p style={{ margin: 0, color: 'var(--text-muted)' }}>Pick a request, or create one with ＋ New.</p>
+            </div>
+          ) : (
+            <>
+              <div className="card" style={{ padding: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                  <input value={draft.name} onChange={e => patch({ name: e.target.value })}
+                    style={{ fontWeight: 700, fontSize: 14, flex: 1 }} placeholder="Request name" />
+                  <span style={{ fontSize: 11, color: savedFlash ? 'var(--ok)' : 'var(--text-muted)' }}>{savedFlash ? '✓ Saved' : ''}</span>
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                  <select value={draft.method} onChange={e => patch({ method: e.target.value })}
+                    style={{ width: 110, fontFamily: 'var(--font-mono)', fontWeight: 700, color: methodColor(draft.method) }}>
+                    {METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                  <input value={draft.url} onChange={e => patch({ url: e.target.value })}
+                    placeholder="https://api.example.com/path  ·  use {{var}} tokens"
+                    style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+                  <button className="btn-primary" onClick={send} disabled={sending} style={{ minWidth: 90 }}>
+                    {sending ? '…' : '▶ Send'}
+                  </button>
+                </div>
+
+                {/* tabs */}
+                <div style={{ display: 'flex', gap: 4, borderBottom: '2px solid var(--line-soft)', marginBottom: 10 }}>
+                  {[['body', 'Body'], ['headers', 'Headers'], ['params', 'Params'], ['extract', `Extract${draft.extract?.length ? ` (${draft.extract.length})` : ''}`]].map(([id, lbl]) => (
+                    <button key={id} className="btn-ghost" onClick={() => setTab(id)}
+                      style={{ padding: '4px 12px', fontSize: 12, borderRadius: '6px 6px 0 0',
+                        borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent',
+                        color: tab === id ? 'var(--accent)' : 'var(--ink-soft)', fontWeight: tab === id ? 700 : 500 }}>{lbl}</button>
+                  ))}
+                </div>
+
+                {tab === 'body' && (
+                  <div>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                      {BODY_TYPES.map(([v, l]) => (
+                        <button key={v} className={draft.body_type === v ? 'btn-primary' : 'btn-ghost'}
+                          style={{ padding: '2px 10px', fontSize: 11 }} onClick={() => patch({ body_type: v })}>{l}</button>
+                      ))}
+                    </div>
+                    {draft.body_type === 'soap' && (
+                      <input value={draft.soap_action || ''} onChange={e => patch({ soap_action: e.target.value })}
+                        placeholder="SOAPAction (e.g. http://tempuri.org/Add)"
+                        style={{ fontFamily: 'var(--font-mono)', fontSize: 11, marginBottom: 8 }} />
+                    )}
+                    {draft.body_type === 'none'
+                      ? <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>No request body.</p>
+                      : <textarea value={draft.body} onChange={e => patch({ body: e.target.value })} rows={10}
+                          placeholder={draft.body_type === 'json' ? '{\n  "key": "value"\n}' : draft.body_type === 'soap' ? '<soap:Envelope>…</soap:Envelope>' : ''}
+                          style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical' }} />}
+                  </div>
+                )}
+                {tab === 'headers' && <KeyValueEditor rows={draft.headers} onChange={v => patch({ headers: v })} placeholder={['Header', 'Value']} />}
+                {tab === 'params' && <KeyValueEditor rows={draft.query} onChange={v => patch({ query: v })} placeholder={['Param', 'Value']} />}
+                {tab === 'extract' && (
+                  <ExtractEditor rows={draft.extract} onChange={v => patch({ extract: v })} />
+                )}
+              </div>
+
+              {/* Response panel */}
+              {response && (
+                <div className="card" style={{ padding: 14 }}>
+                  <ResponseView response={response} respTab={respTab} setRespTab={setRespTab} onPick={addExtraction} />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Run drawer */}
+      {run && (
+        <RunDrawer run={run} onClose={() => setRun(null)} navigate={navigate} />
+      )}
+
+      {/* WSDL import modal */}
+      {wsdl && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(43,43,43,.35)', zIndex: 60,
+          display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => !wsdl.busy && setWsdl(null)}>
+          <div className="card" style={{ width: 520, padding: 20 }} onClick={e => e.stopPropagation()}>
+            <div className="eyebrow" style={{ marginBottom: 6 }}>Import from WSDL</div>
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0 }}>
+              Paste a WCF/SOAP service's WSDL URL (usually ends in <code>?wsdl</code>). One request per operation
+              is scaffolded with a skeleton SOAP envelope you can fill in.
+            </p>
+            <input value={wsdl.url} autoFocus disabled={wsdl.busy}
+              onChange={e => setWsdl(w => ({ ...w, url: e.target.value }))}
+              onKeyDown={e => e.key === 'Enter' && importWsdl()}
+              placeholder="https://service.example.com/Service.svc?wsdl"
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 12, marginBottom: 10 }} />
+            {wsdl.msg && (
+              <p style={{ fontSize: 12, margin: '0 0 10px', color: wsdl.msg.startsWith('✓') ? 'var(--ok)' : 'var(--bad)' }}>{wsdl.msg}</p>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn-ghost" onClick={() => setWsdl(null)} disabled={wsdl.busy}>
+                {wsdl.msg?.startsWith('✓') ? 'Close' : 'Cancel'}
+              </button>
+              <button className="btn-primary" onClick={importWsdl} disabled={wsdl.busy || !wsdl.url.trim()}>
+                {wsdl.busy ? 'Importing…' : '⬇ Import'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ExtractEditor({ rows, onChange }) {
+  const list = Array.isArray(rows) ? rows : []
+  const set = (i, p) => onChange(list.map((r, idx) => idx === i ? { ...r, ...p } : r))
+  const add = () => onChange([...list, { var: '', from: 'json', path: '' }])
+  const del = (i) => onChange(list.filter((_, idx) => idx !== i))
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 4px' }}>
+        Pull a value out of the response into a variable (e.g. <code>access_token</code> → <code>token</code>). JSON/XML use a dot path like <code>data.access_token</code>.
+      </p>
+      {list.map((r, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input value={r.var} placeholder="variable" style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }}
+            onChange={e => set(i, { var: e.target.value })} />
+          <span style={{ color: 'var(--text-muted)' }}>←</span>
+          <select value={r.from} onChange={e => set(i, { from: e.target.value })} style={{ width: 110, fontSize: 11 }}>
+            {EXTRACT_FROM.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <input value={r.path} placeholder={r.from === 'header' ? 'Header name' : r.from === 'status' ? '(n/a)' : 'data.token'}
+            disabled={r.from === 'status'} style={{ flex: 2, fontFamily: 'var(--font-mono)', fontSize: 12 }}
+            onChange={e => set(i, { path: e.target.value })} />
+          <button className="btn-ghost" style={{ padding: '2px 8px' }} onClick={() => del(i)}>✕</button>
+        </div>
+      ))}
+      <button className="btn-ghost" style={{ alignSelf: 'start', padding: '4px 10px', fontSize: 11 }} onClick={add}>+ Add extraction</button>
+    </div>
+  )
+}
+
+function ResponseView({ response, respTab, setRespTab, onPick }) {
+  const r = response.response || {}
+  const ok = r.status >= 200 && r.status < 400
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+        {r.error
+          ? <span className="badge badge-bad">ERROR</span>
+          : <span className={`badge ${ok ? 'badge-ok' : 'badge-bad'}`}>{r.status} {r.statusText}</span>}
+        {!r.error && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.timeMs} ms</span>}
+        {response.refetched && <span className="tag" style={{ fontSize: 9 }}>🔑 token re-fetched</span>}
+        {response.status && <span className={`badge ${response.status === 'passed' ? 'badge-ok' : 'badge-bad'}`} style={{ marginLeft: 'auto' }}>{response.status}</span>}
+      </div>
+      {r.error
+        ? <pre style={{ color: 'var(--bad)', fontFamily: 'var(--font-mono)', fontSize: 12, whiteSpace: 'pre-wrap' }}>{r.error}</pre>
+        : <>
+            <div style={{ display: 'flex', gap: 4, marginBottom: 8 }}>
+              {[['body', 'Body'], ['headers', 'Headers'], ['assertions', `Assertions${response.assertions?.length ? ` (${response.assertions.length})` : ''}`]].map(([id, lbl]) => (
+                <button key={id} className="btn-ghost" onClick={() => setRespTab(id)}
+                  style={{ padding: '3px 10px', fontSize: 11, color: respTab === id ? 'var(--accent)' : 'var(--ink-soft)', fontWeight: respTab === id ? 700 : 500 }}>{lbl}</button>
+              ))}
+            </div>
+            {respTab === 'body' && (
+              <ResponseBody body={r.body} onPick={onPick} />
+            )}
+            {respTab === 'headers' && (
+              <pre style={{ fontFamily: 'var(--font-mono)', fontSize: 11, whiteSpace: 'pre-wrap', margin: 0 }}>
+                {Object.entries(r.headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n')}
+              </pre>
+            )}
+            {respTab === 'assertions' && (
+              (response.assertions?.length
+                ? <div style={{ display: 'grid', gap: 4 }}>
+                    {response.assertions.map((a, i) => (
+                      <div key={i} style={{ fontSize: 12 }}>
+                        <span className={`badge ${a.passed ? 'badge-ok' : 'badge-bad'}`} style={{ marginRight: 8 }}>{a.passed ? 'PASS' : 'FAIL'}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)' }}>{a.type} = {a.expected}{!a.passed && a.type !== 'bodyContains' ? ` (got ${a.actual})` : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                : <p style={{ color: 'var(--text-muted)', fontSize: 12, margin: 0 }}>No assertions on this request.</p>)
+            )}
+          </>}
+    </div>
+  )
+}
+
+// ── Response body: switch between a click-to-extract tree and raw text ────────
+function ResponseBody({ body, onPick }) {
+  const tree = useMemo(() => buildResponseTree(body), [body])
+  const [mode, setMode] = useState('tree')
+  const [picking, setPicking] = useState(null)   // { path, from, suggested } awaiting a var name
+
+  const view = tree ? mode : 'raw'
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        {tree && (
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[['tree', '🌲 Tree'], ['raw', 'Raw']].map(([id, lbl]) => (
+              <button key={id} className="btn-ghost" onClick={() => setMode(id)}
+                style={{ padding: '2px 10px', fontSize: 11, color: view === id ? 'var(--accent)' : 'var(--ink-soft)', fontWeight: view === id ? 700 : 500 }}>{lbl}</button>
+            ))}
+          </div>
+        )}
+        {tree && view === 'tree' && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Click any value to save it into a variable.</span>}
+      </div>
+
+      {picking && (
+        <div className="sketch" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', marginBottom: 8, background: 'var(--accent-soft)' }}>
+          <span style={{ fontSize: 12 }}>Save as</span>
+          <input autoFocus value={picking.suggested} onChange={e => setPicking(p => ({ ...p, suggested: e.target.value }))}
+            onKeyDown={e => { if (e.key === 'Enter') { onPick({ var: picking.suggested.trim() || 'value', from: picking.from, path: picking.path }); setPicking(null) } }}
+            style={{ width: 160, fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>← {picking.path}</span>
+          <button className="btn-primary" style={{ padding: '2px 10px', fontSize: 11, marginLeft: 'auto' }}
+            onClick={() => { onPick({ var: picking.suggested.trim() || 'value', from: picking.from, path: picking.path }); setPicking(null) }}>Add</button>
+          <button className="btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => setPicking(null)}>✕</button>
+        </div>
+      )}
+
+      {view === 'tree'
+        ? <div style={{ maxHeight: 320, overflow: 'auto', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+            <TreeNode node={tree.root} from={tree.from}
+              onLeaf={(path, suggested) => setPicking({ path, from: tree.from, suggested })} />
+          </div>
+        : <pre style={{ fontFamily: 'var(--font-mono)', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 320, overflow: 'auto', margin: 0 }}>{pretty(body)}</pre>}
+    </div>
+  )
+}
+
+function TreeNode({ node, from, onLeaf, depth = 0 }) {
+  const pad = { paddingLeft: depth * 14 }
+  if (node.leaf) {
+    return (
+      <div style={{ ...pad, padding: '1px 0 1px ' + (depth * 14) + 'px' }}>
+        <span style={{ color: 'var(--ink-soft)' }}>{node.label}: </span>
+        <span onClick={() => onLeaf(node.path, node.label)} title={`Save ${node.path} → variable`}
+          style={{ color: 'var(--accent-ink)', cursor: 'pointer', textDecoration: 'underline', textDecorationStyle: 'dotted' }}>
+          {String(node.value).length > 80 ? String(node.value).slice(0, 80) + '…' : String(node.value || '∅')}
+        </span>
+      </div>
+    )
+  }
+  return (
+    <div>
+      <div style={{ ...pad, color: 'var(--ink-soft)' }}>{node.label}</div>
+      {node.children.map((c, i) => <TreeNode key={i} node={c} from={from} onLeaf={onLeaf} depth={depth + 1} />)}
+    </div>
+  )
+}
+
+// Parse a response body into a normalized tree whose paths match the engine's resolver
+// (fast-xml-parser removeNSPrefix for XML; dot/bracket for JSON).
+function buildResponseTree(body) {
+  if (!body) return null
+  const t = body.trim()
+  if (t.startsWith('{') || t.startsWith('[')) {
+    try { return { from: 'json', root: jsonNode(JSON.parse(t), '', 'response') } } catch { /* fall through */ }
+  }
+  if (t.startsWith('<')) {
+    try {
+      const doc = new DOMParser().parseFromString(t, 'application/xml')
+      if (doc.getElementsByTagName('parsererror').length === 0 && doc.documentElement) {
+        return { from: 'xml', root: xmlNode(doc.documentElement, doc.documentElement.localName) }
+      }
+    } catch { /* fall through */ }
+  }
+  return null
+}
+
+function jsonNode(value, path, label) {
+  if (Array.isArray(value)) {
+    return { label, path, children: value.map((v, i) => jsonNode(v, `${path}[${i}]`, `[${i}]`)) }
+  }
+  if (value && typeof value === 'object') {
+    return { label, path, children: Object.entries(value).map(([k, v]) => jsonNode(v, path ? `${path}.${k}` : k, k)) }
+  }
+  return { label, path, leaf: true, value }
+}
+
+function xmlNode(el, path) {
+  const kids = Array.from(el.children)
+  if (kids.length === 0) return { label: el.localName, path, leaf: true, value: el.textContent }
+  const counts = {}
+  kids.forEach(k => { counts[k.localName] = (counts[k.localName] || 0) + 1 })
+  const idx = {}
+  const children = kids.map(k => {
+    const ln = k.localName
+    let seg = ln
+    if (counts[ln] > 1) { const i = idx[ln] || 0; idx[ln] = i + 1; seg = `${ln}[${i}]` }
+    return xmlNode(k, path ? `${path}.${seg}` : seg)
+  })
+  return { label: el.localName, path, children }
+}
+
+function RunDrawer({ run, onClose, navigate }) {
+  return (
+    <div style={{ position: 'fixed', right: 18, bottom: 18, width: 380, maxHeight: '60vh', zIndex: 50,
+      display: 'flex', flexDirection: 'column' }} className="card">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '2px solid var(--line-soft)' }}>
+        <span className="eyebrow">Collection run</span>
+        {run.summary && <span className={`badge ${run.summary.status === 'passed' ? 'badge-ok' : 'badge-bad'}`}>{run.summary.status}</span>}
+        <button className="btn-ghost" style={{ marginLeft: 'auto', padding: '2px 8px' }} onClick={onClose}>✕</button>
+      </div>
+      <div style={{ padding: '10px 12px', overflowY: 'auto', flex: 1 }}>
+        {run.logs.map((l, i) => (
+          <div key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, marginBottom: 3,
+            color: l.status === 'failed' || l.type === 'error' ? 'var(--bad)' : l.status === 'passed' ? 'var(--ok)' : 'var(--ink-soft)' }}>
+            {l.text}
+          </div>
+        ))}
+        {run.summary && (
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: '2px solid var(--line-soft)', fontSize: 12 }}>
+            <strong>{run.summary.passed}/{run.summary.passed + run.summary.failed}</strong> passed · {run.summary.durationMs} ms
+            <button className="btn-ghost" style={{ marginLeft: 8, padding: '2px 10px', fontSize: 11 }}
+              onClick={() => navigate('results', { runId: run.summary.runId })}>View report →</button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

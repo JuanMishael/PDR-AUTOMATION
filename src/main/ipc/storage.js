@@ -276,4 +276,96 @@ export function registerStorageHandlers() {
     db().prepare('DELETE FROM custom_steps WHERE id = ?').run(id)
     return { ok: true }
   })
+
+  // --- API Requests (profiles with type='api') ---
+  ipcMain.handle('storage:getApiRequests', (_, profileId) => {
+    return db().prepare('SELECT * FROM api_requests WHERE profile_id = ? ORDER BY sort_order').all(profileId)
+  })
+
+  ipcMain.handle('storage:saveApiRequest', (_, req) => {
+    const j = (v, d = '[]') => JSON.stringify(v ?? JSON.parse(d))
+    if (req.id) {
+      db().prepare(`
+        UPDATE api_requests SET name=?, description=?, method=?, url=?, headers=?, query=?,
+          body=?, body_type=?, soap_action=?, extract=?, assertions=?, sort_order=? WHERE id=?
+      `).run(req.name, req.description || '', req.method || 'GET', req.url || '',
+          j(req.headers), j(req.query), req.body || '', req.body_type || 'none',
+          req.soap_action || '', j(req.extract), j(req.assertions), req.sort_order ?? 0, req.id)
+      return { id: req.id }
+    }
+    const id = randomUUID()
+    db().prepare(`
+      INSERT INTO api_requests (id, profile_id, name, description, method, url, headers, query,
+        body, body_type, soap_action, extract, assertions, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, req.profile_id, req.name, req.description || '', req.method || 'GET', req.url || '',
+        j(req.headers), j(req.query), req.body || '', req.body_type || 'none',
+        req.soap_action || '', j(req.extract), j(req.assertions), req.sort_order ?? 0)
+    return { id }
+  })
+
+  ipcMain.handle('storage:deleteApiRequest', (_, id) => {
+    db().prepare('DELETE FROM api_requests WHERE id = ?').run(id)
+    return { ok: true }
+  })
+
+  ipcMain.handle('storage:reorderApiRequests', (_, profileId, orderedIds) => {
+    const update = db().prepare('UPDATE api_requests SET sort_order = ? WHERE id = ? AND profile_id = ?')
+    const tx = db().transaction((ids) => {
+      ids.forEach((id, i) => update.run(i, id, profileId))
+    })
+    tx(orderedIds)
+    return { ok: true }
+  })
+
+  // --- API Variables (profile-scoped shared store) ---
+  ipcMain.handle('storage:getApiVariables', (_, profileId) => {
+    return db().prepare('SELECT * FROM api_variables WHERE profile_id = ? ORDER BY sort_order').all(profileId)
+  })
+
+  ipcMain.handle('storage:saveApiVariable', (_, v) => {
+    if (v.id) {
+      db().prepare('UPDATE api_variables SET name=?, value=?, secret=?, sort_order=? WHERE id=?')
+        .run(v.name, v.value || '', v.secret ? 1 : 0, v.sort_order ?? 0, v.id)
+      return { id: v.id }
+    }
+    const id = randomUUID()
+    db().prepare(`
+      INSERT INTO api_variables (id, profile_id, name, value, secret, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, v.profile_id, v.name, v.value || '', v.secret ? 1 : 0, v.sort_order ?? 0)
+    return { id }
+  })
+
+  ipcMain.handle('storage:deleteApiVariable', (_, id) => {
+    db().prepare('DELETE FROM api_variables WHERE id = ?').run(id)
+    return { ok: true }
+  })
+
+  // --- API Auth (one policy per profile) ---
+  ipcMain.handle('storage:getApiAuth', (_, profileId) => {
+    return db().prepare('SELECT * FROM api_auth WHERE profile_id = ?').get(profileId) || null
+  })
+
+  ipcMain.handle('storage:saveApiAuth', (_, a) => {
+    const existing = db().prepare('SELECT id FROM api_auth WHERE profile_id = ?').get(a.profile_id)
+    const cfg = JSON.stringify(a.config || {})
+    if (existing) {
+      db().prepare(`
+        UPDATE api_auth SET type=?, token_request_id=?, token_path=?, token_var=?, header_name=?,
+          header_prefix=?, refetch_on=?, config=? WHERE id=?
+      `).run(a.type || 'none', a.token_request_id || null, a.token_path || '', a.token_var || 'token',
+          a.header_name || 'Authorization', a.header_prefix ?? 'Bearer ', a.refetch_on || '401', cfg, existing.id)
+      return { id: existing.id }
+    }
+    const id = randomUUID()
+    db().prepare(`
+      INSERT INTO api_auth (id, profile_id, type, token_request_id, token_path, token_var,
+        header_name, header_prefix, refetch_on, config)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, a.profile_id, a.type || 'none', a.token_request_id || null, a.token_path || '',
+        a.token_var || 'token', a.header_name || 'Authorization', a.header_prefix ?? 'Bearer ',
+        a.refetch_on || '401', cfg)
+    return { id }
+  })
 }

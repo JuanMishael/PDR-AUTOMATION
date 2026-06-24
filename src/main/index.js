@@ -5,6 +5,7 @@ import appIcon from '../../resources/favicon/icon-512.png?asset'
 import { initDb, flushDb } from './core/db'
 import { nudgeWindowFocus } from './core/windowFocus'
 import { registerRunnerHandlers } from './ipc/runner'
+import { registerApiRunnerHandlers } from './ipc/apiRunner'
 import { registerStorageHandlers } from './ipc/storage'
 import { registerReporterHandlers } from './ipc/reporter'
 import { registerHealthHandlers } from './ipc/health'
@@ -52,6 +53,7 @@ app.whenReady().then(async () => {
 
   await initDb()
   registerRunnerHandlers()
+  registerApiRunnerHandlers()
   registerStorageHandlers()
   registerReporterHandlers()
   registerHealthHandlers()

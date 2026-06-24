@@ -18,6 +18,7 @@
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@fontsource/patrick-hand": "^5.2.8",
     "docx": "^8.5.0",
+    "fast-xml-parser": "^5.9.3",
     "playwright": "^1.45.0",
     "sql.js": "^1.12.0"
   },

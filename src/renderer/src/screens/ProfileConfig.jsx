@@ -89,34 +89,52 @@ export default function ProfileConfig({ navigate }) {
         <div className="card">
           <div style={{ display: 'grid', gap: 14 }}>
             <div>
+              <label>Profile Type</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {[['web', '🌐 Web App', 'Browser automation — scenarios & steps'],
+                  ['api', '🔌 API · beta', 'Postman/SoapUI-style request collection (beta — still in progress)']].map(([val, lbl, hint]) => (
+                  <button key={val} type="button" title={hint}
+                    className={form.type === val ? 'btn-primary' : 'btn-ghost'}
+                    style={{ flex: 1, padding: '8px 10px', fontSize: 12 }}
+                    onClick={() => field('type', val)}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
               <label>Profile Name *</label>
               <input value={form.name} onChange={e => field('name', e.target.value)}
-                placeholder="e.g. PPGIS Staging" />
+                placeholder={form.type === 'api' ? 'e.g. Billing API — Staging' : 'e.g. PPGIS Staging'} />
             </div>
             <div>
               <label>Base URL *</label>
               <input value={form.base_url} onChange={e => field('base_url', e.target.value)}
-                placeholder="https://staging.example.com" />
+                placeholder={form.type === 'api' ? 'https://api.example.com' : 'https://staging.example.com'} />
             </div>
+            {form.type !== 'api' && (
+              <div>
+                <label>Browser</label>
+                <select value={form.browser} onChange={e => field('browser', e.target.value)}>
+                  <option value="chromium">Chromium</option>
+                  <option value="firefox">Firefox</option>
+                  <option value="webkit">WebKit</option>
+                </select>
+              </div>
+            )}
             <div>
-              <label>Browser</label>
-              <select value={form.browser} onChange={e => field('browser', e.target.value)}>
-                <option value="chromium">Chromium</option>
-                <option value="firefox">Firefox</option>
-                <option value="webkit">WebKit</option>
-              </select>
-            </div>
-            <div>
-              <label>Step Timeout (ms)</label>
+              <label>{form.type === 'api' ? 'Request Timeout (ms)' : 'Step Timeout (ms)'}</label>
               <input type="number" value={form.timeout} min={1000} step={1000}
                 onChange={e => field('timeout', Number(e.target.value))} />
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row',
-              textTransform: 'none', letterSpacing: 'normal', fontWeight: 500, fontSize: 13, cursor: 'pointer' }}>
-              <input type="checkbox" checked={form.headless} style={{ width: 'auto' }}
-                onChange={e => field('headless', e.target.checked)} />
-              Run headless (no visible browser window)
-            </label>
+            {form.type !== 'api' && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row',
+                textTransform: 'none', letterSpacing: 'normal', fontWeight: 500, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.headless} style={{ width: 'auto' }}
+                  onChange={e => field('headless', e.target.checked)} />
+                Run headless (no visible browser window)
+              </label>
+            )}
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <button className="btn-primary" onClick={save} disabled={saving || !isValid}>
                 {saving ? 'Saving…' : editing ? '✓ Update Profile' : '+ Create Profile'}
@@ -147,9 +165,12 @@ export default function ProfileConfig({ navigate }) {
                       fontSize: 11, fontWeight: 800, color: 'var(--accent)', flexShrink: 0
                     }}>{p.name.slice(0, 2).toUpperCase()}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
+                      <div style={{ fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {p.name}
+                        {p.type === 'api' && <span className="badge badge-warn" style={{ fontSize: 9 }}>API · beta</span>}
+                      </div>
                       <div style={{ color: 'var(--text-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {p.browser} · {p.base_url}
+                        {(p.type === 'api' ? 'API' : p.browser)} · {p.base_url}
                       </div>
                     </div>
                   </div>
@@ -157,7 +178,7 @@ export default function ProfileConfig({ navigate }) {
                     <button className="btn-ghost" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => edit(p)}>Edit</button>
                     <button className="btn-ghost" style={{ padding: '4px 10px', fontSize: 11 }}
                       onClick={() => navigate('scenarios', { profileId: p.id, profileName: p.name })}>
-                      Scenarios
+                      {p.type === 'api' ? 'Requests' : 'Scenarios'}
                     </button>
                     <ShareProfileButton profileId={p.id} />
                     <button className="btn-danger" style={{ padding: '4px 10px', fontSize: 11, marginLeft: 'auto' }} onClick={() => del(p.id)}>

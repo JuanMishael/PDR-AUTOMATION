@@ -36,6 +36,21 @@ contextBridge.exposeInMainWorld('api', {
   deleteHistory: (id) => ipcRenderer.invoke('storage:deleteHistory', id),
   clearHistory: (profileId) => ipcRenderer.invoke('storage:clearHistory', profileId),
 
+  // API profiles — requests / variables / auth
+  getApiRequests: (profileId) => ipcRenderer.invoke('storage:getApiRequests', profileId),
+  saveApiRequest: (req) => ipcRenderer.invoke('storage:saveApiRequest', req),
+  deleteApiRequest: (id) => ipcRenderer.invoke('storage:deleteApiRequest', id),
+  reorderApiRequests: (profileId, orderedIds) => ipcRenderer.invoke('storage:reorderApiRequests', profileId, orderedIds),
+  getApiVariables: (profileId) => ipcRenderer.invoke('storage:getApiVariables', profileId),
+  saveApiVariable: (v) => ipcRenderer.invoke('storage:saveApiVariable', v),
+  deleteApiVariable: (id) => ipcRenderer.invoke('storage:deleteApiVariable', id),
+  getApiAuth: (profileId) => ipcRenderer.invoke('storage:getApiAuth', profileId),
+  saveApiAuth: (auth) => ipcRenderer.invoke('storage:saveApiAuth', auth),
+  // API execution
+  sendApiRequest: (requestId) => ipcRenderer.invoke('api:send', requestId),
+  runApiCollection: (profileId) => ipcRenderer.invoke('api:runCollection', profileId),
+  importWsdl: (profileId, wsdlUrl) => ipcRenderer.invoke('api:importWsdl', profileId, wsdlUrl),
+
   // Storage — Custom Steps
   getCustomSteps: () => ipcRenderer.invoke('storage:getCustomSteps'),
   saveCustomStep: (step) => ipcRenderer.invoke('storage:saveCustomStep', step),

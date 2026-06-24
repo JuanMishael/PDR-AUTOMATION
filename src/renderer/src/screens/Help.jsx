@@ -12,6 +12,7 @@ const SECTIONS = [
   { id: 'quickstart',  label: 'Quick Start' },
   { id: 'concepts',    label: 'Core Concepts' },
   { id: 'profiles',    label: 'Profiles' },
+  { id: 'api',         label: 'API Profiles ·β' },
   { id: 'scenarios',   label: 'Scenarios & Steps' },
   { id: 'recorder',    label: 'Recorder & Picker' },
   { id: 'uploads',     label: 'File Uploads' },
@@ -33,6 +34,10 @@ const Kbd = ({ children }) => (
     fontFamily: 'var(--font-mono)', fontSize: 11, padding: '1px 6px', borderRadius: 5,
     background: 'var(--surface-2)', border: '1.5px solid var(--line-soft)', color: 'var(--ink-soft)'
   }}>{children}</span>
+)
+
+const Beta = () => (
+  <span className="badge badge-warn" style={{ fontSize: 10, marginLeft: 8, verticalAlign: 'middle' }}>BETA</span>
 )
 
 function Section({ id, title, subtitle, refMap, children }) {
@@ -308,6 +313,48 @@ export default function Help() {
             </div>
             <p style={{ fontSize: 12.5, color: 'var(--ink-faint)', marginTop: 12 }}>
               Tip: the Dashboard floats your most-recently-run profile to the top and shows a streak of the last few runs.
+            </p>
+          </Section>
+
+          <Section id="api" title={<>API Profiles <Beta /></>} refMap={refMap}
+            subtitle="Test SOAP / REST APIs as a request collection — like Postman or SoapUI, with token automation.">
+            <div className="card" style={{ marginBottom: 14, borderColor: 'var(--warn-line)', background: 'var(--warn-bg)' }}>
+              <p style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.6, margin: 0 }}>
+                <strong>API Profiles are in beta.</strong> The core flow — build requests, send, extract values,
+                chain a token, import a WSDL, run a collection — works, but it's still being built out and details
+                may change. SOAP-fault token auto-refresh and API-shaped report formatting aren't done yet.
+              </p>
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
+              An <strong>API profile</strong> swaps the browser step-cards for a request workspace. Create one in
+              <strong> Profiles → New Profile</strong> and pick <strong>🔌 API</strong> as the type. Then:
+            </p>
+            <div className="card" style={{ marginBottom: 12 }}>
+              <Define term="Requests">Build requests on the left (method + URL + Body/Headers/Params). Hit <strong>▶ Send</strong> to try one and see the response. Both REST (JSON) and SOAP (XML) are supported.</Define>
+              <Define term="Variables">A profile-wide store. Reference any variable anywhere with <Code>{'{{name}}'}</Code> (URL, headers, body). Values you extract are saved here and reused by the next request — even across separate Sends.</Define>
+              <Define term="Extract">After a Send, the response <strong>Body</strong> shows as a 🌲 <strong>Tree</strong>. Click any value → name it → it's saved into a variable. No need to hand-type a path.</Define>
+              <Define term="Auth & token">Designate one request as the token call. The token is injected into the others automatically, and (for REST) silently re-fetched + retried on a <Code>401</Code>.</Define>
+              <Define term="Import WSDL">Paste a WCF/SOAP service's <Code>?wsdl</Code> URL. It follows the imported schemas and scaffolds one request per operation — full SOAP envelope, <Code>SOAPAction</Code>, and the <Code>ServiceHeader</Code> block included.</Define>
+              <Define term="Run collection">Runs every request in order through the shared variables, streaming pass/fail and saving a run to <strong>History</strong>.</Define>
+            </div>
+            <div style={{ fontFamily: 'var(--font-hand)', fontSize: 17, color: 'var(--ink)', margin: '4px 0 6px' }}>The token flow, end to end</div>
+            <div className="card">
+              <Step n="1" title="Get the token request returning a token">
+                Build (or WSDL-import) your auth request — e.g. <Code>genToken</Code> — fill any credentials, and Send.
+              </Step>
+              <Step n="2" title="Extract the token into a variable">
+                In the response Tree, click the token value, name it (e.g. <Code>Token</Code>), Add. Send once more and
+                watch the <strong>Variables</strong> panel fill in.
+              </Step>
+              <Step n="3" title="Use it in the other requests">
+                Drop <Code>{'{{Token}}'}</Code> wherever the API wants it — an <Code>Authorization</Code> header for REST,
+                or inside the SOAP <Code>ServiceHeader/token</Code> element for WCF. Every request now pulls the live token.
+              </Step>
+            </div>
+            <p style={{ fontSize: 12.5, color: 'var(--ink-faint)', marginTop: 12 }}>
+              Note for SOAP: variable names are case-sensitive (<Code>{'{{Token}}'}</Code> ≠ <Code>{'{{token}}'}</Code>),
+              and an expired token usually comes back as a SOAP <em>Fault</em> (HTTP 200), so re-send the token request to
+              refresh it for now.
             </p>
           </Section>
 

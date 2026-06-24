@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { ACTION_DEFS, ACTION_CATEGORIES, ACTIONS_BY_CATEGORY } from '../components/actionDefs'
 import { confirmDialog } from '../lib/confirm'
 import { TOKEN_GROUPS } from '../lib/tokens'
+import ApiWorkspace from './ApiWorkspace'
 
 // Default keyword per action category
 const CATEGORY_KEYWORD = {
@@ -1459,7 +1460,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       loadScenarios()
       window.api.getProfiles().then(list => {
         const p = list.find(x => x.id === profileId)
-        if (p) setProfile(p)
+        // Always resolve (fallback to a web stub) so the render fork below never sticks on "Loading".
+        setProfile(p || { id: profileId, name: profileName, type: 'web' })
       })
     }
   }, [profileId])
@@ -1867,6 +1869,16 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       <ProfilePicker navigate={navigate}
         onPick={p => { setProfileId(p.id); setProfileName(p.name) }} />
     )
+  }
+
+  // Profile still resolving — hold off so we don't flash the wrong workspace (web vs API).
+  if (!profile) {
+    return <div className="fade-in" style={{ padding: 40, color: 'var(--text-muted)' }}>Loading…</div>
+  }
+
+  // ── API profile: a Postman/SoapUI-style request workspace, not step cards ──
+  if (profile.type === 'api') {
+    return <ApiWorkspace profile={profile} profileName={profileName} navigate={navigate} />
   }
 
   // ── Main builder ──────────────────────────────────────────────────────────

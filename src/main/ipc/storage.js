@@ -287,20 +287,23 @@ export function registerStorageHandlers() {
     if (req.id) {
       db().prepare(`
         UPDATE api_requests SET name=?, description=?, method=?, url=?, headers=?, query=?,
-          body=?, body_type=?, soap_action=?, extract=?, assertions=?, sort_order=? WHERE id=?
+          body=?, body_type=?, soap_action=?, extract=?, assertions=?, sort_order=?,
+          iterate_collection_id=?, iterate_group=? WHERE id=?
       `).run(req.name, req.description || '', req.method || 'GET', req.url || '',
           j(req.headers), j(req.query), req.body || '', req.body_type || 'none',
-          req.soap_action || '', j(req.extract), j(req.assertions), req.sort_order ?? 0, req.id)
+          req.soap_action || '', j(req.extract), j(req.assertions), req.sort_order ?? 0,
+          req.iterate_collection_id || null, req.iterate_group || '', req.id)
       return { id: req.id }
     }
     const id = randomUUID()
     db().prepare(`
       INSERT INTO api_requests (id, profile_id, name, description, method, url, headers, query,
-        body, body_type, soap_action, extract, assertions, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        body, body_type, soap_action, extract, assertions, sort_order, iterate_collection_id, iterate_group)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, req.profile_id, req.name, req.description || '', req.method || 'GET', req.url || '',
         j(req.headers), j(req.query), req.body || '', req.body_type || 'none',
-        req.soap_action || '', j(req.extract), j(req.assertions), req.sort_order ?? 0)
+        req.soap_action || '', j(req.extract), j(req.assertions), req.sort_order ?? 0,
+        req.iterate_collection_id || null, req.iterate_group || '')
     return { id }
   })
 

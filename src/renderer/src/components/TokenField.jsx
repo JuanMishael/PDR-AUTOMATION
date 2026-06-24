@@ -8,7 +8,7 @@ import { TOKEN_GROUPS } from '../lib/tokens'
 // Props mirror a plain <input>: value, onChange(nextString), placeholder, style.
 // Set multiline for a <textarea>. Resolution happens later in the main process
 // (tokenResolver.js); this component only writes the token text.
-export default function TokenField({ value = '', onChange, placeholder, style, multiline, rows = 3, ...rest }) {
+export default function TokenField({ value = '', onChange, placeholder, style, multiline, rows = 3, extraGroups = [], ...rest }) {
   const ref = useRef(null)
   const [open, setOpen] = useState(false)
 
@@ -45,18 +45,21 @@ export default function TokenField({ value = '', onChange, placeholder, style, m
           background: open ? 'var(--accent-soft)' : undefined, borderColor: open ? 'var(--accent)' : undefined }}>
         {'{ }'}
       </button>
-      {open && <TokenMenu onPick={insert} onClose={() => setOpen(false)} />}
+      {open && <TokenMenu onPick={insert} onClose={() => setOpen(false)} extraGroups={extraGroups} />}
     </div>
   )
 }
 
-function TokenMenu({ onPick, onClose }) {
+function TokenMenu({ onPick, onClose, extraGroups = [] }) {
   const [q, setQ] = useState('')
+
+  // Caller-supplied groups (e.g. Test Data {{Collection.field}} tokens) come first.
+  const allGroups = useMemo(() => [...extraGroups, ...TOKEN_GROUPS], [extraGroups])
 
   const groups = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    if (!needle) return TOKEN_GROUPS
-    return TOKEN_GROUPS
+    if (!needle) return allGroups
+    return allGroups
       .map(g => ({
         ...g,
         tokens: g.tokens.filter(t =>

@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { confirmDialog } from '../lib/confirm'
+import TokenField from '../components/TokenField'
+
+const ITERATE_GROUPS = [['all', 'All sets'], ['positive', '📗 Positive'], ['negative', '📕 Negative'], ['edge', '📒 Edge']]
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 const BODY_TYPES = [['none', 'None'], ['json', 'JSON'], ['xml', 'XML'], ['soap', 'SOAP'], ['form', 'Form'], ['raw', 'Raw']]
@@ -45,6 +48,7 @@ function KeyValueEditor({ rows, onChange, placeholder = ['key', 'value'] }) {
 
 export default function ApiWorkspace({ profile, profileName, navigate }) {
   const [requests, setRequests] = useState([])
+  const [collections, setCollections] = useState([])
   const [activeId, setActiveId] = useState(null)
   const [draft, setDraft] = useState(null)         // editable copy of the active request
   const [variables, setVariables] = useState([])
@@ -61,16 +65,27 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
   useEffect(() => { loadAll() }, [profile.id])
 
   async function loadAll() {
-    const [reqs, vars, a] = await Promise.all([
+    const [reqs, vars, a, cols] = await Promise.all([
       window.api.getApiRequests(profile.id),
       window.api.getApiVariables(profile.id),
-      window.api.getApiAuth(profile.id)
+      window.api.getApiAuth(profile.id),
+      window.api.getCollections().catch(() => [])
     ])
     setRequests(reqs)
     setVariables(vars)
+    setCollections(cols || [])
     if (a) setAuth({ ...a, token_request_id: a.token_request_id || '' })
     if (reqs.length && !activeId) select(reqs[0])
   }
+
+  // Test Data collections → token groups for the { } picker (insert {{Collection.field}}).
+  const dataTokenGroups = useMemo(() => (collections || [])
+    .map(c => ({
+      name: `Test Data · ${c.name}`,
+      hint: 'Values from your Test Data Library.',
+      tokens: (c.fields || []).map(f => ({ token: `{{${c.name}.${f.name}}}`, label: f.name, desc: f.type || 'field' }))
+    }))
+    .filter(g => g.tokens.length), [collections])
 
   // ── Request selection / drafting ──────────────────────────────────────────
   function parseReq(r) {
@@ -339,7 +354,7 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
 
                 {/* tabs */}
                 <div style={{ display: 'flex', gap: 4, borderBottom: '2px solid var(--line-soft)', marginBottom: 10 }}>
-                  {[['body', 'Body'], ['headers', 'Headers'], ['params', 'Params'], ['extract', `Extract${draft.extract?.length ? ` (${draft.extract.length})` : ''}`]].map(([id, lbl]) => (
+                  {[['body', 'Body'], ['headers', 'Headers'], ['params', 'Params'], ['extract', `Extract${draft.extract?.length ? ` (${draft.extract.length})` : ''}`], ['data', draft.iterate_collection_id ? 'Data 🔁' : 'Data']].map(([id, lbl]) => (
                     <button key={id} className="btn-ghost" onClick={() => setTab(id)}
                       style={{ padding: '4px 12px', fontSize: 12, borderRadius: '6px 6px 0 0',
                         borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent',
@@ -362,15 +377,19 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
                     )}
                     {draft.body_type === 'none'
                       ? <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>No request body.</p>
-                      : <textarea value={draft.body} onChange={e => patch({ body: e.target.value })} rows={10}
+                      : <TokenField multiline rows={10} value={draft.body} onChange={v => patch({ body: v })}
+                          extraGroups={dataTokenGroups}
                           placeholder={draft.body_type === 'json' ? '{\n  "key": "value"\n}' : draft.body_type === 'soap' ? '<soap:Envelope>…</soap:Envelope>' : ''}
-                          style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical' }} />}
+                          style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12 }} />}
                   </div>
                 )}
                 {tab === 'headers' && <KeyValueEditor rows={draft.headers} onChange={v => patch({ headers: v })} placeholder={['Header', 'Value']} />}
                 {tab === 'params' && <KeyValueEditor rows={draft.query} onChange={v => patch({ query: v })} placeholder={['Param', 'Value']} />}
                 {tab === 'extract' && (
                   <ExtractEditor rows={draft.extract} onChange={v => patch({ extract: v })} />
+                )}
+                {tab === 'data' && (
+                  <DataIterateTab draft={draft} collections={collections} patch={patch} navigate={navigate} />
                 )}
               </div>
 
@@ -418,6 +437,54 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+// Bind a request to a Test Data collection+group so it runs once per data set (during Run
+// collection) — the API analog of a repeating group. Each row resolves its own {{tokens}}.
+function DataIterateTab({ draft, collections, patch, navigate }) {
+  const colId = draft.iterate_collection_id || ''
+  const col = collections.find(c => c.id === colId)
+  const group = draft.iterate_group || 'all'
+  const setCount = col
+    ? (group === 'all' ? (col.sets || []).length : (col.sets || []).filter(s => s.group_type === group).length)
+    : 0
+
+  if (!collections.length) {
+    return (
+      <div>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px' }}>
+          No Test Data collections yet. Define a form once (fields + data sets) and reference its values
+          in this request with <code>{'{{Collection.field}}'}</code> tokens.
+        </p>
+        <button className="btn-ghost" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => navigate('testdata')}>Open Test Data →</button>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
+        Run this request <strong>once per data set</strong> in a collection (applied during <strong>▶ Run collection</strong>).
+        Insert a value with the <code>{'{ }'}</code> picker on the Body — e.g. <code>{'{{' + (col?.name || 'Collection') + '.field}}'}</code>.
+        Each row re-resolves its tokens; results are labelled by set name.
+      </p>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <select value={colId} onChange={e => patch({ iterate_collection_id: e.target.value || null })} style={{ fontSize: 12, minWidth: 180 }}>
+          <option value="">— don't iterate —</option>
+          {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        {colId && (
+          <select value={group} onChange={e => patch({ iterate_group: e.target.value })} style={{ fontSize: 12 }}>
+            {ITERATE_GROUPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        )}
+        {colId && <span className="badge badge-busy" style={{ fontSize: 10 }}>{setCount} run{setCount === 1 ? '' : 's'}</span>}
+      </div>
+      {colId && setCount === 0 && (
+        <p style={{ fontSize: 11, color: 'var(--bad)', margin: 0 }}>No data sets in this group — add some in Test Data, or this request is skipped.</p>
       )}
     </div>
   )

@@ -259,6 +259,10 @@ export async function initDb() {
   // A data field can remember WHERE it goes on the page (selector picked once), so a
   // whole form can be dropped into a scenario as pre-wired fill steps (Test Data Phase 2).
   try { _db.run('ALTER TABLE data_fields ADD COLUMN selector TEXT NOT NULL DEFAULT \'\'') } catch { /* already migrated */ }
+  // An API request can be data-driven: run once per data set in a Test Data collection+group
+  // (the API analog of a repeating group). Tokens resolve per row at run time.
+  try { _db.run('ALTER TABLE api_requests ADD COLUMN iterate_collection_id TEXT') } catch { /* already migrated */ }
+  try { _db.run('ALTER TABLE api_requests ADD COLUMN iterate_group TEXT NOT NULL DEFAULT \'\'') } catch { /* already migrated */ }
 
   persist()
   seedDefaultSettings()

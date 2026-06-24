@@ -3,6 +3,25 @@ import { randomUUID } from 'crypto'
 import { getDb } from '../core/db'
 import { substitute, sendRequest, applyExtractions, checkAssertions, runWithAuth } from '../core/apiEngine'
 import { buildWsdlCollection } from '../core/wsdlImport'
+import { buildDataContext, resolveString } from '../core/tokenResolver'
+
+// Resolve Test Data Library tokens ({{Collection.field}} / {{faker.*}} / {{unique.*}}) in a
+// request's string fields BEFORE the engine substitutes the flat {{var}} store. The two token
+// systems don't collide — Test Data is dotted, the variable store is flat — so leftover {{var}}
+// tokens (e.g. {{Token}}) pass through resolveString untouched and the engine handles them.
+function applyDataTokens(req, ctx) {
+  if (!ctx || !req) return req
+  const r = (s) => (typeof s === 'string' ? resolveString(s, ctx) : s)
+  const arr = (v) => { try { return Array.isArray(v) ? v : JSON.parse(v || '[]') } catch { return [] } }
+  return {
+    ...req,
+    url: r(req.url),
+    body: r(req.body),
+    soap_action: r(req.soap_action),
+    headers: arr(req.headers).map(h => ({ ...h, key: r(h.key), value: r(h.value) })),
+    query: arr(req.query).map(q => ({ ...q, key: r(q.key), value: r(q.value) }))
+  }
+}
 
 // Load the profile's shared variable store as a { name: value } map.
 function loadVars(db, profileId) {
@@ -50,20 +69,27 @@ export function registerApiRunnerHandlers() {
   }
 
   const authFor = (db, profileId) => db.prepare('SELECT * FROM api_auth WHERE profile_id = ?').get(profileId) || null
-  const requestGetter = (db, profileId) => (id) =>
-    db.prepare('SELECT * FROM api_requests WHERE id = ? AND profile_id = ?').get(id, profileId)
+  // A token-request getter that also resolves Test Data tokens (the auth/token request can use
+  // {{Collection.field}} too). Uses the given data context.
+  const requestGetter = (db, profileId, ctx) => (id) => {
+    const r = db.prepare('SELECT * FROM api_requests WHERE id = ? AND profile_id = ?').get(id, profileId)
+    return r ? applyDataTokens(r, ctx) : null
+  }
 
-  // Interactive single request (Postman "Send"). Persists extractions; not logged to history.
+  // Interactive single request (Postman "Send"). Resolves Test Data tokens from field DEFAULTS
+  // (like a single web run), persists extractions; not logged to history.
   ipcMain.handle('api:send', async (_event, requestId) => {
     const db = getDb()
-    const req = db.prepare('SELECT * FROM api_requests WHERE id = ?').get(requestId)
-    if (!req) return { error: 'Request not found' }
-    const vars = loadVars(db, req.profile_id)
-    const auth = authFor(db, req.profile_id)
+    const row = db.prepare('SELECT * FROM api_requests WHERE id = ?').get(requestId)
+    if (!row) return { error: 'Request not found' }
+    const vars = loadVars(db, row.profile_id)
+    const auth = authFor(db, row.profile_id)
+    const ctx = await buildDataContext(db, null)   // field defaults + faker/unique
+    const req = applyDataTokens(row, ctx)
 
     const { response, refetched } = await runWithAuth(req, vars, auth, {
-      getRequestById: requestGetter(db, req.profile_id),
-      onExtract: (written) => persistVars(db, req.profile_id, written)
+      getRequestById: requestGetter(db, row.profile_id, ctx),
+      onExtract: (written) => persistVars(db, row.profile_id, written)
     })
     const assertions = checkAssertions(req, response, vars)
     return {
@@ -72,7 +98,7 @@ export function registerApiRunnerHandlers() {
       assertions,
       refetched,
       status: verdict(response, assertions),
-      variables: loadVars(db, req.profile_id)
+      variables: loadVars(db, row.profile_id)
     }
   })
 
@@ -89,20 +115,22 @@ export function registerApiRunnerHandlers() {
     const startedAt = new Date().toISOString()
     const vars = loadVars(db, profileId)
     const auth = authFor(db, profileId)
-    const getRequestById = requestGetter(db, profileId)
+    const defaultCtx = await buildDataContext(db, null)   // field defaults + faker/unique
     const results = []
 
-    for (const req of requests) {
-      send('runner:log', { type: 'info', text: `▶ ${(req.method || 'GET').toUpperCase()} ${req.name}` })
+    // Run one request against a given Test Data context; record + stream its result.
+    const runOne = async (row, ctx, setName) => {
+      const req = applyDataTokens(row, ctx)
+      const label = setName ? `[${setName}] ${row.name}` : row.name
       const { response, refetched } = await runWithAuth(req, vars, auth, {
-        getRequestById,
+        getRequestById: requestGetter(db, profileId, ctx),
         onExtract: (written) => persistVars(db, profileId, written)
       })
       if (refetched) send('runner:log', { type: 'info', text: '🔑 Token expired — re-fetched and retried' })
       const assertions = checkAssertions(req, response, vars)
       const status = verdict(response, assertions)
-      const result = {
-        id: req.id, name: req.name, label: req.name, status,
+      results.push({
+        id: req.id, name: label, label, status,
         request: requestSnapshot(req, vars),
         response: {
           status: response.status, statusText: response.statusText || '',
@@ -110,13 +138,29 @@ export function registerApiRunnerHandlers() {
         },
         assertions,
         error: response.error || (status === 'failed' ? `HTTP ${response.status}` : undefined)
-      }
-      results.push(result)
-      send('runner:log', {
-        type: status === 'passed' ? 'step' : 'step',
-        id: req.id, label: req.name, status,
-        text: `${status === 'passed' ? '✓' : '✗'} ${req.name} → ${response.status || response.error || '—'} (${response.timeMs}ms)`
       })
+      send('runner:log', {
+        type: 'step', id: req.id, label, status,
+        text: `${status === 'passed' ? '✓' : '✗'} ${label} → ${response.status || response.error || '—'} (${response.timeMs}ms)`
+      })
+    }
+
+    for (const row of requests) {
+      // Data-driven request: run once per data set in its collection+group (the API repeating group).
+      if (row.iterate_collection_id) {
+        const sets = (row.iterate_group && row.iterate_group !== 'all')
+          ? db.prepare('SELECT * FROM data_sets WHERE collection_id = ? AND group_type = ? ORDER BY sort_order').all(row.iterate_collection_id, row.iterate_group)
+          : db.prepare('SELECT * FROM data_sets WHERE collection_id = ? ORDER BY sort_order').all(row.iterate_collection_id)
+        if (!sets.length) {
+          send('runner:log', { type: 'info', text: `▶ ${(row.method || 'GET').toUpperCase()} ${row.name} — no data sets, skipped` })
+          continue
+        }
+        send('runner:log', { type: 'info', text: `▶ ${(row.method || 'GET').toUpperCase()} ${row.name} — ${sets.length} data set(s)` })
+        for (const set of sets) await runOne(row, await buildDataContext(db, set.id), set.name)
+      } else {
+        send('runner:log', { type: 'info', text: `▶ ${(row.method || 'GET').toUpperCase()} ${row.name}` })
+        await runOne(row, defaultCtx)
+      }
     }
 
     const finishedAt = new Date().toISOString()

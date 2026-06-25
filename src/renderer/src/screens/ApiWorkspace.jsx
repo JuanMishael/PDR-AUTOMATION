@@ -54,6 +54,32 @@ function uniqueCollName(base, collections) {
   return name
 }
 
+// Detect the SOAP <Header> leaf fields (e.g. ServiceHeader → timeStamp/correlationId/token).
+function detectHeaderFields(body) {
+  const t = (body || '').trim()
+  if (!t.startsWith('<')) return []
+  try {
+    const doc = new DOMParser().parseFromString(t, 'application/xml')
+    if (doc.getElementsByTagName('parsererror').length) return []
+    const headerEl = Array.from(doc.getElementsByTagName('*')).find(e => e.localName === 'Header')
+    if (!headerEl) return []
+    const fields = []
+    const walk = (el) => { const k = Array.from(el.children); if (!k.length) fields.push(el.localName); else k.forEach(walk) }
+    Array.from(headerEl.children).forEach(walk)
+    return [...new Set(fields)]
+  } catch { return [] }
+}
+
+// Map a header field to a sensible token. Timestamps/IDs auto-generate; the auth token uses the
+// {{Token}} variable; everything else becomes a one-time profile variable (boilerplate constant).
+function headerTokenFor(name) {
+  const n = name.toLowerCase()
+  if (n === 'token' || n.endsWith('token')) return { token: '{{Token}}', variable: 'Token' }
+  if (n.includes('timestamp') || n === 'time') return { token: '{{unique.timestamp}}' }
+  if (n.includes('correlation') || n.includes('messageid') || n.includes('requestid') || n.includes('guid') || n.includes('uuid')) return { token: '{{unique.uuid}}' }
+  return { token: `{{${name}}}`, variable: name }
+}
+
 function parseSets(sets) {
   return (sets || []).map(s => {
     let values = {}
@@ -236,6 +262,29 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
     patch({ body, iterate_collection_id: id, iterate_group: 'all' })
     setCollections(await window.api.getCollections())
     setDataMsg(`✓ Created “${name}” with ${fields.length} field${fields.length === 1 ? '' : 's'}; body wired to {{${name}.*}}. Fill rows in Test Data.`)
+  }
+
+  // Tokenize the SOAP header boilerplate so it's no longer hand-edited in the raw envelope:
+  // timestamps/IDs auto-generate, the token uses {{Token}}, constants become profile variables.
+  async function fillHeaderBoilerplate() {
+    if (!draft) return
+    const headerFields = detectHeaderFields(draft.body)
+    if (!headerFields.length) { setDataMsg('✗ No SOAP header fields found in the body.'); return }
+    let body = draft.body
+    const wanted = []
+    for (const f of headerFields) {
+      const { token, variable } = headerTokenFor(f)
+      const esc = f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const re = new RegExp(`(<([\\w.-]+:)?${esc}>)[^<]*(</([\\w.-]+:)?${esc}>)`, 'g')
+      body = body.replace(re, `$1${token}$3`)
+      if (variable) wanted.push(variable)
+    }
+    const existing = new Set(variables.map(v => v.name))
+    const created = [...new Set(wanted)].filter(n => !existing.has(n))
+    for (const name of created) await window.api.saveApiVariable({ profile_id: profile.id, name, value: '' })
+    patch({ body })
+    await refreshVars()
+    setDataMsg(`✓ Header wired to tokens. ${created.length ? `Set ${created.join(', ')} once in the Variables panel.` : 'Timestamps/IDs auto-generate.'}`)
   }
 
   // Add an extraction rule from a clicked response field, then jump to the Extract tab.
@@ -467,7 +516,8 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
                 )}
                 {tab === 'data' && (
                   <DataIterateTab draft={draft} collections={collections} patch={patch} navigate={navigate}
-                    onAutoCreate={createCollectionFromRequest} autoMsg={dataMsg} onReload={reloadCollections} />
+                    onAutoCreate={createCollectionFromRequest} autoMsg={dataMsg} onReload={reloadCollections}
+                    onFillHeader={fillHeaderBoilerplate} />
                 )}
               </div>
 
@@ -522,7 +572,7 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
 
 // Bind a request to a Test Data collection+group so it runs once per data set (during Run
 // collection) — the API analog of a repeating group. Each row resolves its own {{tokens}}.
-function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, autoMsg, onReload }) {
+function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, autoMsg, onReload, onFillHeader }) {
   const colId = draft.iterate_collection_id || ''
   const col = collections.find(c => c.id === colId)
   const group = draft.iterate_group || 'all'
@@ -530,6 +580,7 @@ function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, aut
     ? (group === 'all' ? (col.sets || []).length : (col.sets || []).filter(s => s.group_type === group).length)
     : 0
   const detected = detectRequestFields(draft.body, draft.body_type).fields
+  const headerFields = detectHeaderFields(draft.body)
 
   // Auto-build action — the fast path to a test-case collection from the request's own fields.
   const autoCreate = (
@@ -549,10 +600,27 @@ function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, aut
     </div>
   )
 
+  // SOAP header boilerplate — tokenize it out of the raw envelope in one click.
+  const headerBoilerplate = headerFields.length > 0 && (
+    <div className="sketch" style={{ padding: '10px 12px', display: 'grid', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: 12 }}>🧩 SOAP header boilerplate</strong>
+        <span className="badge badge-busy" style={{ fontSize: 10 }}>{headerFields.length} field{headerFields.length === 1 ? '' : 's'}</span>
+        <button className="btn-ghost" style={{ marginLeft: 'auto', padding: '4px 10px', fontSize: 11 }} onClick={onFillHeader}>Auto-fill header</button>
+      </div>
+      <p style={{ fontSize: 11, color: 'var(--ink-soft)', margin: 0 }}>
+        Wires <code>{headerFields.join(', ')}</code> so you stop editing the raw envelope: timestamps/IDs auto-generate,
+        the auth token uses <code>{'{{Token}}'}</code>, and constants (e.g. requestedChannel) become profile
+        <strong> Variables</strong> you set once.
+      </p>
+    </div>
+  )
+
   if (!collections.length) {
     return (
       <div style={{ display: 'grid', gap: 10 }}>
         {autoCreate}
+        {headerBoilerplate}
         <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
           No Test Data collections yet. Use ✨ above, or define one by hand and reference its values
           with <code>{'{{Collection.field}}'}</code> tokens.
@@ -565,6 +633,7 @@ function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, aut
   return (
     <div style={{ display: 'grid', gap: 10 }}>
       {autoCreate}
+      {headerBoilerplate}
       <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>
         Run this request <strong>once per data set</strong> in a collection (applied during <strong>▶ Run collection</strong>).
         Insert a value with the <code>{'{ }'}</code> picker on the Body — e.g. <code>{'{{' + (col?.name || 'Collection') + '.field}}'}</code>.

@@ -732,12 +732,28 @@ function InlineDataEditor({ collection, group, onReload }) {
   useEffect(() => { setRows(parseSets(collection.sets)) }, [collection.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const visible = rows.filter(r => group === 'all' || r.group_type === group)
+
+  // Autosave: edits mark a row dirty + debounce a save; we also refresh the parent's collections
+  // so returning to this tab (which remounts the editor) reads the saved values, not stale ones.
+  const dirty = useRef(new Set())
+  const saveTimer = useRef(null)
+  const reloadTimer = useRef(null)
   const persist = (id, override = {}) => {
     const r = rowsRef.current.find(x => x.id === id)
     if (r) window.api.saveDataSet({ id: r.id, collection_id: collection.id, name: r.name, group_type: r.group_type, values: r.values, sort_order: r.sort_order, ...override })
+    clearTimeout(reloadTimer.current); reloadTimer.current = setTimeout(() => onReload?.(), 300)
   }
-  const setMeta = (id, p) => setRows(rs => rs.map(r => r.id === id ? { ...r, ...p } : r))
-  const setCell = (id, f, v) => setRows(rs => rs.map(r => r.id === id ? { ...r, values: { ...r.values, [f]: v } } : r))
+  const flush = () => {
+    clearTimeout(saveTimer.current)
+    dirty.current.forEach(id => persist(id))
+    dirty.current.clear()
+  }
+  const touch = (id) => { dirty.current.add(id); clearTimeout(saveTimer.current); saveTimer.current = setTimeout(flush, 400) }
+  // Save anything pending when the editor unmounts (e.g. switching request tabs mid-edit).
+  useEffect(() => () => flush(), []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setMeta = (id, p) => { setRows(rs => rs.map(r => r.id === id ? { ...r, ...p } : r)); touch(id) }
+  const setCell = (id, f, v) => { setRows(rs => rs.map(r => r.id === id ? { ...r, values: { ...r.values, [f]: v } } : r)); touch(id) }
   const noteFocus = (rowId, field, el) => { focusRef.current = { rowId, field, caret: el.selectionStart ?? (el.value || '').length } }
 
   async function addRow() {
@@ -805,9 +821,9 @@ function InlineDataEditor({ collection, group, onReload }) {
                 )}
                 {visible.map(r => (
                   <tr key={r.id}>
-                    <td style={td}><input value={r.name} onChange={e => setMeta(r.id, { name: e.target.value })} onBlur={() => persist(r.id)} style={cell(80)} /></td>
+                    <td style={td}><input value={r.name} onChange={e => setMeta(r.id, { name: e.target.value })} onBlur={flush} style={cell(80)} /></td>
                     <td style={td}>
-                      <select value={r.group_type} onChange={e => { setMeta(r.id, { group_type: e.target.value }); persist(r.id, { group_type: e.target.value }); onReload?.() }} style={{ fontSize: 11 }}>
+                      <select value={r.group_type} onChange={e => { setMeta(r.id, { group_type: e.target.value }); persist(r.id, { group_type: e.target.value }) }} style={{ fontSize: 11 }}>
                         {['positive', 'negative', 'edge'].map(g => <option key={g} value={g}>{g}</option>)}
                       </select>
                     </td>
@@ -818,7 +834,7 @@ function InlineDataEditor({ collection, group, onReload }) {
                           onChange={e => { setCell(r.id, f.name, e.target.value); noteFocus(r.id, f.name, e.target) }}
                           onFocus={e => noteFocus(r.id, f.name, e.target)}
                           onSelect={e => noteFocus(r.id, f.name, e.target)}
-                          onBlur={() => persist(r.id)} style={cell(120)} />
+                          onBlur={flush} style={cell(120)} />
                       </td>
                     ))}
                     <td style={td}><button className="btn-ghost" style={{ padding: '0 6px' }} onClick={() => delRow(r.id)}>✕</button></td>

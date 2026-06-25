@@ -71,6 +71,7 @@ export function resolveString(str, ctx, depth = 0) {
 
     if (ns === 'faker') return resolveFaker(rest)
     if (ns === 'unique') return resolveUnique(rest, ctx)
+    if (ns === 'now') return resolveNow(rest)
 
     // Collection.field — value may itself contain tokens (e.g. a default of {{faker.x}}).
     const val = ctx.tokens.get(key(ns, rest))
@@ -90,10 +91,27 @@ function resolveFaker(path) {
       obj = obj[part]
     }
     const out = typeof obj === 'function' ? obj() : obj
-    return out == null ? '' : String(out)
+    if (out == null) return ''
+    if (out instanceof Date) return out.toISOString()   // APIs want ISO 8601, not Date.toString()
+    return String(out)
   } catch {
     return ''
   }
+}
+
+// Current date/time in ISO 8601 — what SOAP (xsd:dateTime) and most JSON APIs expect.
+//   {{now}} -> full ISO   {{now.datetime}} -> no ms   {{now.date}} -> YYYY-MM-DD   {{now.time}} -> HH:MM:SS
+//   {{now.epoch}} -> ms since 1970
+function resolveNow(rest) {
+  const d = new Date()
+  const iso = d.toISOString()
+  const k = (rest || '').trim().toLowerCase()
+  if (!k) return iso
+  if (k === 'date') return iso.slice(0, 10)
+  if (k === 'time') return iso.slice(11, 19)
+  if (k === 'datetime') return iso.slice(0, 19)
+  if (k === 'epoch' || k === 'timestamp') return String(d.getTime())
+  return iso
 }
 
 // Fresh-per-run, stable within a run for the same key.

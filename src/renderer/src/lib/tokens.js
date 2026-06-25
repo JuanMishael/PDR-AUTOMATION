@@ -23,6 +23,17 @@ export const TOKEN_GROUPS = [
     ]
   },
   {
+    name: 'Dates & time (ISO)',
+    hint: 'Current date/time in ISO 8601 — what SOAP (xsd:dateTime) and most JSON APIs expect.',
+    tokens: [
+      { token: '{{now}}',          label: 'Now (ISO)',      desc: 'Full ISO datetime, e.g. 2026-06-25T09:12:33.000Z' },
+      { token: '{{now.datetime}}', label: 'Now (no ms)',    desc: 'e.g. 2026-06-25T09:12:33' },
+      { token: '{{now.date}}',     label: 'Today',          desc: 'Date only, e.g. 2026-06-25' },
+      { token: '{{now.time}}',     label: 'Time only',      desc: 'e.g. 09:12:33' },
+      { token: '{{unique.timestamp}}', label: 'Epoch ms',   desc: 'Milliseconds since 1970, e.g. 1782326758261' }
+    ]
+  },
+  {
     name: 'Name & person',
     hint: 'Realistic fake people.',
     tokens: [
@@ -74,8 +85,8 @@ export const TOKEN_GROUPS = [
       { token: '{{faker.commerce.price}}', label: 'Price',        desc: 'e.g. 499.00' },
       { token: '{{faker.string.uuid}}',    label: 'UUID',         desc: 'A v4 UUID' },
       { token: '{{faker.string.numeric}}', label: 'Digits',       desc: 'A random numeric string' },
-      { token: '{{faker.date.recent}}',    label: 'Recent date',  desc: 'A date in the last few days' },
-      { token: '{{faker.date.birthdate}}', label: 'Birthdate',    desc: 'A plausible date of birth' }
+      { token: '{{faker.date.recent}}',    label: 'Recent date',  desc: 'An ISO date in the last few days' },
+      { token: '{{faker.date.birthdate}}', label: 'Birthdate',    desc: 'A plausible ISO date of birth' }
     ]
   }
 ]

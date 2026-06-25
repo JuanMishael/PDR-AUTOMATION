@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { confirmDialog } from '../lib/confirm'
-import TokenField from '../components/TokenField'
+import { TOKEN_GROUPS } from '../lib/tokens'
 
 const ITERATE_GROUPS = [['all', 'All sets'], ['positive', '📗 Positive'], ['negative', '📕 Negative'], ['edge', '📒 Edge']]
 
@@ -161,15 +161,6 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
     if (a) setAuth({ ...a, token_request_id: a.token_request_id || '' })
     if (reqs.length && !activeId) select(reqs[0])
   }
-
-  // Test Data collections → token groups for the { } picker (insert {{Collection.field}}).
-  const dataTokenGroups = useMemo(() => (collections || [])
-    .map(c => ({
-      name: `Test Data · ${c.name}`,
-      hint: 'Values from your Test Data Library.',
-      tokens: (c.fields || []).map(f => ({ token: `{{${c.name}.${f.name}}}`, label: f.name, desc: f.type || 'field' }))
-    }))
-    .filter(g => g.tokens.length), [collections])
 
   // ── Request selection / drafting ──────────────────────────────────────────
   function parseReq(r) {
@@ -503,10 +494,9 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
                     )}
                     {draft.body_type === 'none'
                       ? <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>No request body.</p>
-                      : <TokenField multiline rows={10} value={draft.body} onChange={v => patch({ body: v })}
-                          extraGroups={dataTokenGroups}
+                      : <textarea value={draft.body} onChange={e => patch({ body: e.target.value })} rows={10}
                           placeholder={draft.body_type === 'json' ? '{\n  "key": "value"\n}' : draft.body_type === 'soap' ? '<soap:Envelope>…</soap:Envelope>' : ''}
-                          style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12 }} />}
+                          style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical' }} />}
                   </div>
                 )}
                 {tab === 'headers' && <KeyValueEditor rows={draft.headers} onChange={v => patch({ headers: v })} placeholder={['Header', 'Value']} />}
@@ -657,6 +647,76 @@ function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, aut
   )
 }
 
+// A compact value input with a { } token picker for data cells. The menu is position:fixed
+// (anchored to the button) so it's never clipped by the table's horizontal scroll container.
+function CellTokenField({ value = '', onChange, onBlur, width = 120 }) {
+  const ref = useRef(null)
+  const btnRef = useRef(null)
+  const [menu, setMenu] = useState(null)
+
+  function insert(token) {
+    const el = ref.current
+    const start = el && el.selectionStart != null ? el.selectionStart : String(value).length
+    const end = el && el.selectionEnd != null ? el.selectionEnd : start
+    onChange(String(value).slice(0, start) + token + String(value).slice(end))
+    setMenu(null)
+    requestAnimationFrame(() => {
+      if (el) { el.focus(); const p = start + token.length; try { el.setSelectionRange(p, p) } catch { /* */ } }
+      onBlur?.()
+    })
+  }
+  function toggle() {
+    if (menu) return setMenu(null)
+    const r = btnRef.current.getBoundingClientRect()
+    setMenu({ x: Math.min(r.left, window.innerWidth - 332), y: r.bottom + 4 })
+  }
+  return (
+    <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+      <input ref={ref} value={value} placeholder="—" onChange={e => onChange(e.target.value)} onBlur={onBlur}
+        style={{ width, fontFamily: 'var(--font-mono)', fontSize: 11 }} />
+      <button ref={btnRef} type="button" className="btn-ghost" title="Insert a token" onClick={toggle}
+        style={{ padding: '0 5px', fontFamily: 'var(--font-mono)', fontSize: 11, flexShrink: 0 }}>{'{ }'}</button>
+      {menu && <CellTokenMenu x={menu.x} y={menu.y} onPick={insert} onClose={() => setMenu(null)} />}
+    </div>
+  )
+}
+
+function CellTokenMenu({ x, y, onPick, onClose }) {
+  const [q, setQ] = useState('')
+  const groups = useMemo(() => {
+    const n = q.trim().toLowerCase()
+    if (!n) return TOKEN_GROUPS
+    return TOKEN_GROUPS.map(g => ({ ...g, tokens: g.tokens.filter(t => (t.token + t.label + t.desc).toLowerCase().includes(n)) })).filter(g => g.tokens.length)
+  }, [q])
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
+      <div style={{ position: 'fixed', left: x, top: y, zIndex: 61, width: 320, maxHeight: 320, display: 'flex', flexDirection: 'column',
+        background: 'var(--surface)', border: '2px solid var(--line)', borderRadius: 8, boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
+        <div style={{ padding: 8, borderBottom: '1px solid var(--line-soft)' }}>
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 Search tokens — email, uuid, word…" style={{ width: '100%', fontSize: 12 }} />
+        </div>
+        <div style={{ overflow: 'auto', padding: '4px 0' }}>
+          {groups.map(g => (
+            <div key={g.name}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--ink-soft)', padding: '8px 12px 4px' }}>{g.name}</div>
+              {g.tokens.map(t => (
+                <button key={t.token} type="button" onClick={() => onPick(t.token)}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 12px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink)' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-soft)' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'none' }}>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--accent-ink)' }}>{t.token}</div>
+                  <div style={{ fontSize: 11, color: 'var(--ink-soft)' }}>{t.label} — {t.desc}</div>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
+  )
+}
+
 // Edit a collection's data sets (rows + values) inline — no trip to the Test Data page.
 function InlineDataEditor({ collection, group, onReload }) {
   const fields = collection.fields || []
@@ -722,8 +782,8 @@ function InlineDataEditor({ collection, group, onReload }) {
                     </td>
                     {fields.map(f => (
                       <td key={f.id} style={td}>
-                        <input value={r.values[f.name] ?? ''} placeholder="—"
-                          onChange={e => setCell(r.id, f.name, e.target.value)} onBlur={() => persist(r.id)} style={cell(120)} />
+                        <CellTokenField value={r.values[f.name] ?? ''} width={120}
+                          onChange={v => setCell(r.id, f.name, v)} onBlur={() => persist(r.id)} />
                       </td>
                     ))}
                     <td style={td}><button className="btn-ghost" style={{ padding: '0 6px' }} onClick={() => delRow(r.id)}>✕</button></td>

@@ -47,7 +47,7 @@ contextBridge.exposeInMainWorld('api', {
   getApiAuth: (profileId) => ipcRenderer.invoke('storage:getApiAuth', profileId),
   saveApiAuth: (auth) => ipcRenderer.invoke('storage:saveApiAuth', auth),
   // API execution
-  sendApiRequest: (requestId) => ipcRenderer.invoke('api:send', requestId),
+  sendApiRequest: (requestId, dataSetId = null) => ipcRenderer.invoke('api:send', requestId, dataSetId),
   runApiCollection: (profileId) => ipcRenderer.invoke('api:runCollection', profileId),
   importWsdl: (profileId, wsdlUrl) => ipcRenderer.invoke('api:importWsdl', profileId, wsdlUrl),
 

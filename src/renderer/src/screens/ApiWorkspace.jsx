@@ -174,6 +174,7 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
   const [sending, setSending] = useState(false)
   const [respTab, setRespTab] = useState('body')   // body | headers | assertions
   const [savedFlash, setSavedFlash] = useState(false)
+  const [sendRowId, setSendRowId] = useState(null) // which data row ▶ Send resolves against
   const [run, setRun] = useState(null)             // { logs:[], summary }
   const [wsdl, setWsdl] = useState(null)           // { url, busy, msg } when the import modal is open
   const saveTimer = useRef(null)
@@ -249,13 +250,20 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
     if (activeId === id) { setActiveId(null); setDraft(null); if (reqs[0]) select(reqs[0]) }
   }
 
+  // Rows of the bound collection that ▶ Send can use (filtered by the request's iterate group).
+  const boundCol = collections.find(c => c.id === draft?.iterate_collection_id)
+  const sendRows = boundCol
+    ? parseSets(boundCol.sets).filter(r => (draft?.iterate_group || 'all') === 'all' || r.group_type === draft.iterate_group)
+    : []
+  const effectiveRowId = sendRows.find(r => r.id === sendRowId)?.id || sendRows[0]?.id || null
+
   // ── Send / Run ─────────────────────────────────────────────────────────────
   async function send() {
     if (!draft) return
     flushSave()
     setSending(true); setResponse(null)
     try {
-      const res = await window.api.sendApiRequest(draft.id)
+      const res = await window.api.sendApiRequest(draft.id, effectiveRowId)
       setResponse(res)
       setRespTab(res.assertions?.length ? 'assertions' : 'body')
       if (res.variables) await refreshVars()
@@ -500,6 +508,15 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
                     {sending ? '…' : '▶ Send'}
                   </button>
                 </div>
+                {sendRows.length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12, fontSize: 11, color: 'var(--text-muted)' }}>
+                    <span>▶ Send uses data row:</span>
+                    <select value={effectiveRowId || ''} onChange={e => setSendRowId(e.target.value)} style={{ fontSize: 11, width: 'auto' }}>
+                      {sendRows.map(r => <option key={r.id} value={r.id}>{r.name} · {r.group_type}</option>)}
+                    </select>
+                    <span style={{ color: 'var(--ink-faint)' }}>(Run collection runs every row)</span>
+                  </div>
+                )}
 
                 {/* tabs */}
                 <div style={{ display: 'flex', gap: 4, borderBottom: '2px solid var(--line-soft)', marginBottom: 10 }}>

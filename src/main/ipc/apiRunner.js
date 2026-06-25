@@ -78,13 +78,26 @@ export function registerApiRunnerHandlers() {
 
   // Interactive single request (Postman "Send"). Resolves Test Data tokens from field DEFAULTS
   // (like a single web run), persists extractions; not logged to history.
-  ipcMain.handle('api:send', async (_event, requestId) => {
+  ipcMain.handle('api:send', async (_event, requestId, dataSetId = null) => {
     const db = getDb()
     const row = db.prepare('SELECT * FROM api_requests WHERE id = ?').get(requestId)
     if (!row) return { error: 'Request not found' }
     const vars = loadVars(db, row.profile_id)
     const auth = authFor(db, row.profile_id)
-    const ctx = await buildDataContext(db, null)   // field defaults + faker/unique
+    // Resolve against a real data ROW so Send reflects what you typed (not just empty field
+    // defaults): the explicit dataSetId if given, else the first set of the bound collection+group.
+    let setId = dataSetId
+    if (setId) {
+      const ok = db.prepare('SELECT id FROM data_sets WHERE id = ? AND collection_id = ?').get(setId, row.iterate_collection_id)
+      if (!ok) setId = null
+    }
+    if (!setId && row.iterate_collection_id) {
+      const first = (row.iterate_group && row.iterate_group !== 'all')
+        ? db.prepare('SELECT id FROM data_sets WHERE collection_id = ? AND group_type = ? ORDER BY sort_order').get(row.iterate_collection_id, row.iterate_group)
+        : db.prepare('SELECT id FROM data_sets WHERE collection_id = ? ORDER BY sort_order').get(row.iterate_collection_id)
+      setId = first?.id || null
+    }
+    const ctx = await buildDataContext(db, setId)
     const req = applyDataTokens(row, ctx)
 
     const { response, refetched } = await runWithAuth(req, vars, auth, {

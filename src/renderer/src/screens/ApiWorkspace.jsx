@@ -175,6 +175,8 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
   const [respTab, setRespTab] = useState('body')   // body | headers | assertions
   const [savedFlash, setSavedFlash] = useState(false)
   const [sendRowId, setSendRowId] = useState(null) // which data row ▶ Send resolves against
+  const [preview, setPreview] = useState(null)     // resolved-body preview modal
+  const [copied, setCopied] = useState(false)
   const [run, setRun] = useState(null)             // { logs:[], summary }
   const [wsdl, setWsdl] = useState(null)           // { url, busy, msg } when the import modal is open
   const saveTimer = useRef(null)
@@ -276,6 +278,15 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
     setVariables(await window.api.getApiVariables(profile.id))
   }
   const reloadCollections = async () => setCollections(await window.api.getCollections().catch(() => []))
+
+  // Resolve the request for the selected row (tokens → real values) without sending it.
+  async function previewResolved() {
+    if (!draft) return
+    flushSave()
+    setCopied(false)
+    const snap = await window.api.resolveApiRequest(draft.id, effectiveRowId)
+    setPreview(snap || { error: 'Failed to resolve' })
+  }
 
   // Auto-build a Test Data collection from this request's input fields, wire the body to
   // {{Collection.field}} tokens, and bind the request to iterate over it.
@@ -530,11 +541,13 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
 
                 {tab === 'body' && (
                   <div>
-                    <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                    <div style={{ display: 'flex', gap: 6, marginBottom: 8, alignItems: 'center' }}>
                       {BODY_TYPES.map(([v, l]) => (
                         <button key={v} className={draft.body_type === v ? 'btn-primary' : 'btn-ghost'}
                           style={{ padding: '2px 10px', fontSize: 11 }} onClick={() => patch({ body_type: v })}>{l}</button>
                       ))}
+                      <button className="btn-ghost" style={{ marginLeft: 'auto', padding: '2px 10px', fontSize: 11 }}
+                        title="Resolve tokens → actual values for the selected row (read-only)" onClick={previewResolved}>⤓ Preview resolved</button>
                     </div>
                     {draft.body_type === 'soap' && (
                       <input value={draft.soap_action || ''} onChange={e => patch({ soap_action: e.target.value })}
@@ -573,6 +586,34 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
       {/* Run drawer */}
       {run && (
         <RunDrawer run={run} onClose={() => setRun(null)} navigate={navigate} />
+      )}
+
+      {/* Resolved-body preview modal */}
+      {preview && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(43,43,43,.35)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setPreview(null)}>
+          <div className="card" style={{ width: 720, maxWidth: '92vw', maxHeight: '85vh', padding: 18, display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <span className="eyebrow">Resolved request</span>
+              {sendRows.length > 0 && <span className="badge badge-busy" style={{ fontSize: 10 }}>{sendRows.find(r => r.id === effectiveRowId)?.name || 'defaults'}</span>}
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                {!preview.error && <button className="btn-ghost" style={{ padding: '2px 10px', fontSize: 11 }}
+                  onClick={() => { navigator.clipboard?.writeText(preview.body || ''); setCopied(true); setTimeout(() => setCopied(false), 1200) }}>{copied ? '✓ Copied' : '⧉ Copy body'}</button>}
+                <button className="btn-ghost" style={{ padding: '2px 8px' }} onClick={() => setPreview(null)}>✕</button>
+              </div>
+            </div>
+            {preview.error
+              ? <p style={{ color: 'var(--bad)', fontSize: 13 }}>{preview.error}</p>
+              : <>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, marginBottom: 4 }}>
+                    <span style={{ color: methodColor(preview.method), fontWeight: 800 }}>{preview.method}</span> {preview.url}
+                  </div>
+                  {preview.soapAction && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--ink-soft)', marginBottom: 8 }}>SOAPAction: {preview.soapAction}</div>}
+                  <pre style={{ flex: 1, overflow: 'auto', margin: 0, padding: 10, fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--surface)', border: '1.5px solid var(--line-soft)', borderRadius: 6 }}
+                    dangerouslySetInnerHTML={{ __html: highlightCode(preview.body || '', preview.bodyType === 'json' ? 'json' : 'xml') }} />
+                  <p style={{ fontSize: 11, color: 'var(--ink-faint)', margin: '8px 0 0' }}>This is exactly what Send transmits for the selected row — paste it into SoapUI/Postman if you need to compare.</p>
+                </>}
+          </div>
+        </div>
       )}
 
       {/* WSDL import modal */}

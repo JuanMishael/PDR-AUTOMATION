@@ -69,6 +69,19 @@ export function registerApiRunnerHandlers() {
   }
 
   const authFor = (db, profileId) => db.prepare('SELECT * FROM api_auth WHERE profile_id = ?').get(profileId) || null
+  // Pick the data set to resolve against: an explicit (validated) id, else the first row of the
+  // request's bound collection+group, else none (field defaults).
+  const pickSetId = (db, row, dataSetId) => {
+    let setId = dataSetId
+    if (setId && !db.prepare('SELECT id FROM data_sets WHERE id = ? AND collection_id = ?').get(setId, row.iterate_collection_id)) setId = null
+    if (!setId && row.iterate_collection_id) {
+      const first = (row.iterate_group && row.iterate_group !== 'all')
+        ? db.prepare('SELECT id FROM data_sets WHERE collection_id = ? AND group_type = ? ORDER BY sort_order').get(row.iterate_collection_id, row.iterate_group)
+        : db.prepare('SELECT id FROM data_sets WHERE collection_id = ? ORDER BY sort_order').get(row.iterate_collection_id)
+      setId = first?.id || null
+    }
+    return setId
+  }
   // A token-request getter that also resolves Test Data tokens (the auth/token request can use
   // {{Collection.field}} too). Uses the given data context.
   const requestGetter = (db, profileId, ctx) => (id) => {
@@ -84,20 +97,7 @@ export function registerApiRunnerHandlers() {
     if (!row) return { error: 'Request not found' }
     const vars = loadVars(db, row.profile_id)
     const auth = authFor(db, row.profile_id)
-    // Resolve against a real data ROW so Send reflects what you typed (not just empty field
-    // defaults): the explicit dataSetId if given, else the first set of the bound collection+group.
-    let setId = dataSetId
-    if (setId) {
-      const ok = db.prepare('SELECT id FROM data_sets WHERE id = ? AND collection_id = ?').get(setId, row.iterate_collection_id)
-      if (!ok) setId = null
-    }
-    if (!setId && row.iterate_collection_id) {
-      const first = (row.iterate_group && row.iterate_group !== 'all')
-        ? db.prepare('SELECT id FROM data_sets WHERE collection_id = ? AND group_type = ? ORDER BY sort_order').get(row.iterate_collection_id, row.iterate_group)
-        : db.prepare('SELECT id FROM data_sets WHERE collection_id = ? ORDER BY sort_order').get(row.iterate_collection_id)
-      setId = first?.id || null
-    }
-    const ctx = await buildDataContext(db, setId)
+    const ctx = await buildDataContext(db, pickSetId(db, row, dataSetId))
     const req = applyDataTokens(row, ctx)
 
     const { response, refetched } = await runWithAuth(req, vars, auth, {
@@ -113,6 +113,18 @@ export function registerApiRunnerHandlers() {
       status: verdict(response, assertions),
       variables: loadVars(db, row.profile_id)
     }
+  })
+
+  // Resolve a request for a given row WITHOUT sending — for the "preview/export resolved" view.
+  ipcMain.handle('api:resolve', async (_event, requestId, dataSetId = null) => {
+    const db = getDb()
+    const row = db.prepare('SELECT * FROM api_requests WHERE id = ?').get(requestId)
+    if (!row) return { error: 'Request not found' }
+    const vars = loadVars(db, row.profile_id)
+    const ctx = await buildDataContext(db, pickSetId(db, row, dataSetId))
+    const req = applyDataTokens(row, ctx)
+    const snap = requestSnapshot(req, vars)
+    return { ...snap, soapAction: substitute(req.soap_action || '', vars), bodyType: row.body_type }
   })
 
   // Run the whole collection in order through the shared variable store, streaming progress and

@@ -106,6 +106,38 @@ function pretty(body) {
   return body
 }
 
+// Lightweight syntax tint for the body editor (no deps): escape, then color tags/strings/
+// keywords/comments and {{tokens}}. Inserted spans use real <>, so the regexes (which match
+// the escaped &lt;/&quot;) never re-match them.
+function highlightCode(code, kind) {
+  let h = String(code).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  if (kind === 'json') {
+    h = h.replace(/("(?:\\.|[^"\\])*")/g, '<span class="tk-str">$1</span>')
+      .replace(/\b(true|false|null)\b/g, '<span class="tk-kw">$1</span>')
+  } else {
+    h = h.replace(/(&lt;!--[\s\S]*?--&gt;)/g, '<span class="tk-com">$1</span>')
+      .replace(/(&lt;\/?(?!!--)[\s\S]*?&gt;)/g, '<span class="tk-tag">$1</span>')
+  }
+  return h.replace(/(\{\{[^{}]+?\}\})/g, '<span class="tk-tok">$1</span>')
+}
+
+// A transparent <textarea> layered over a highlighted <pre> — both share identical type metrics
+// and scroll together, so you type plain text and see it colored.
+function CodeArea({ value, onChange, bodyType, placeholder, height = 240 }) {
+  const taRef = useRef(null), preRef = useRef(null)
+  const kind = bodyType === 'json' ? 'json' : 'xml'
+  const html = useMemo(() => highlightCode(value || '', kind) + '\n', [value, kind])
+  const shared = { margin: 0, padding: 10, border: 'none', fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', boxSizing: 'border-box', position: 'absolute', inset: 0, overflow: 'auto' }
+  const sync = () => { if (preRef.current && taRef.current) { preRef.current.scrollTop = taRef.current.scrollTop; preRef.current.scrollLeft = taRef.current.scrollLeft } }
+  return (
+    <div className="sketch" style={{ position: 'relative', height, background: 'var(--surface)' }}>
+      <pre ref={preRef} aria-hidden style={{ ...shared, pointerEvents: 'none', color: 'var(--ink)' }} dangerouslySetInnerHTML={{ __html: html }} />
+      <textarea ref={taRef} value={value} placeholder={placeholder} spellCheck={false} onChange={e => onChange(e.target.value)} onScroll={sync}
+        style={{ ...shared, color: 'transparent', background: 'transparent', caretColor: 'var(--ink)', resize: 'none' }} />
+    </div>
+  )
+}
+
 // Editable key/value/enabled rows (headers & query params).
 function KeyValueEditor({ rows, onChange, placeholder = ['key', 'value'] }) {
   const list = Array.isArray(rows) ? rows : []
@@ -494,9 +526,8 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
                     )}
                     {draft.body_type === 'none'
                       ? <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>No request body.</p>
-                      : <textarea value={draft.body} onChange={e => patch({ body: e.target.value })} rows={10}
-                          placeholder={draft.body_type === 'json' ? '{\n  "key": "value"\n}' : draft.body_type === 'soap' ? '<soap:Envelope>…</soap:Envelope>' : ''}
-                          style={{ width: '100%', fontFamily: 'var(--font-mono)', fontSize: 12, resize: 'vertical' }} />}
+                      : <CodeArea value={draft.body} onChange={v => patch({ body: v })} bodyType={draft.body_type} height={280}
+                          placeholder={draft.body_type === 'json' ? '{\n  "key": "value"\n}' : draft.body_type === 'soap' ? '<soap:Envelope>…</soap:Envelope>' : ''} />}
                   </div>
                 )}
                 {tab === 'headers' && <KeyValueEditor rows={draft.headers} onChange={v => patch({ headers: v })} placeholder={['Header', 'Value']} />}
@@ -647,40 +678,7 @@ function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, aut
   )
 }
 
-// A compact value input with a { } token picker for data cells. The menu is position:fixed
-// (anchored to the button) so it's never clipped by the table's horizontal scroll container.
-function CellTokenField({ value = '', onChange, onBlur, width = 120 }) {
-  const ref = useRef(null)
-  const btnRef = useRef(null)
-  const [menu, setMenu] = useState(null)
-
-  function insert(token) {
-    const el = ref.current
-    const start = el && el.selectionStart != null ? el.selectionStart : String(value).length
-    const end = el && el.selectionEnd != null ? el.selectionEnd : start
-    onChange(String(value).slice(0, start) + token + String(value).slice(end))
-    setMenu(null)
-    requestAnimationFrame(() => {
-      if (el) { el.focus(); const p = start + token.length; try { el.setSelectionRange(p, p) } catch { /* */ } }
-      onBlur?.()
-    })
-  }
-  function toggle() {
-    if (menu) return setMenu(null)
-    const r = btnRef.current.getBoundingClientRect()
-    setMenu({ x: Math.min(r.left, window.innerWidth - 332), y: r.bottom + 4 })
-  }
-  return (
-    <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-      <input ref={ref} value={value} placeholder="—" onChange={e => onChange(e.target.value)} onBlur={onBlur}
-        style={{ width, fontFamily: 'var(--font-mono)', fontSize: 11 }} />
-      <button ref={btnRef} type="button" className="btn-ghost" title="Insert a token" onClick={toggle}
-        style={{ padding: '0 5px', fontFamily: 'var(--font-mono)', fontSize: 11, flexShrink: 0 }}>{'{ }'}</button>
-      {menu && <CellTokenMenu x={menu.x} y={menu.y} onPick={insert} onClose={() => setMenu(null)} />}
-    </div>
-  )
-}
-
+// Token picker menu rendered position:fixed at (x,y) so it's never clipped by a scroll container.
 function CellTokenMenu({ x, y, onPick, onClose }) {
   const [q, setQ] = useState('')
   const groups = useMemo(() => {
@@ -718,12 +716,17 @@ function CellTokenMenu({ x, y, onPick, onClose }) {
 }
 
 // Edit a collection's data sets (rows + values) inline — no trip to the Test Data page.
+// ONE { } button inserts a token into whichever value cell was last focused.
 function InlineDataEditor({ collection, group, onReload }) {
   const fields = collection.fields || []
   const [rows, setRows] = useState(() => parseSets(collection.sets))
   const [newField, setNewField] = useState('')
+  const [menu, setMenu] = useState(null)
   const rowsRef = useRef(rows)
   rowsRef.current = rows
+  const focusRef = useRef(null)              // { rowId, field, caret } of the last-focused cell
+  const cellEls = useRef({})                 // "rowId|field" -> input element
+  const tokBtn = useRef(null)
   // Reset local rows only when the bound collection itself changes (not on every parent reload),
   // so in-progress cell edits aren't clobbered by a count refresh.
   useEffect(() => { setRows(parseSets(collection.sets)) }, [collection.id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -735,6 +738,7 @@ function InlineDataEditor({ collection, group, onReload }) {
   }
   const setMeta = (id, p) => setRows(rs => rs.map(r => r.id === id ? { ...r, ...p } : r))
   const setCell = (id, f, v) => setRows(rs => rs.map(r => r.id === id ? { ...r, values: { ...r.values, [f]: v } } : r))
+  const noteFocus = (rowId, field, el) => { focusRef.current = { rowId, field, caret: el.selectionStart ?? (el.value || '').length } }
 
   async function addRow() {
     const gt = group === 'all' ? 'positive' : group
@@ -749,6 +753,31 @@ function InlineDataEditor({ collection, group, onReload }) {
     setNewField(''); onReload?.()
   }
 
+  // Open the single token menu, flipping up / clamping so it stays on screen.
+  function openTokenMenu() {
+    if (menu) return setMenu(null)
+    const tgt = focusRef.current || (visible[0] && fields[0] && { rowId: visible[0].id, field: fields[0].name, caret: 0 })
+    if (!tgt) return
+    focusRef.current = tgt
+    const r = tokBtn.current.getBoundingClientRect()
+    const W = 320, H = 320
+    const x = Math.max(8, Math.min(r.right - W, window.innerWidth - W - 8))
+    const y = (window.innerHeight - r.bottom > H + 12) ? r.bottom + 4 : Math.max(8, r.top - H - 4)
+    setMenu({ x, y })
+  }
+  function insertToken(token) {
+    const t = focusRef.current
+    setMenu(null)
+    if (!t) return
+    const cur = (rowsRef.current.find(x => x.id === t.rowId)?.values[t.field]) ?? ''
+    const caret = Math.min(t.caret ?? cur.length, cur.length)
+    const next = cur.slice(0, caret) + token + cur.slice(caret)
+    setCell(t.rowId, t.field, next)
+    setTimeout(() => persist(t.rowId), 0)
+    const el = cellEls.current[`${t.rowId}|${t.field}`]
+    requestAnimationFrame(() => { if (el) { el.focus(); const p = caret + token.length; try { el.setSelectionRange(p, p) } catch { /* */ } } })
+  }
+
   const th = { textAlign: 'left', padding: '2px 6px', borderBottom: '2px solid var(--line-soft)', color: 'var(--ink-soft)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap', fontSize: 11 }
   const td = { padding: '2px 4px', verticalAlign: 'middle' }
   const cell = (w) => ({ width: w, fontFamily: 'var(--font-mono)', fontSize: 11 })
@@ -757,7 +786,9 @@ function InlineDataEditor({ collection, group, onReload }) {
     <div className="sketch" style={{ padding: '10px 12px', display: 'grid', gap: 8 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span className="eyebrow">Rows — {collection.name}</span>
-        <button className="btn-ghost" style={{ marginLeft: 'auto', padding: '2px 10px', fontSize: 11 }} onClick={addRow}>＋ Add row</button>
+        <button ref={tokBtn} type="button" className="btn-ghost" title="Insert a token into the selected cell"
+          style={{ marginLeft: 'auto', padding: '2px 10px', fontSize: 11, fontFamily: 'var(--font-mono)' }} onClick={openTokenMenu}>{'{ }'}</button>
+        <button className="btn-ghost" style={{ padding: '2px 10px', fontSize: 11 }} onClick={addRow}>＋ Add row</button>
       </div>
       {fields.length === 0
         ? <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>No fields yet — add one below to start.</p>
@@ -782,8 +813,12 @@ function InlineDataEditor({ collection, group, onReload }) {
                     </td>
                     {fields.map(f => (
                       <td key={f.id} style={td}>
-                        <CellTokenField value={r.values[f.name] ?? ''} width={120}
-                          onChange={v => setCell(r.id, f.name, v)} onBlur={() => persist(r.id)} />
+                        <input value={r.values[f.name] ?? ''} placeholder="—"
+                          ref={el => { if (el) cellEls.current[`${r.id}|${f.name}`] = el }}
+                          onChange={e => { setCell(r.id, f.name, e.target.value); noteFocus(r.id, f.name, e.target) }}
+                          onFocus={e => noteFocus(r.id, f.name, e.target)}
+                          onSelect={e => noteFocus(r.id, f.name, e.target)}
+                          onBlur={() => persist(r.id)} style={cell(120)} />
                       </td>
                     ))}
                     <td style={td}><button className="btn-ghost" style={{ padding: '0 6px' }} onClick={() => delRow(r.id)}>✕</button></td>
@@ -798,6 +833,7 @@ function InlineDataEditor({ collection, group, onReload }) {
         <button className="btn-ghost" style={{ padding: '2px 10px', fontSize: 11 }} onClick={addField} disabled={!newField.trim()}>＋ Add field</button>
         <button className="btn-ghost" style={{ padding: '2px 10px', fontSize: 11, marginLeft: 'auto' }} onClick={() => onReload?.()} title="Refresh from Test Data">↻</button>
       </div>
+      {menu && <CellTokenMenu x={menu.x} y={menu.y} onPick={insertToken} onClose={() => setMenu(null)} />}
     </div>
   )
 }

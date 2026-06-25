@@ -258,6 +258,14 @@ label {
 ::-webkit-scrollbar-thumb { background: rgba(43,43,43,.22); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(43,43,43,.40); }
 
+/* Code editor (API body) — syntax tint over a transparent textarea */
+.tk-tag { color: var(--busy); }
+.tk-tok { color: var(--accent-ink); font-weight: 700; }
+.tk-com { color: var(--ink-faint); font-style: italic; }
+.tk-str { color: var(--ok); }
+.tk-key { color: var(--accent-ink); }
+.tk-kw  { color: var(--warn); }
+
 /* Animations */
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 .fade-in { animation: fadeIn 0.2s ease; }

@@ -19,7 +19,7 @@ export function registerTransferHandlers() {
     const bundle = serializeProfile(db, profileId)
     if (!bundle) return { error: 'Profile not found' }
     const base = sanitize(`${bundle.profile.name}-${new Date().toISOString().slice(0, 10)}`)
-    const path = join(profilesDir(), `${base}.botchi-profile.json`)
+    const path = join(profilesDir(), `${base}.automation-profile.json`)
     writeFileSync(path, JSON.stringify(bundle, null, 2), 'utf-8')
     shell.showItemInFolder(path)
     return { ok: true, path, scenarioCount: bundle.scenarios.length, collectionCount: bundle.collections.length }
@@ -28,14 +28,14 @@ export function registerTransferHandlers() {
   ipcMain.handle('transfer:importProfile', async () => {
     const res = await dialog.showOpenDialog({
       title: 'Import a shared profile',
-      filters: [{ name: 'Botchi profile', extensions: ['json'] }],
+      filters: [{ name: 'Automation profile', extensions: ['json'] }],
       properties: ['openFile']
     })
     if (res.canceled || !res.filePaths?.[0]) return { cancelled: true }
 
     let bundle
     try { bundle = JSON.parse(readFileSync(res.filePaths[0], 'utf-8')) } catch { return { error: 'Not valid JSON' } }
-    if (bundle?.type !== 'botchi-profile' || !bundle.profile?.name) return { error: 'Not a Botchi profile export' }
+    if ((bundle?.type !== 'automation-profile' && bundle?.type !== 'botchi-profile') || !bundle.profile?.name) return { error: 'Not an Automation profile export' }
 
     const db = getDb()
     try {

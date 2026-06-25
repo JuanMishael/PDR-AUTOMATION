@@ -273,7 +273,7 @@ breakdown, recent-runs streak).
 - Replicate: duplicate profile / copy scenarios; reorder + duplicate + **inline-rename** scenarios
 - **Copy selected steps into another scenario** (append, order preserved, independent copies)
 - **Group-aware selection** — ticking a group selects its whole block (inner + nested groups)
-- **Share a profile** — export/import a self-contained `.botchi-profile.json` (scenarios + steps +
+- **Share a profile** — export/import a self-contained `.automation-profile.json` (scenarios + steps +
   referenced test data); import remaps collection ids/names + prereqs so it runs on any machine
 - Collapsible step cards + drag-and-drop reordering for an at-a-glance, rearrangeable scenario
 

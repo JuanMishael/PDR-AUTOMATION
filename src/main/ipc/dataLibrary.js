@@ -152,7 +152,7 @@ export function registerDataLibraryHandlers() {
     }
 
     const payload = {
-      type: 'botchi-test-data', version: 1,
+      type: 'automation-test-data', version: 1,
       collection: { name: data.collection.name, description: data.collection.description || '' },
       fields: data.fields,
       sets: data.sets.map(s => {
@@ -177,7 +177,7 @@ export function registerDataLibraryHandlers() {
 
     let payload
     try { payload = JSON.parse(readFileSync(res.filePaths[0], 'utf-8')) } catch { return { error: 'Not valid JSON' } }
-    if (payload?.type !== 'botchi-test-data' || !payload.collection?.name) return { error: 'Not a Botchi test-data export' }
+    if ((payload?.type !== 'automation-test-data' && payload?.type !== 'botchi-test-data') || !payload.collection?.name) return { error: 'Not an Automation test-data export' }
 
     const database = db()
     // Avoid clobbering an existing collection — suffix the name if it's taken.

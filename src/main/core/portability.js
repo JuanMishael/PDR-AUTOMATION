@@ -113,7 +113,7 @@ export function serializeProfile(db, profileId) {
     .filter(Boolean)
 
   return {
-    type: 'botchi-profile', version: 1, exportedAt: new Date().toISOString(),
+    type: 'automation-profile', version: 1, exportedAt: new Date().toISOString(),
     profile: {
       name: profile.name, type: profile.type, base_url: profile.base_url,
       browser: profile.browser, headless: profile.headless, timeout: profile.timeout
@@ -151,8 +151,9 @@ function rewriteParams(params, idMap, renameRegexes) {
 // Recreate a bundle as a brand-new profile (+ scenarios/steps/collections). Non-destructive: clashing
 // profile/collection names are suffixed. Returns a summary. Caller wraps this in a transaction.
 export function deserializeProfile(db, bundle) {
-  if (!bundle || bundle.type !== 'botchi-profile' || !bundle.profile?.name) {
-    throw new Error('Not a Botchi profile export')
+  // Accept the current marker and the legacy 'botchi-profile' so already-shared bundles still import.
+  if (!bundle || (bundle.type !== 'automation-profile' && bundle.type !== 'botchi-profile') || !bundle.profile?.name) {
+    throw new Error('Not an Automation profile export')
   }
 
   // 1. Collections first — build id + name remaps the steps will need.

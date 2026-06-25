@@ -72,6 +72,15 @@ export const ACTION_DEFS = {
       { key: 'value', label: 'Option Value or Label', placeholder: 'NCR' }
     ]
   },
+  setCheckbox: {
+    label: 'Set Checkbox', category: 'Interaction',
+    summary: p => `${p.selector} → ${p.checked === false ? 'unchecked' : 'checked'}`,
+    params: [
+      { key: 'selector', label: 'Selector', placeholder: '#agree-checkbox' },
+      { key: 'checked', label: 'Should end up checked?', type: 'boolean', default: true },
+      { key: 'waitBefore', label: 'Wait before (ms)', placeholder: '0 — e.g. 500 for modal animations', type: 'number' }
+    ]
+  },
   fill: {
     label: 'Fill Input', category: 'Interaction',
     summary: p => `${p.selector} = "${p.value}"`,

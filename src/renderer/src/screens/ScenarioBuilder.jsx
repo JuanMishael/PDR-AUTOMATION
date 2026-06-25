@@ -1603,14 +1603,33 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     })
     // A group is always a balanced pair: adding a Group start drops in its matching End
     // right after it, so an orphan end can never be created from the palette.
+    const newIds = [res?.id]
     if (isGroupStart(actionKey)) {
-      await window.api.saveStep({
+      const end = await window.api.saveStep({
         scenario_id: active.id, action: 'groupEnd', params: {}, label: '', sort_order: steps.length + 1
       })
+      newIds.push(end?.id)
     }
-    const updated = await window.api.getSteps(active.id)
+    let updated = await window.api.getSteps(active.id)
+    // Drop the new step(s) right below the step you're currently on (the last-clicked
+    // card) instead of always at the very bottom. If a group card is active, land after
+    // its whole body. Falls back to the bottom when no card is active.
+    const fresh = newIds.filter(Boolean)
+    if (activeId && fresh.length && updated.some(s => s.id === activeId)) {
+      const ai = updated.findIndex(s => s.id === activeId)
+      const [, end] = unitRange(updated, ai)         // active step's whole unit (group carries its body)
+      const anchor = updated[end].id
+      const rest = updated.map(s => s.id).filter(id => !fresh.includes(id))
+      const at = rest.indexOf(anchor) + 1
+      const order = [...rest.slice(0, at), ...fresh, ...rest.slice(at)]
+      await window.api.reorderSteps(active.id, order)
+      updated = await window.api.getSteps(active.id)
+    }
     setSteps(updated)
-    if (res?.id) setExpandedIds(prev => new Set(prev).add(res.id))   // open the new step for editing
+    if (res?.id) {
+      setActiveId(res.id)   // make it the new anchor so the next add stacks below this one
+      setExpandedIds(prev => new Set(prev).add(res.id))   // open the new step for editing
+    }
   }
 
   // Drop a whole mapped form in as one fill card per field — selector + {{token}} pre-wired

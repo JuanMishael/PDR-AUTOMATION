@@ -5,7 +5,8 @@
  * Action types:
  * Navigation  : navigate, reload, goBack, goForward, waitForUrl
  * Interaction : click, dblclick, rightClick, hover, focus, selectOption,
- *               fill, type, clearInput, pressKey, uploadFile, dragAndDrop
+ *               setCheckbox, fill, type, clearInput, pressKey, uploadFile,
+ *               dragAndDrop
  * Mouse / Map : clickAt, dragByOffset, zoom, pinCoordinate, mapZoom
  * Assertions  : assertVisible, assertHidden, assertText, assertValue,
  *               assertUrl, assertTitle, assertEnabled, assertChecked
@@ -285,6 +286,14 @@ function actionToCode(action, p, baseUrl) {
 
     case 'selectOption':
       return `await page.selectOption(${sel}, ${JSON.stringify(p.value)});`
+
+    // setChecked is idempotent: only toggles if the box isn't already in the
+    // desired state, then no-ops. Keeps the flow moving regardless of starting
+    // state — no manual if/else needed.
+    case 'setCheckbox': {
+      const pre = p.waitBefore > 0 ? `await page.waitForTimeout(${Number(p.waitBefore)});\n    ` : ''
+      return `${pre}await page.setChecked(${sel}, ${p.checked === false ? 'false' : 'true'});`
+    }
 
     case 'fill':
       return `await page.fill(${sel}, ${JSON.stringify(p.value ?? '')});`

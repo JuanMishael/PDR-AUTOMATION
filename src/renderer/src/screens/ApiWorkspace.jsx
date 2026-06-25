@@ -123,17 +123,37 @@ function highlightCode(code, kind) {
 
 // A transparent <textarea> layered over a highlighted <pre> — both share identical type metrics
 // and scroll together, so you type plain text and see it colored.
-function CodeArea({ value, onChange, bodyType, placeholder, height = 240 }) {
-  const taRef = useRef(null), preRef = useRef(null)
+function CodeArea({ value, onChange, bodyType, placeholder, height = 240, extraGroups = [] }) {
+  const taRef = useRef(null), preRef = useRef(null), btnRef = useRef(null)
+  const [menu, setMenu] = useState(null)
   const kind = bodyType === 'json' ? 'json' : 'xml'
   const html = useMemo(() => highlightCode(value || '', kind) + '\n', [value, kind])
   const shared = { margin: 0, padding: 10, border: 'none', fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', boxSizing: 'border-box', position: 'absolute', inset: 0, overflow: 'auto' }
   const sync = () => { if (preRef.current && taRef.current) { preRef.current.scrollTop = taRef.current.scrollTop; preRef.current.scrollLeft = taRef.current.scrollLeft } }
+  function insert(token) {
+    const el = taRef.current
+    const s = el && el.selectionStart != null ? el.selectionStart : String(value).length
+    const e = el && el.selectionEnd != null ? el.selectionEnd : s
+    onChange(String(value).slice(0, s) + token + String(value).slice(e))
+    setMenu(null)
+    requestAnimationFrame(() => { if (el) { el.focus(); const p = s + token.length; try { el.setSelectionRange(p, p) } catch { /* */ } } })
+  }
+  function openMenu() {
+    if (menu) return setMenu(null)
+    const r = btnRef.current.getBoundingClientRect()
+    const W = 320, H = 320
+    const x = Math.max(8, Math.min(r.right - W, window.innerWidth - W - 8))
+    const y = (window.innerHeight - r.bottom > H + 12) ? r.bottom + 4 : Math.max(8, r.top - H - 4)
+    setMenu({ x, y })
+  }
   return (
     <div className="sketch" style={{ position: 'relative', height, background: 'var(--surface)' }}>
       <pre ref={preRef} aria-hidden style={{ ...shared, pointerEvents: 'none', color: 'var(--ink)' }} dangerouslySetInnerHTML={{ __html: html }} />
       <textarea ref={taRef} value={value} placeholder={placeholder} spellCheck={false} onChange={e => onChange(e.target.value)} onScroll={sync}
         style={{ ...shared, color: 'transparent', background: 'transparent', caretColor: 'var(--ink)', resize: 'none' }} />
+      <button ref={btnRef} type="button" className="btn-ghost" title="Insert a token at the cursor" onClick={openMenu}
+        style={{ position: 'absolute', top: 6, right: 6, zIndex: 2, padding: '2px 8px', fontFamily: 'var(--font-mono)', fontSize: 11, background: 'var(--surface)' }}>{'{ }'}</button>
+      {menu && <CellTokenMenu x={menu.x} y={menu.y} onPick={insert} onClose={() => setMenu(null)} extraGroups={extraGroups} />}
     </div>
   )
 }
@@ -278,6 +298,15 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
     setVariables(await window.api.getApiVariables(profile.id))
   }
   const reloadCollections = async () => setCollections(await window.api.getCollections().catch(() => []))
+
+  // Test Data collections → token groups for the body { } picker ({{Collection.field}}).
+  const dataTokenGroups = useMemo(() => (collections || [])
+    .map(c => ({
+      name: `Test Data · ${c.name}`,
+      hint: 'Values from your Test Data Library.',
+      tokens: (c.fields || []).map(f => ({ token: `{{${c.name}.${f.name}}}`, label: f.name, desc: f.type || 'field' }))
+    }))
+    .filter(g => g.tokens.length), [collections])
 
   // Resolve the request for the selected row (tokens → real values) without sending it.
   async function previewResolved() {
@@ -557,6 +586,7 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
                     {draft.body_type === 'none'
                       ? <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>No request body.</p>
                       : <CodeArea value={draft.body} onChange={v => patch({ body: v })} bodyType={draft.body_type} height={280}
+                          extraGroups={dataTokenGroups}
                           placeholder={draft.body_type === 'json' ? '{\n  "key": "value"\n}' : draft.body_type === 'soap' ? '<soap:Envelope>…</soap:Envelope>' : ''} />}
                   </div>
                 )}
@@ -737,13 +767,14 @@ function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, aut
 }
 
 // Token picker menu rendered position:fixed at (x,y) so it's never clipped by a scroll container.
-function CellTokenMenu({ x, y, onPick, onClose }) {
+function CellTokenMenu({ x, y, onPick, onClose, extraGroups = [] }) {
   const [q, setQ] = useState('')
+  const all = useMemo(() => [...extraGroups, ...TOKEN_GROUPS], [extraGroups])
   const groups = useMemo(() => {
     const n = q.trim().toLowerCase()
-    if (!n) return TOKEN_GROUPS
-    return TOKEN_GROUPS.map(g => ({ ...g, tokens: g.tokens.filter(t => (t.token + t.label + t.desc).toLowerCase().includes(n)) })).filter(g => g.tokens.length)
-  }, [q])
+    if (!n) return all
+    return all.map(g => ({ ...g, tokens: g.tokens.filter(t => (t.token + t.label + t.desc).toLowerCase().includes(n)) })).filter(g => g.tokens.length)
+  }, [q, all])
   return (
     <>
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 60 }} />

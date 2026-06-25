@@ -54,6 +54,14 @@ function uniqueCollName(base, collections) {
   return name
 }
 
+function parseSets(sets) {
+  return (sets || []).map(s => {
+    let values = {}
+    try { values = typeof s.field_values === 'string' ? JSON.parse(s.field_values || '{}') : (s.field_values || {}) } catch { values = {} }
+    return { id: s.id, name: s.name, group_type: s.group_type, values, sort_order: s.sort_order }
+  })
+}
+
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 const BODY_TYPES = [['none', 'None'], ['json', 'JSON'], ['xml', 'XML'], ['soap', 'SOAP'], ['form', 'Form'], ['raw', 'Raw']]
 const EXTRACT_FROM = [['json', 'JSON body'], ['xml', 'XML body'], ['header', 'Header'], ['status', 'Status code']]
@@ -210,6 +218,7 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
   async function refreshVars() {
     setVariables(await window.api.getApiVariables(profile.id))
   }
+  const reloadCollections = async () => setCollections(await window.api.getCollections().catch(() => []))
 
   // Auto-build a Test Data collection from this request's input fields, wire the body to
   // {{Collection.field}} tokens, and bind the request to iterate over it.
@@ -458,7 +467,7 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
                 )}
                 {tab === 'data' && (
                   <DataIterateTab draft={draft} collections={collections} patch={patch} navigate={navigate}
-                    onAutoCreate={createCollectionFromRequest} autoMsg={dataMsg} />
+                    onAutoCreate={createCollectionFromRequest} autoMsg={dataMsg} onReload={reloadCollections} />
                 )}
               </div>
 
@@ -513,7 +522,7 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
 
 // Bind a request to a Test Data collection+group so it runs once per data set (during Run
 // collection) — the API analog of a repeating group. Each row resolves its own {{tokens}}.
-function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, autoMsg }) {
+function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, autoMsg, onReload }) {
   const colId = draft.iterate_collection_id || ''
   const col = collections.find(c => c.id === colId)
   const group = draft.iterate_group || 'all'
@@ -574,9 +583,92 @@ function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, aut
         {colId && <span className="badge badge-busy" style={{ fontSize: 10 }}>{setCount} run{setCount === 1 ? '' : 's'}</span>}
         {colId && <button className="btn-ghost" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => navigate('testdata')}>Edit rows →</button>}
       </div>
-      {colId && setCount === 0 && (
-        <p style={{ fontSize: 11, color: 'var(--bad)', margin: 0 }}>No data sets in this group — add some in Test Data, or this request is skipped.</p>
-      )}
+      {col && <InlineDataEditor collection={col} group={group} onReload={onReload} />}
+    </div>
+  )
+}
+
+// Edit a collection's data sets (rows + values) inline — no trip to the Test Data page.
+function InlineDataEditor({ collection, group, onReload }) {
+  const fields = collection.fields || []
+  const [rows, setRows] = useState(() => parseSets(collection.sets))
+  const [newField, setNewField] = useState('')
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
+  // Reset local rows only when the bound collection itself changes (not on every parent reload),
+  // so in-progress cell edits aren't clobbered by a count refresh.
+  useEffect(() => { setRows(parseSets(collection.sets)) }, [collection.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const visible = rows.filter(r => group === 'all' || r.group_type === group)
+  const persist = (id, override = {}) => {
+    const r = rowsRef.current.find(x => x.id === id)
+    if (r) window.api.saveDataSet({ id: r.id, collection_id: collection.id, name: r.name, group_type: r.group_type, values: r.values, sort_order: r.sort_order, ...override })
+  }
+  const setMeta = (id, p) => setRows(rs => rs.map(r => r.id === id ? { ...r, ...p } : r))
+  const setCell = (id, f, v) => setRows(rs => rs.map(r => r.id === id ? { ...r, values: { ...r.values, [f]: v } } : r))
+
+  async function addRow() {
+    const gt = group === 'all' ? 'positive' : group
+    const { id } = await window.api.saveDataSet({ collection_id: collection.id, name: `Row ${rows.length + 1}`, group_type: gt, values: {}, sort_order: rows.length })
+    setRows(rs => [...rs, { id, name: `Row ${rs.length + 1}`, group_type: gt, values: {}, sort_order: rs.length }])
+    onReload?.()
+  }
+  async function delRow(id) { await window.api.deleteDataSet(id); setRows(rs => rs.filter(r => r.id !== id)); onReload?.() }
+  async function addField() {
+    const name = newField.trim(); if (!name) return
+    await window.api.saveField({ collection_id: collection.id, name, type: 'text', sort_order: fields.length })
+    setNewField(''); onReload?.()
+  }
+
+  const th = { textAlign: 'left', padding: '2px 6px', borderBottom: '2px solid var(--line-soft)', color: 'var(--ink-soft)', fontFamily: 'var(--font-mono)', whiteSpace: 'nowrap', fontSize: 11 }
+  const td = { padding: '2px 4px', verticalAlign: 'middle' }
+  const cell = (w) => ({ width: w, fontFamily: 'var(--font-mono)', fontSize: 11 })
+
+  return (
+    <div className="sketch" style={{ padding: '10px 12px', display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span className="eyebrow">Rows — {collection.name}</span>
+        <button className="btn-ghost" style={{ marginLeft: 'auto', padding: '2px 10px', fontSize: 11 }} onClick={addRow}>＋ Add row</button>
+      </div>
+      {fields.length === 0
+        ? <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>No fields yet — add one below to start.</p>
+        : <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+              <thead><tr>
+                <th style={th}>Set</th><th style={th}>Group</th>
+                {fields.map(f => <th key={f.id} style={th}>{f.name}</th>)}
+                <th style={th}></th>
+              </tr></thead>
+              <tbody>
+                {visible.length === 0 && (
+                  <tr><td colSpan={fields.length + 3} style={{ ...td, color: 'var(--text-muted)', fontSize: 11, padding: 8 }}>No rows in this group — ＋ Add row.</td></tr>
+                )}
+                {visible.map(r => (
+                  <tr key={r.id}>
+                    <td style={td}><input value={r.name} onChange={e => setMeta(r.id, { name: e.target.value })} onBlur={() => persist(r.id)} style={cell(80)} /></td>
+                    <td style={td}>
+                      <select value={r.group_type} onChange={e => { setMeta(r.id, { group_type: e.target.value }); persist(r.id, { group_type: e.target.value }); onReload?.() }} style={{ fontSize: 11 }}>
+                        {['positive', 'negative', 'edge'].map(g => <option key={g} value={g}>{g}</option>)}
+                      </select>
+                    </td>
+                    {fields.map(f => (
+                      <td key={f.id} style={td}>
+                        <input value={r.values[f.name] ?? ''} placeholder="—"
+                          onChange={e => setCell(r.id, f.name, e.target.value)} onBlur={() => persist(r.id)} style={cell(120)} />
+                      </td>
+                    ))}
+                    <td style={td}><button className="btn-ghost" style={{ padding: '0 6px' }} onClick={() => delRow(r.id)}>✕</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <input value={newField} onChange={e => setNewField(e.target.value)} placeholder="new field name"
+          onKeyDown={e => e.key === 'Enter' && addField()} style={{ fontSize: 11, width: 150, fontFamily: 'var(--font-mono)' }} />
+        <button className="btn-ghost" style={{ padding: '2px 10px', fontSize: 11 }} onClick={addField} disabled={!newField.trim()}>＋ Add field</button>
+        <button className="btn-ghost" style={{ padding: '2px 10px', fontSize: 11, marginLeft: 'auto' }} onClick={() => onReload?.()} title="Refresh from Test Data">↻</button>
+      </div>
     </div>
   )
 }

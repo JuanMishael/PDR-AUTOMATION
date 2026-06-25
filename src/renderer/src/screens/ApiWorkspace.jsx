@@ -313,8 +313,13 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
     if (!draft) return
     flushSave()
     setCopied(false)
-    const snap = await window.api.resolveApiRequest(draft.id, effectiveRowId)
-    setPreview(snap || { error: 'Failed to resolve' })
+    try {
+      if (!window.api.resolveApiRequest) throw new Error('stale')
+      const snap = await window.api.resolveApiRequest(draft.id, effectiveRowId)
+      setPreview(snap || { error: 'Failed to resolve' })
+    } catch {
+      setPreview({ error: 'Backend not loaded — close the app and run "npm run dev" again. Main/preload changes (Preview, Send-uses-row, ISO dates) don\'t hot-reload.' })
+    }
   }
 
   // Auto-build a Test Data collection from this request's input fields, wire the body to

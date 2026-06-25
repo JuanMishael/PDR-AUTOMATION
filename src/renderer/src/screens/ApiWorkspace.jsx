@@ -199,6 +199,7 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
   const [copied, setCopied] = useState(false)
   const [run, setRun] = useState(null)             // { logs:[], summary }
   const [wsdl, setWsdl] = useState(null)           // { url, busy, msg } when the import modal is open
+  const [exporting, setExporting] = useState(false)
   const saveTimer = useRef(null)
 
   useEffect(() => { loadAll() }, [profile.id])
@@ -421,6 +422,16 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
     if (created) select(created)
   }
 
+  // ── Postman export ────────────────────────────────────────────────────────
+  async function exportPostman() {
+    if (exporting) return
+    setExporting(true)
+    const res = await window.api.exportPostman(profile.id)
+    setExporting(false)
+    if (res?.error) { setRun(r => ({ ...(r || { logs: [] }), summary: null, logs: [...((r && r.logs) || []), { type: 'error', text: `✗ Export failed: ${res.error}` }] })); return }
+    setRun(r => ({ ...(r || {}), logs: [...((r && r.logs) || []), { type: 'info', text: `✓ Exported ${res.requestCount} request${res.requestCount === 1 ? '' : 's'} to ${res.path}` }] }))
+  }
+
   useEffect(() => () => { window.api.offRunLog?.(); window.api.offRunComplete?.() }, [])
 
   return (
@@ -438,6 +449,9 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <button className="btn-ghost" title="Generate a collection from a WCF/SOAP service's ?wsdl URL"
             onClick={() => setWsdl({ url: '', busy: false, msg: null })}>⬇ Import WSDL</button>
+          <button className="btn-ghost" disabled={!requests.length || exporting}
+            title="Export to a Postman collection — implicit headers (Content-Type/SOAPAction) and one request per test-data row are materialized"
+            onClick={exportPostman}>{exporting ? '… Exporting' : '⬆ Export Postman'}</button>
           <button className="btn-primary" onClick={runCollection} disabled={!requests.length}>▶ Run collection</button>
         </div>
       </div>

@@ -14,6 +14,15 @@ const xml = new XMLParser({ removeNSPrefix: true, ignoreAttributes: false, attri
 
 const insecureHttps = new https.Agent({ rejectUnauthorized: false })
 
+// The Content-Type the engine derives from a request's body_type when none is set explicitly.
+// Exported so the Postman exporter materializes exactly the same header the live Send transmits.
+export const BODY_CONTENT_TYPES = {
+  json: 'application/json',
+  xml: 'application/xml',
+  soap: 'text/xml; charset=utf-8',
+  form: 'application/x-www-form-urlencoded'
+}
+
 // Replace {{name}} tokens against a { name: value } map. Unknown tokens are left intact so the
 // user can see what didn't resolve.
 export function substitute(str, vars) {
@@ -61,11 +70,8 @@ export function sendRequest(req, vars = {}, { timeout = 30000 } = {}) {
 
     let body = substitute(req.body || '', vars)
     const bodyType = req.body_type || 'none'
-    if (body && !headerSet(headers, 'content-type')) {
-      if (bodyType === 'json') headers['Content-Type'] = 'application/json'
-      else if (bodyType === 'xml') headers['Content-Type'] = 'application/xml'
-      else if (bodyType === 'soap') headers['Content-Type'] = 'text/xml; charset=utf-8'
-      else if (bodyType === 'form') headers['Content-Type'] = 'application/x-www-form-urlencoded'
+    if (body && !headerSet(headers, 'content-type') && BODY_CONTENT_TYPES[bodyType]) {
+      headers['Content-Type'] = BODY_CONTENT_TYPES[bodyType]
     }
     if (bodyType === 'soap' && req.soap_action && !headerSet(headers, 'soapaction')) {
       headers['SOAPAction'] = `"${substitute(req.soap_action, vars)}"`

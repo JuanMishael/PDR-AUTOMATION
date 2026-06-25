@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('api', {
   resolveApiRequest: (requestId, dataSetId = null) => ipcRenderer.invoke('api:resolve', requestId, dataSetId),
   runApiCollection: (profileId) => ipcRenderer.invoke('api:runCollection', profileId),
   importWsdl: (profileId, wsdlUrl) => ipcRenderer.invoke('api:importWsdl', profileId, wsdlUrl),
+  exportPostman: (profileId) => ipcRenderer.invoke('api:exportPostman', profileId),
 
   // Storage — Custom Steps
   getCustomSteps: () => ipcRenderer.invoke('storage:getCustomSteps'),

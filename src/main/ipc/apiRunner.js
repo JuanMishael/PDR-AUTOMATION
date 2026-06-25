@@ -1,8 +1,11 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, app, shell } from 'electron'
 import { randomUUID } from 'crypto'
+import { join } from 'path'
+import { writeFileSync, mkdirSync } from 'fs'
 import { getDb } from '../core/db'
 import { substitute, sendRequest, applyExtractions, checkAssertions, runWithAuth } from '../core/apiEngine'
 import { buildWsdlCollection } from '../core/wsdlImport'
+import { buildPostmanCollection } from '../core/postmanExport'
 import { buildDataContext, resolveString } from '../core/tokenResolver'
 
 // Resolve Test Data Library tokens ({{Collection.field}} / {{faker.*}} / {{unique.*}}) in a
@@ -240,6 +243,25 @@ export function registerApiRunnerHandlers() {
       })
       tx()
       return { ok: true, count: operations.length, endpoint, operations: operations.map(o => o.name) }
+    } catch (e) {
+      return { error: e?.message || String(e) }
+    }
+  })
+
+  // Export the profile as a Postman Collection v2.1 file — implicit headers materialized and one
+  // request per data row. Writes next to profile exports and reveals it in the file manager.
+  ipcMain.handle('api:exportPostman', async (_event, profileId) => {
+    const db = getDb()
+    try {
+      const { collection, requestCount, error } = await buildPostmanCollection(db, profileId)
+      if (error) return { error }
+      const dir = join(app.getPath('documents'), 'AutomationTool', 'Profiles')
+      mkdirSync(dir, { recursive: true })
+      const base = String(collection.info.name).replace(/[^a-zA-Z0-9\-_]/g, '_')
+      const path = join(dir, `${base}-${new Date().toISOString().slice(0, 10)}.postman_collection.json`)
+      writeFileSync(path, JSON.stringify(collection, null, 2), 'utf-8')
+      shell.showItemInFolder(path)
+      return { ok: true, path, requestCount }
     } catch (e) {
       return { error: e?.message || String(e) }
     }

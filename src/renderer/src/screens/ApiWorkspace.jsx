@@ -830,6 +830,7 @@ function InlineDataEditor({ collection, group, onReload }) {
   const [rows, setRows] = useState(() => parseSets(collection.sets))
   const [newField, setNewField] = useState('')
   const [menu, setMenu] = useState(null)
+  const [dupMenu, setDupMenu] = useState(null)   // { rowId, x, y } — duplicate-row options popover
   const rowsRef = useRef(rows)
   rowsRef.current = rows
   const focusRef = useRef(null)              // { rowId, field, caret } of the last-focused cell
@@ -871,6 +872,38 @@ function InlineDataEditor({ collection, group, onReload }) {
     onReload?.()
   }
   async function delRow(id) { await window.api.deleteDataSet(id); setRows(rs => rs.filter(r => r.id !== id)); onReload?.() }
+
+  // Duplicate a row, placing the copy right below the source. targetGroup retargets it
+  // (e.g. clone a positive case into a negative test); omit it to keep the same group.
+  async function dupRow(srcId, targetGroup) {
+    setDupMenu(null)
+    const list = rowsRef.current
+    const src = list.find(r => r.id === srcId)
+    if (!src) return
+    const sameGroup = !targetGroup || targetGroup === src.group_type
+    const gt = sameGroup ? src.group_type : targetGroup
+    const name = sameGroup ? `${src.name} copy` : `${src.name} → ${gt}`
+    const { id } = await window.api.saveDataSet({
+      collection_id: collection.id, name, group_type: gt, values: { ...src.values }, sort_order: src.sort_order + 1
+    })
+    const srcIdx = list.findIndex(r => r.id === srcId)
+    const dup = { id, name, group_type: gt, values: { ...src.values }, sort_order: src.sort_order + 1 }
+    // Splice it in right after the source and renumber, so the new order survives a reload.
+    const next = [...list.slice(0, srcIdx + 1), dup, ...list.slice(srcIdx + 1)].map((r, i) => ({ ...r, sort_order: i }))
+    setRows(next)
+    next.forEach(r => window.api.saveDataSet({
+      id: r.id, collection_id: collection.id, name: r.name, group_type: r.group_type, values: r.values, sort_order: r.sort_order
+    }))
+    onReload?.()
+  }
+  function openDupMenu(rowId, btn) {
+    if (dupMenu?.rowId === rowId) return setDupMenu(null)
+    const r = btn.getBoundingClientRect()
+    const W = 180
+    const x = Math.max(8, Math.min(r.right - W, window.innerWidth - W - 8))
+    const y = (window.innerHeight - r.bottom > 170) ? r.bottom + 4 : Math.max(8, r.top - 170)
+    setDupMenu({ rowId, x, y })
+  }
   async function addField() {
     const name = newField.trim(); if (!name) return
     await window.api.saveField({ collection_id: collection.id, name, type: 'text', sort_order: fields.length })
@@ -945,7 +978,14 @@ function InlineDataEditor({ collection, group, onReload }) {
                           onBlur={flush} style={cell(120)} />
                       </td>
                     ))}
-                    <td style={td}><button className="btn-ghost" style={{ padding: '0 6px' }} onClick={() => delRow(r.id)}>✕</button></td>
+                    <td style={td}>
+                      <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
+                        <button className="btn-ghost" style={{ padding: '0 6px' }} title="Duplicate this row"
+                          onClick={e => openDupMenu(r.id, e.currentTarget)}>⧉</button>
+                        <button className="btn-ghost" style={{ padding: '0 6px' }} title="Delete this row"
+                          onClick={() => delRow(r.id)}>✕</button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -958,6 +998,23 @@ function InlineDataEditor({ collection, group, onReload }) {
         <button className="btn-ghost" style={{ padding: '2px 10px', fontSize: 11, marginLeft: 'auto' }} onClick={() => onReload?.()} title="Refresh from Test Data">↻</button>
       </div>
       {menu && <CellTokenMenu x={menu.x} y={menu.y} onPick={insertToken} onClose={() => setMenu(null)} />}
+      {dupMenu && (() => {
+        const src = rows.find(r => r.id === dupMenu.rowId)
+        const item = { textAlign: 'left', padding: '5px 10px', fontSize: 11, width: '100%', whiteSpace: 'nowrap' }
+        return (
+          <>
+            <div style={{ position: 'fixed', inset: 0, zIndex: 70 }} onClick={() => setDupMenu(null)} />
+            <div className="card" style={{ position: 'fixed', left: dupMenu.x, top: dupMenu.y, zIndex: 71, padding: 4, minWidth: 170, display: 'grid', gap: 1 }}>
+              <button className="btn-ghost" style={item} onClick={() => dupRow(dupMenu.rowId)}>⧉ Duplicate (same group)</button>
+              {['positive', 'negative', 'edge'].map(g => (
+                <button key={g} className="btn-ghost" style={item} onClick={() => dupRow(dupMenu.rowId, g)}>
+                  → Duplicate as {g}{src?.group_type === g ? ' (current)' : ''}
+                </button>
+              ))}
+            </div>
+          </>
+        )
+      })()}
     </div>
   )
 }

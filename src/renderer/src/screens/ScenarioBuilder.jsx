@@ -494,6 +494,8 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
   const keyword = params._keyword || CATEGORY_KEYWORD[def.category] || 'When'
   const screenshot = !!params._screenshot
   const skipped = !!params._skip
+  const netTrace = params._netTrace === true
+  const noSettle = params._noSettle === true
 
   let summary = ''
   try { summary = (def.summary ? def.summary(params) : (params.selector || params.url || '')) || '' } catch { summary = '' }
@@ -696,6 +698,14 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
               color: screenshot ? '#10B981' : 'var(--text-muted)',
               borderRadius: 6, padding: '3px 7px', fontSize: 13, cursor: 'pointer'
             }}>📷</button>
+          <button onClick={() => updateParam('_netTrace', !netTrace)}
+            title={netTrace ? 'Network trace ON — this step’s API calls are included in the result' : 'Include this step’s network trace (XHR/fetch) in the result'}
+            style={{
+              background: netTrace ? 'rgba(245,158,11,0.14)' : 'none',
+              border: netTrace ? '1px solid rgba(245,158,11,0.4)' : '1px solid transparent',
+              color: netTrace ? '#F59E0B' : 'var(--text-muted)',
+              borderRadius: 6, padding: '3px 7px', fontSize: 13, cursor: 'pointer'
+            }}>⚡</button>
           <button onClick={() => onMove(step.id, 'up')} disabled={index === 0}
             style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '3px 5px', cursor: 'pointer', opacity: index === 0 ? 0.3 : 1 }}>↑</button>
           <button onClick={() => onMove(step.id, 'down')} disabled={index === total - 1}
@@ -783,6 +793,13 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
             <input value={params._expected || ''} placeholder="Expected result"
               onChange={e => updateParam('_expected', e.target.value)} style={{ fontSize: 12 }} />
           </ParamRow>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginTop: 2 }}>
+            <input type="checkbox" checked={noSettle} style={{ width: 'auto' }}
+              onChange={e => updateParam('_noSettle', e.target.checked)} />
+            <span style={{ fontSize: 12, color: noSettle ? '#F59E0B' : 'var(--text-muted)' }}>
+              Skip calm-playback wait on this step (for polling/streaming screens)
+            </span>
+          </label>
         </div>
       </div>
       )}

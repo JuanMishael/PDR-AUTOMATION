@@ -114,12 +114,20 @@ export default function Results({ ctx, navigate }) {
         })}
       </div>
 
-      {run.trace_path && (
-        <button className="btn-ghost" style={{ marginTop: 16 }}
-          onClick={() => window.api.openTraceViewer(run.trace_path)}>
-          🔍 Open Trace Viewer
-        </button>
-      )}
+      <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
+        {run.trace_path && (
+          <button className="btn-ghost"
+            onClick={() => window.api.openTraceViewer(run.trace_path)}>
+            🔍 Open Trace Viewer
+          </button>
+        )}
+        {run.network_path && (
+          <button className="btn-ghost"
+            onClick={() => window.api.openNetworkLog(run.id)}>
+            🌐 View Network Log
+          </button>
+        )}
+      </div>
     </div>
   )
 }

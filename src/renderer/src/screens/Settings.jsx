@@ -4,7 +4,8 @@ import { confirmDialog } from '../lib/confirm'
 const DEFAULTS = {
   app_name: 'PDR-AUTOMATION', browser: 'chromium', headless: '0',
   default_timeout: '30000', history_retention_days: '30',
-  screenshot_on_fail: '1', trace_on_fail: '1'
+  screenshot_on_fail: '1', trace_on_fail: '1',
+  settle_before_action: '1', settle_timeout: '3000'
 }
 
 export default function Settings() {
@@ -91,6 +92,30 @@ export default function Settings() {
             onChange={e => set('trace_on_fail', e.target.checked ? '1' : '0')} />
           Record trace on failure (Playwright Trace Viewer)
         </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row', textTransform: 'none', letterSpacing: 'normal' }}>
+          <input type="checkbox" checked={settings.settle_before_action === '1'} style={{ width: 'auto' }}
+            onChange={e => set('settle_before_action', e.target.checked ? '1' : '0')} />
+          Calm playback — wait for the page to settle before each step
+        </label>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '-10px 0 0 26px' }}>
+          Before each click/fill, wait for the page's network to go quiet so the UI has loaded —
+          fewer manual waits. Best-effort and capped, so it never hangs. Turn off per-step on a step
+          card if a screen polls or streams.
+        </p>
+        {settings.settle_before_action === '1' && (
+          <div style={{ marginLeft: 26 }}>
+            <label style={{ textTransform: 'none', letterSpacing: 'normal' }}>Settle cap (ms)</label>
+            <input type="number" value={settings.settle_timeout}
+              onChange={e => set('settle_timeout', e.target.value)} style={{ maxWidth: 160 }} />
+          </div>
+        )}
+
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+          Network trace is opt-in per step: tick <strong>⚡ Include network trace in result</strong> on a
+          step card to record the API calls it makes (shown in Results & the HTML report).
+        </p>
+
         <button className="btn-primary" style={{ marginTop: 4 }} onClick={save}>Save Settings</button>
       </div>
 

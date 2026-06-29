@@ -23,6 +23,12 @@ export function generateScript({ profile, scenarios = [], settings = {}, outputD
   const baseUrl = profile.base_url || ''
   const traceOnFail = settings.trace_on_fail === '1'
   const screenshotOnFail = settings.screenshot_on_fail === '1'
+  // "Calm playback": before each action, wait for the page's network to go quiet so the UI
+  // a prior step triggered has actually landed — instead of clicking/typing into a half-loaded
+  // page. Default ON. It's a bounded best-effort settle (never fails the step), so a never-idle
+  // app (polling/SSE) just proceeds at the cap. Disable per-step with params._noSettle.
+  const settleEnabled = settings.settle_before_action !== '0'
+  const settleCap = Number(settings.settle_timeout) > 0 ? Number(settings.settle_timeout) : 3000
 
   // One browser session for the whole run. Scenarios execute in order, carrying state
   // (cookies, login, created records) from one to the next. A "scenario" marker is
@@ -42,7 +48,7 @@ export function generateScript({ profile, scenarios = [], settings = {}, outputD
       .filter(s => !MARKERS.includes(s.action))
       .sort((a, b) => a.sort_order - b.sort_order)
     const stepCode = orderedSteps.map(step => {
-      const code = generateStep(step, globalIndex, baseUrl, { screenshotOnFail, outputDir, dataContext })
+      const code = generateStep(step, globalIndex, baseUrl, { screenshotOnFail, outputDir, dataContext, settleEnabled, settleCap })
       globalIndex++
       return code
     }).join('\n\n')
@@ -66,6 +72,74 @@ ${indent(stepCode, 2)}
       await context.tracing.stop({ path: tracePath });
       process.stderr.write(JSON.stringify({ type: 'trace', path: tracePath }) + '\\n');
     }` : ''
+
+  // Network log flush — drain anything still in flight (a click's responses can land after the
+  // run loop ends), wait for the response bodies to resolve, THEN write to disk + tell the runner.
+  // Without the drain a late/last traced step captures nothing. Only opted-in steps push, so an
+  // empty log = no file.
+  const netStop = `
+    try { await _settle(2000); } catch { /* page may be gone */ }
+    try { await Promise.allSettled(_pending); } catch { /* best-effort */ }
+    try {
+      if (_netlog.length) {
+        require('fs').writeFileSync(${JSON.stringify(outputDir + '/network.json')}, JSON.stringify(_netlog));
+        process.stderr.write(JSON.stringify({ type: 'network', path: ${JSON.stringify(outputDir + '/network.json')} }) + '\\n');
+      }
+    } catch { /* best-effort */ }`
+
+  // Network state + helpers — declared at the IIFE top (NOT inside the try) so _settle() and the
+  // finally-block flush can both see them. Capped PER STEP (one click can fan out to many
+  // map-layer calls) and overall as a safety net.
+  const netDecls = `
+  let _inflight = 0, _lastNetTs = Date.now(), _curStep = null;
+  const _netlog = [], _pending = [];
+  const _NET_MAX = 2000, _PER_STEP_MAX = 50, _BODY_CAP = 4096;
+  const _reqStart = new Map();
+  const _cap = (t) => !t ? '' : (t.length > _BODY_CAP ? t.slice(0, _BODY_CAP) + '\\u2026[truncated]' : t);
+  const _settleEnd = (req) => { _inflight = Math.max(0, _inflight - 1); _lastNetTs = Date.now(); };
+  // Should this request be logged against the current step? (xhr/fetch, step opted in, under caps.)
+  const _take = (m) => { const s = _curStep; return (m && (m.type === 'xhr' || m.type === 'fetch') && s && s.trace && s.n < _PER_STEP_MAX && _netlog.length < _NET_MAX) ? s : null; };`
+
+  // Network instrumentation: attach the context listeners (needs `context`, so it lives in the try).
+  // Counting covers ALL requests so a settle waits for document/script loads too; the LOG is
+  // filtered to xhr/fetch and only records while a step that opted in (_curStep.trace) is running.
+  const netInstrument = `
+    context.on('request', (req) => { _inflight++; _reqStart.set(req, { t: Date.now(), type: req.resourceType() }); });
+    context.on('requestfinished', _settleEnd);
+    context.on('requestfailed', (req) => {
+      _settleEnd(req);
+      const m = _reqStart.get(req); _reqStart.delete(req);
+      const s = _take(m);
+      if (s) { s.n++; _netlog.push({ step: s.label, method: req.method(), url: req.url(), type: m.type, status: 0, ok: false, ms: Date.now() - m.t, payload: _cap(req.postData()), error: (req.failure() && req.failure().errorText) || 'failed' }); }
+    });
+    context.on('response', (res) => {
+      const req = res.request();
+      const m = _reqStart.get(req);
+      const s = _take(m);                 // decide + count synchronously, before the body await races
+      if (!s) return;
+      s.n++;
+      const payload = _cap(req.postData());   // request body (POST/PUT) — grab now, it's sync
+      _pending.push((async () => {
+        let body = '';
+        try { body = _cap(await res.text()); } catch { /* body unavailable */ }
+        _netlog.push({ step: s.label, method: req.method(), url: res.url(), type: m.type, status: res.status(), ok: res.ok(), ms: Date.now() - m.t, payload, body });
+      })());
+    });`
+
+  // Bounded best-effort settle: a short floor (so a just-fired XHR has time to register), then
+  // wait until no requests are in flight AND the network has been quiet ~500ms — capped, never throws.
+  const settleHelper = `
+  async function _settle(capMs) {
+    const cap = capMs > 0 ? capMs : 3000;
+    try {
+      await page.waitForTimeout(150);
+      const _start = Date.now();
+      while (Date.now() - _start < cap) {
+        if (_inflight === 0 && (Date.now() - _lastNetTs) >= 500) return;
+        await page.waitForTimeout(100);
+      }
+    } catch { /* never let a settle fail the step */ }
+  }`
 
   // Persist anything the app downloads (CSV export, etc.). Playwright accepts the
   // download into a temp dir and deletes it on close, so without saveAs the tester
@@ -100,6 +174,8 @@ const { expect } = require('playwright/test');
 (async () => {
   const results = [];
   let browser, context, page;
+${netDecls}
+${settleHelper}
 
   // Smart file upload so testers don't have to understand hidden file inputs.
   //  - trigger set     → click that button and catch the OS file dialog it opens.
@@ -132,6 +208,7 @@ const { expect } = require('playwright/test');
     context = await browser.newContext({ ignoreHTTPSErrors: true, acceptDownloads: true });
     page = await context.newPage();
     page.setDefaultTimeout(${timeout});
+    ${netInstrument}
     ${downloadHandler}
     ${traceStart}
 
@@ -139,9 +216,11 @@ ${indent(stepBlocks, 4)}
 
   } catch (err) {
     ${traceStop}
+    ${netStop}
     process.stderr.write(JSON.stringify({ type: 'fatal', message: err.message }) + '\\n');
     process.exit(1);
   } finally {
+    ${netStop}
     if (browser) await browser.close();
   }
 
@@ -156,7 +235,7 @@ function browserLaunchExpr(profile) {
   return `${browser}.launch({ headless: ${headless} })`
 }
 
-function generateStep(step, index, baseUrl, { screenshotOnFail = false, outputDir = '', dataContext = null } = {}) {
+function generateStep(step, index, baseUrl, { screenshotOnFail = false, outputDir = '', dataContext = null, settleEnabled = false, settleCap = 3000 } = {}) {
   const rawParams = typeof step.params === 'string' ? JSON.parse(step.params) : step.params
   // Resolve {{Collection.field}} / {{faker.*}} / {{unique.*}} to concrete values now, so the
   // emitted script stays plain JS with no runtime data dependency.
@@ -165,7 +244,19 @@ function generateStep(step, index, baseUrl, { screenshotOnFail = false, outputDi
   const stepId = step.id
   const perStepScreenshot = !!p._screenshot
 
-  const body = actionToCode(step.action, p, baseUrl)
+  // Calm-playback settle BEFORE the action: wait for the prior step's network to quiet so the
+  // UI it triggered has landed. Skipped for 'comment' (a no-op note) and any step the tester
+  // opted out of via params._noSettle (e.g. a known polling/streaming screen).
+  const doSettle = settleEnabled && p._noSettle !== true && step.action !== 'comment'
+  const settlePre = doSettle ? `await _settle(${settleCap});\n    ` : ''
+
+  // Mark which step is "current" for network attribution — set AFTER the settle (which is still
+  // draining the PRIOR step's calls) and BEFORE this action, so calls land tagged to the right
+  // step. trace=true only when the tester ticked "include network trace" (params._netTrace).
+  const stepMarker = step.action === 'comment' ? ''
+    : `_curStep = { label: ${JSON.stringify(label)}, trace: ${p._netTrace === true}, n: 0 };\n    `
+
+  const body = settlePre + stepMarker + actionToCode(step.action, p, baseUrl)
 
   const perStepSsBlock = perStepScreenshot ? `
     try {

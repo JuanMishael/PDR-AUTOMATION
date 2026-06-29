@@ -256,6 +256,9 @@ export async function initDb() {
   try { _db.run('ALTER TABLE history ADD COLUMN scenarios_passed INTEGER NOT NULL DEFAULT 0') } catch { /* already migrated */ }
   try { _db.run('ALTER TABLE history ADD COLUMN scenarios_failed INTEGER NOT NULL DEFAULT 0') } catch { /* already migrated */ }
   try { _db.run('ALTER TABLE history ADD COLUMN scenario_results TEXT') } catch { /* already migrated */ }
+  // Network log: path to the captured XHR/fetch calls (network.json) for this run, shown in
+  // Results and the HTML report (the DevTools-style "controller interactions" view).
+  try { _db.run('ALTER TABLE history ADD COLUMN network_path TEXT') } catch { /* already migrated */ }
   // A data field can remember WHERE it goes on the page (selector picked once), so a
   // whole form can be dropped into a scenario as pre-wired fill steps (Test Data Phase 2).
   try { _db.run('ALTER TABLE data_fields ADD COLUMN selector TEXT NOT NULL DEFAULT \'\'') } catch { /* already migrated */ }
@@ -278,6 +281,8 @@ function seedDefaultSettings() {
     ['default_timeout', '30000'],
     ['history_retention_days', '30'],
     ['screenshot_on_fail', '1'],
-    ['trace_on_fail', '1']
+    ['trace_on_fail', '1'],
+    ['settle_before_action', '1'],
+    ['settle_timeout', '3000']
   ]) insert.run(k, v)
 }

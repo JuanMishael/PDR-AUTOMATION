@@ -55,6 +55,75 @@ export function registerReporterHandlers() {
     await shell.openPath(tracePath)
     return { ok: true }
   })
+
+  // Build + open a standalone DevTools-style network log page for a run (the XHR/fetch calls
+  // the page made). Kept separate from the step report so it can be opened on its own.
+  ipcMain.handle('reporter:openNetwork', async (_, runId) => {
+    const db = getDb()
+    const run = db.prepare('SELECT * FROM history WHERE id = ?').get(runId)
+    if (!run) return { error: 'Run not found' }
+    const entries = readNetwork(run.network_path)
+    if (!entries.length) return { error: 'No network log was captured for this run' }
+
+    const dir = reportsDirectory()
+    const timestamp = new Date(run.started_at).toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const baseName = sanitize(`${run.profile_name}-${timestamp}-network`)
+    const baseCss = `body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 40px auto; color: #1a1a2e; }
+      h1 { font-size: 1.4rem; margin-bottom: 4px; } .meta { color: #666; font-size: 0.85rem; margin-bottom: 20px; }`
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"/>
+<title>Network — ${esc(run.profile_name)}</title><style>${baseCss}${NETWORK_CSS}</style></head>
+<body><h1>Network log — ${esc(run.profile_name)}</h1>
+<div class="meta">${entries.length} request${entries.length !== 1 ? 's' : ''} · ${run.started_at}</div>
+${networkTableHtml(entries)}</body></html>`
+    const path = join(dir, `${baseName}.html`)
+    writeFileSync(path, html, 'utf-8')
+    shell.openPath(path)
+    return { ok: true, path }
+  })
+}
+
+// Read a run's captured network.json (the XHR/fetch calls). Returns [] if absent/unreadable.
+function readNetwork(networkPath) {
+  if (!networkPath || !existsSync(networkPath)) return []
+  try { return JSON.parse(readFileSync(networkPath, 'utf-8')) || [] } catch { return [] }
+}
+
+// Just the network-table rules — shared by the standalone page AND embedded in the step report
+// (which already defines body/h1/.meta, so those are kept out of here to avoid clashing).
+const NETWORK_CSS = `
+  table.net { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  table.net th, table.net td { padding: 7px 10px; text-align: left; border-bottom: 1px solid #eee; vertical-align: top; }
+  table.net th { background: #f3f4f6; font-weight: 600; }
+  .m { font-family: monospace; font-weight: 600; }
+  .u { font-family: monospace; word-break: break-all; }
+  .st-ok { color: #166534; font-weight: 600; }
+  .st-bad { color: #991b1b; font-weight: 600; }
+  details summary { cursor: pointer; color: #4F46E5; font-size: 0.8rem; }
+  pre { background: #f8fafc; padding: 8px; border-radius: 4px; overflow:auto; max-height: 240px; font-size: 0.78rem; white-space: pre-wrap; word-break: break-all; }`
+
+// One reusable <table> of the captured calls — embedded in the run report and the standalone page.
+function networkTableHtml(entries) {
+  const rows = entries.map((e, i) => {
+    const bad = !e.status || e.status >= 400
+    const status = e.error ? `✕ ${esc(e.error)}` : e.status
+    const cell = (val, label) => val
+      ? `<details><summary>${label}</summary><pre>${esc(val)}</pre></details>`
+      : '—'
+    return `<tr>
+      <td>${i + 1}</td>
+      <td>${esc(e.step || '')}</td>
+      <td class="m">${esc(e.method || '')}</td>
+      <td class="u">${esc(e.url || '')}</td>
+      <td class="${bad ? 'st-bad' : 'st-ok'}">${status}</td>
+      <td>${esc(e.type || '')}</td>
+      <td>${e.ms != null ? e.ms + ' ms' : '—'}</td>
+      <td>${cell(e.payload, 'payload')}</td>
+      <td>${cell(e.body, 'body')}</td>
+    </tr>`
+  }).join('')
+  return `<table class="net"><thead><tr>
+    <th>#</th><th>Step</th><th>Method</th><th>URL</th><th>Status</th><th>Type</th><th>Time</th><th>Payload</th><th>Response</th>
+  </tr></thead><tbody>${rows}</tbody></table>`
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +191,12 @@ function exportHtml(run, results, dir, baseName) {
       ${r.screenshot && existsSync(r.screenshot) ? `<td><img src="file://${r.screenshot.replace(/\\/g, '/')}" style="max-width:300px;border-radius:4px"/></td>` : '<td>—</td>'}
     </tr>`).join('')
 
+  const netEntries = readNetwork(run.network_path)
+  const networkSection = netEntries.length ? `
+  <h2 style="font-size:1.15rem;margin:32px 0 6px">Network calls (XHR / fetch)</h2>
+  <div class="meta">${netEntries.length} request${netEntries.length !== 1 ? 's' : ''} the page made to its controllers during the run.</div>
+  ${networkTableHtml(netEntries)}` : ''
+
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -139,6 +214,7 @@ function exportHtml(run, results, dir, baseName) {
     .badge { padding: 2px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; }
     tr.passed .badge { background: #dcfce7; color: #166534; }
     tr.failed .badge { background: #fee2e2; color: #991b1b; }
+    ${NETWORK_CSS}
   </style>
 </head>
 <body>
@@ -154,6 +230,7 @@ function exportHtml(run, results, dir, baseName) {
     <thead><tr><th>#</th><th>Step</th><th>Status</th><th>Error</th><th>Screenshot</th></tr></thead>
     <tbody>${rows}</tbody>
   </table>
+  ${networkSection}
 </body>
 </html>`
 

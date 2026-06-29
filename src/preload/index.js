@@ -62,6 +62,7 @@ contextBridge.exposeInMainWorld('api', {
   exportReport: (runId, format) => ipcRenderer.invoke('reporter:export', runId, format),
   exportSteps: (profileId, scenarioId) => ipcRenderer.invoke('reporter:exportSteps', profileId, scenarioId),
   openTraceViewer: (tracePath) => ipcRenderer.invoke('reporter:openTrace', tracePath),
+  openNetworkLog: (runId) => ipcRenderer.invoke('reporter:openNetwork', runId),
 
   // Selector tester — opts: { url, selector, browser, steps, baseUrl, runSteps }
   testSelector: (opts) => ipcRenderer.invoke('selector:test', opts),

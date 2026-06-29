@@ -97,7 +97,7 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dat
   // With no collections/sets this is an empty context and the run path is unchanged.
   const dataContext = await buildDataContext(getDb(), dataSetId)
 
-  const { status, results, scenarioResults = [], fatalError, tracePath } = await runWeb({
+  const { status, results, scenarioResults = [], fatalError, tracePath, networkPath } = await runWeb({
     runId,
     profile,
     scenarios,
@@ -109,6 +109,7 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dat
 
   if (fatalError) send('runner:log', { type: 'error', text: `✗ ${fatalError}` })
   if (tracePath)  send('runner:log', { type: 'info', text: `📎 Trace saved: ${tracePath}` })
+  if (networkPath) send('runner:log', { type: 'info', text: `🌐 Network log captured` })
 
   const finishedAt = new Date().toISOString()
   const passed = results.filter(r => r.status === 'passed').length
@@ -122,15 +123,15 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dat
   getDb().prepare(`
     INSERT INTO history (id, profile_id, profile_name, scenario_id, scenario_name, status,
       started_at, finished_at, duration_ms, steps_total, steps_passed, steps_failed,
-      scenarios_total, scenarios_passed, scenarios_failed, scenario_results, log, trace_path)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      scenarios_total, scenarios_passed, scenarios_failed, scenario_results, log, trace_path, network_path)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     historyId, profile.id, profile.name,
     scenarioMeta.scenarioId || null, scenarioMeta.scenarioName || null,
     overallStatus, startedAt, finishedAt, durationMs,
     results.length, passed, failed,
     scenarioResults.length, scenariosPassed, scenariosFailed, JSON.stringify(scenarioResults),
-    JSON.stringify(results), tracePath || null
+    JSON.stringify(results), tracePath || null, networkPath || null
   )
 
   const summary = {

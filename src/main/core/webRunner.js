@@ -4,15 +4,15 @@ import { join, resolve } from 'path'
 import { app } from 'electron'
 import { generateScript } from './scriptGenerator'
 
-// Resolve node_modules from the app root so spawned scripts can require('playwright')
+// Resolve node_modules from the app root so spawned scripts can require('playwright').
+// The build ships unpacked (asar: false), so node_modules sits under the app path in
+// both dev and packaged builds.
 function getNodeModulesPath() {
-  const appRoot = app.isPackaged
-    ? process.resourcesPath
-    : resolve(app.getAppPath())
-  return join(appRoot, 'node_modules')
+  return join(resolve(app.getAppPath()), 'node_modules')
 }
 
-// Find the system Node.js binary — process.execPath in Electron is electron.exe, not node
+// Find the system Node.js binary — process.execPath in Electron is electron.exe, not node.
+// Only used in dev; packaged builds run the script with Electron's own Node (see runWeb).
 function getNodeExecutable() {
   try {
     const result = execSync(
@@ -44,10 +44,18 @@ export async function runWeb({ runId, profile, scenarios = [], settings = {}, da
       ? `${nodeModules};${process.env.NODE_PATH}`
       : nodeModules
 
-    const proc = spawn(getNodeExecutable(), [scriptPath], {
-      cwd: outputDir,
-      env: { ...process.env, NODE_PATH: nodePath }
-    })
+    // Packaged: run with Electron's built-in Node (ELECTRON_RUN_AS_NODE) so end users
+    // don't need Node.js installed. Dev: use the system node on PATH.
+    const env = { ...process.env, NODE_PATH: nodePath }
+    let nodeExec
+    if (app.isPackaged) {
+      nodeExec = process.execPath
+      env.ELECTRON_RUN_AS_NODE = '1'
+    } else {
+      nodeExec = getNodeExecutable()
+    }
+
+    const proc = spawn(nodeExec, [scriptPath], { cwd: outputDir, env })
 
     activeRuns.set(runId, proc)
 

@@ -17,6 +17,9 @@ data/*.db-journal
 test-results/
 playwright-report/
 
+# Bundled browser for the installer (build artifact, ~150MB)
+pw-browsers/
+
 # Logs
 *.log
 npm-debug.log*

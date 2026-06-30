@@ -76,7 +76,13 @@ npm run dev
 npm run dist
 ```
 
-Output goes to `release/`.
+Output goes to `release/`. `npm run dist` builds the app, downloads Chromium into
+`pw-browsers/`, and bundles it into the installer — so end users just run the
+installer and use the app. No Node.js and no `playwright install` on their machine:
+runs execute with the Electron-bundled Node and the bundled Chromium.
+
+> Installs ship Chromium only. Firefox/WebKit are opt-in per profile and not bundled;
+> a profile that selects them on a machine without them will report the engine missing.
 
 ## Project Structure
 

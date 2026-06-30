@@ -2,6 +2,13 @@ import { app, BrowserWindow, shell, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import appIcon from '../../resources/favicon/icon-512.png?asset'
+
+// Use the Chromium bundled inside the installer (resources/pw-browsers) so end users
+// never have to run `playwright install`. Set before any playwright launch; it also
+// propagates to the spawned run process via inherited env. Dev keeps the normal cache.
+if (app.isPackaged) {
+  process.env.PLAYWRIGHT_BROWSERS_PATH = join(process.resourcesPath, 'pw-browsers')
+}
 import { initDb, flushDb } from './core/db'
 import { nudgeWindowFocus } from './core/windowFocus'
 import { registerRunnerHandlers } from './ipc/runner'

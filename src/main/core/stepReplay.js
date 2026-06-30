@@ -170,6 +170,15 @@ export async function replayStep(page, action, p, baseUrl) {
  * naming the step that broke — so the UI can say which step failed instead of
  * misreporting "0 matches" / "couldn't capture".
  */
+// Bounded best-effort settle between replayed steps — the replay equivalent of the run's
+// calm-playback wait. Lets a prior step's network/UI land before the next action so replay
+// doesn't rush and fail on slow apps. Built on Playwright's networkidle but capped + swallowed,
+// so a never-idle app (maps/polling) just proceeds after the cap instead of hanging.
+const REPLAY_SETTLE_CAP = 6000
+async function settle(page) {
+  try { await page.waitForLoadState('networkidle', { timeout: REPLAY_SETTLE_CAP }) } catch { /* proceed */ }
+}
+
 export async function replaySteps(page, steps, baseUrl) {
   let ranSteps = 0
   for (let i = 0; i < steps.length; i++) {
@@ -178,6 +187,7 @@ export async function replaySteps(page, steps, baseUrl) {
     const p = parseParams(steps[i].params)
     try {
       await replayStep(page, action, p, baseUrl)
+      await settle(page)   // wait for this step's network to quiet before the next
       ranSteps++
     } catch (e) {
       const detail = (e.message || '').split('\n')[0].slice(0, 100)

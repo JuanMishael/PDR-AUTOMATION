@@ -132,8 +132,8 @@ export const ACTION_DEFS = {
     summary: p => `${p.selector || 'page'} @ (${p.x || 0}, ${p.y || 0})`,
     params: [
       { key: 'selector', label: 'Selector (blank = whole page)', placeholder: 'canvas#map (optional)' },
-      { key: 'x', label: 'X — px from element left', type: 'number', placeholder: '0' },
-      { key: 'y', label: 'Y — px from element top', type: 'number', placeholder: '0' }
+      { key: 'x', label: 'X — px from element left', type: 'number', placeholder: '0', varOk: true },
+      { key: 'y', label: 'Y — px from element top', type: 'number', placeholder: '0', varOk: true }
     ]
   },
   dragByOffset: {

@@ -28,7 +28,11 @@ export function generateScript({ profile, scenarios = [], settings = {}, outputD
   // page. Default ON. It's a bounded best-effort settle (never fails the step), so a never-idle
   // app (polling/SSE) just proceeds at the cap. Disable per-step with params._noSettle.
   const settleEnabled = settings.settle_before_action !== '0'
-  const settleCap = Number(settings.settle_timeout) > 0 ? Number(settings.settle_timeout) : 3000
+  // Cap on the per-step settle. 0 = no limit (wait until the network is fully idle) — only safe
+  // on apps that actually go quiet; on a polling/streaming app it waits the whole step out.
+  const _rawCap = settings.settle_timeout
+  const _capN = (_rawCap === '' || _rawCap == null) ? 3000 : Number(_rawCap)
+  const settleCap = Number.isFinite(_capN) && _capN >= 0 ? _capN : 3000
 
   // One browser session for the whole run. Scenarios execute in order, carrying state
   // (cookies, login, created records) from one to the next. A "scenario" marker is
@@ -130,15 +134,15 @@ ${indent(stepCode, 2)}
   // wait until no requests are in flight AND the network has been quiet ~500ms — capped, never throws.
   const settleHelper = `
   async function _settle(capMs) {
-    const cap = capMs > 0 ? capMs : 3000;
+    const unlimited = !(capMs > 0);   // capMs <= 0 → wait until fully idle, no time limit
     try {
       await page.waitForTimeout(150);
       const _start = Date.now();
-      while (Date.now() - _start < cap) {
+      while (unlimited || Date.now() - _start < capMs) {
         if (_inflight === 0 && (Date.now() - _lastNetTs) >= 500) return;
         await page.waitForTimeout(100);
       }
-    } catch { /* never let a settle fail the step */ }
+    } catch { /* never let a settle fail the step (e.g. page closed / stopped) */ }
   }`
 
   // Persist anything the app downloads (CSV export, etc.). Playwright accepts the

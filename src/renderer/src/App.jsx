@@ -7,6 +7,7 @@ import ProfileConfig from './screens/ProfileConfig'
 import ScenarioBuilder from './screens/ScenarioBuilder'
 import TestData from './screens/TestData'
 import ActiveRun from './screens/ActiveRun'
+import ParallelRun from './screens/ParallelRun'
 import Results from './screens/Results'
 import History from './screens/History'
 import Settings from './screens/Settings'
@@ -19,6 +20,7 @@ const SCREENS = {
   scenarios: ScenarioBuilder,
   testdata: TestData,
   run: ActiveRun,
+  parallel: ParallelRun,
   results: Results,
   history: History,
   settings: Settings,

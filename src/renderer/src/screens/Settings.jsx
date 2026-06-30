@@ -105,9 +105,13 @@ export default function Settings() {
         </p>
         {settings.settle_before_action === '1' && (
           <div style={{ marginLeft: 26 }}>
-            <label style={{ textTransform: 'none', letterSpacing: 'normal' }}>Settle cap (ms)</label>
-            <input type="number" value={settings.settle_timeout}
+            <label style={{ textTransform: 'none', letterSpacing: 'normal' }}>Settle cap (ms) — 0 = no limit</label>
+            <input type="number" min="0" value={settings.settle_timeout}
               onChange={e => set('settle_timeout', e.target.value)} style={{ maxWidth: 160 }} />
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0 0' }}>
+              0 waits until the network is fully idle (no time limit). On an app with constant
+              background traffic (maps/polling) this can wait the whole step out — use a number there.
+            </p>
           </div>
         )}
 

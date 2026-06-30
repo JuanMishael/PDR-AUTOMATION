@@ -5,8 +5,10 @@ contextBridge.exposeInMainWorld('api', {
   runProfile: (profileId, dataSetId = null) => ipcRenderer.invoke('runner:run', profileId, dataSetId),
   runScenario: (profileId, scenarioId, dataSetId = null) => ipcRenderer.invoke('runner:runScenario', { profileId, scenarioId, dataSetId }),
   stopRun: (runId) => ipcRenderer.invoke('runner:stop', runId),
+  onRunStarted: (cb) => ipcRenderer.on('runner:started', (_, data) => cb(data)),
   onRunLog: (cb) => ipcRenderer.on('runner:log', (_, data) => cb(data)),
   onRunComplete: (cb) => ipcRenderer.on('runner:complete', (_, data) => cb(data)),
+  offRunStarted: () => ipcRenderer.removeAllListeners('runner:started'),
   offRunLog: () => ipcRenderer.removeAllListeners('runner:log'),
   offRunComplete: () => ipcRenderer.removeAllListeners('runner:complete'),
 

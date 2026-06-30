@@ -472,7 +472,7 @@ function SelectorChooser({ title, candidates, onUse, onFallback, onClose }) {
 
 // ─── Canvas Step ─────────────────────────────────────────────────────────────
 
-function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGroupEnd, profile, priorSteps = [], collections = [], groupCollectionId = null, indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, dragGroupActive = false, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
+function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGroupEnd, profile, priorSteps = [], collections = [], reloadCollections = null, groupCollectionId = null, indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, dragGroupActive = false, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
   // Drag-and-drop wiring shared by the normal card and the group cards.
   const dragging = dragId === step.id || (dragGroupActive && selected)
   const showDropLine = overId === step.id && dragId && dragId !== step.id
@@ -518,7 +518,9 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
   if (isGroupStart(step.action)) {
     const col = collections.find(c => c.id === params.collectionId)
     const grp = params.group || 'positive'
-    const n = col ? col.sets.filter(s => grp === 'all' || s.group_type === grp).length : 0
+    const grpSets = col ? col.sets.filter(s => grp === 'all' || s.group_type === grp) : []
+    const pinnedSet = params.dataSetId ? grpSets.find(s => String(s.id) === String(params.dataSetId)) : null
+    const n = pinnedSet ? 1 : grpSets.length
     const repeat = step.action === 'loopStart' || !!params.repeat
     return (
       <div {...dragHandlers} style={{ border: `1px solid ${active ? 'var(--accent)' : 'var(--accent)'}`, borderRadius: 8, marginBottom: 8, marginLeft: indent * 18,
@@ -527,8 +529,8 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', flexWrap: 'wrap' }}>
           <span {...gripProps}>⠿</span>
           {onToggleSelect && (
-            <input type="checkbox" checked={selected} onChange={onToggleSelect}
-              onClick={e => e.stopPropagation()} title="Select the whole group (its steps too)"
+            <input type="checkbox" checked={selected} readOnly
+              onClick={e => { e.stopPropagation(); onToggleSelect(e.shiftKey) }} title="Select the whole group (its steps too) · Shift-click to select a range"
               style={{ width: 'auto', flexShrink: 0, cursor: 'pointer', margin: 0 }} />
           )}
           <button onClick={onToggleGroup} title={groupCollapsed ? 'Expand group' : 'Collapse group'}
@@ -545,16 +547,28 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
           </label>
           {repeat && (
             <>
-              <select value={params.collectionId || ''} onChange={e => updateParam('collectionId', e.target.value)} style={{ fontSize: 12 }}>
+              <select value={params.collectionId || ''}
+                onChange={e => onChange({ ...step, params: { ...params, collectionId: e.target.value, dataSetId: undefined } })}
+                style={{ fontSize: 12 }}>
                 <option value="">— collection —</option>
                 {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
-              <select value={grp} onChange={e => updateParam('group', e.target.value)} style={{ fontSize: 12 }}>
+              <select value={grp}
+                onChange={e => onChange({ ...step, params: { ...params, group: e.target.value, dataSetId: undefined } })}
+                style={{ fontSize: 12 }}>
                 <option value="positive">📗 Positive</option>
                 <option value="negative">📕 Negative</option>
                 <option value="edge">📒 Edge</option>
                 <option value="all">All groups</option>
               </select>
+              {col && (
+                <select value={params.dataSetId || ''}
+                  onChange={e => updateParam('dataSetId', e.target.value || undefined)} style={{ fontSize: 12 }}
+                  title="Loop every set, or pin one for a single run">
+                  <option value="">↻ all {grp === 'all' ? '' : grp + ' '}sets</option>
+                  {grpSets.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              )}
             </>
           )}
           {skipped && (
@@ -578,7 +592,9 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
         </div>
         {repeat && (
           <div style={{ padding: '0 12px 8px', fontSize: 11, color: 'var(--text-muted)' }}>
-            {col ? `↻ Steps in this group run ${n} time${n !== 1 ? 's' : ''} — once per ${grp === 'all' ? '' : grp + ' '}set, with that set's {{tokens}}.` : 'Pick a collection to repeat over.'}
+            {!col ? 'Pick a collection to repeat over.'
+              : pinnedSet ? `↻ Steps run once — with set "${pinnedSet.name}"'s {{tokens}}.`
+              : `↻ Steps in this group run ${n} time${n !== 1 ? 's' : ''} — once per ${grp === 'all' ? '' : grp + ' '}set, with that set's {{tokens}}.`}
           </div>
         )}
       </div>
@@ -638,8 +654,8 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
         <span {...gripProps}>⠿</span>
         {onToggleSelect && (
-          <input type="checkbox" checked={selected} onChange={onToggleSelect}
-            onClick={e => e.stopPropagation()} title="Select for bulk actions"
+          <input type="checkbox" checked={selected} readOnly
+            onClick={e => { e.stopPropagation(); onToggleSelect(e.shiftKey) }} title="Select for bulk actions · Shift-click to select a range"
             style={{ width: 'auto', flexShrink: 0, cursor: 'pointer', margin: 0 }} />
         )}
         <button onClick={cycleKeyword} title="Click to cycle keyword" style={{
@@ -750,10 +766,8 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                   )}
                 </div>
               ) : isSelector ? (
-                <div style={{ display: 'flex', gap: 4 }}>
-                  <input type="text" value={params[p.key] || ''} placeholder={p.placeholder || ''}
-                    onChange={e => updateParam(p.key, e.target.value)}
-                    style={{ fontSize: 12, flex: 1, minWidth: 0 }} />
+                <VarInput value={params[p.key] || ''} onChange={v => updateParam(p.key, v)} placeholder={p.placeholder}
+                  collections={collections} groupCollectionId={groupCollectionId} reload={reloadCollections}>
                   <PickButton
                     baseUrl={profile?.base_url}
                     browser={profile?.browser}
@@ -769,16 +783,20 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                     onUse={sel => updateParam(p.key, sel)}
                     onUseFallback={p.key === 'selector' ? (sel => updateParam('selector2', sel)) : null}
                   />
-                </div>
-              ) : (
-                <div style={{ display: 'flex', gap: 4 }}>
-                  <input type={p.type || 'text'} value={params[p.key] || ''} placeholder={p.placeholder || ''}
-                    onChange={e => updateParam(p.key, e.target.value)} style={{ fontSize: 12, flex: 1, minWidth: 0 }} />
-                  {/* Token insert — only where a {{token}} makes sense (skip numeric params). */}
+                </VarInput>
+              ) : (p.type !== 'number' || p.varOk) ? (
+                // varOk lets an otherwise-numeric field (e.g. clickAt X/Y) hold a {{token}};
+                // the generator coerces the resolved string back to a number.
+                <VarInput value={params[p.key] || ''} onChange={v => updateParam(p.key, v)} placeholder={p.placeholder}
+                  type={p.varOk ? 'text' : (p.type || 'text')}
+                  collections={collections} groupCollectionId={groupCollectionId} reload={reloadCollections}>
                   {collections.length > 0 && p.type !== 'number' && (
                     <TokenButton collections={collections} groupCollectionId={groupCollectionId} onInsert={tok => updateParam(p.key, (params[p.key] || '') + tok)} />
                   )}
-                </div>
+                </VarInput>
+              ) : (
+                <input type={p.type || 'text'} value={params[p.key] || ''} placeholder={p.placeholder || ''}
+                  onChange={e => updateParam(p.key, e.target.value)} style={{ fontSize: 12, flex: 1, minWidth: 0 }} />
               )}
             </ParamRow>
           )
@@ -918,6 +936,110 @@ function TokenButton({ collections, onInsert, groupCollectionId = null }) {
   )
 }
 
+// Strip a string down to a token-safe field name (letters, digits, underscore).
+function sanitizeVar(s) {
+  return String(s || '').trim().replace(/[^a-zA-Z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30)
+}
+
+// A text/selector/number input with a {+} "make variable" button. Highlight a literal in the
+// field, click {+}, and it creates (or reuses) a {{Collection.field}} — the highlighted text
+// becomes that field's default value — then swaps the selection for the token, all without
+// leaving the step box. No selection = it just inserts a token at the caret. `children` render
+// between the input and {+} (e.g. the Pick/Test or { } buttons a field already had).
+function VarInput({ value, onChange, placeholder, type = 'text', multiline = false, rows = 2,
+                   collections = [], groupCollectionId = null, reload, children }) {
+  const ref = useRef(null)
+  const selRef = useRef({ start: 0, end: 0 })
+  const [form, setForm] = useState(null)
+
+  function trackSel() {
+    const el = ref.current
+    if (el && el.selectionStart != null) selRef.current = { start: el.selectionStart, end: el.selectionEnd }
+  }
+  function openForm() {
+    const { start, end } = selRef.current
+    const sel = end > start ? String(value).slice(start, end) : ''
+    setForm({ start, end, name: sanitizeVar(sel), val: sel,
+      collectionId: groupCollectionId || collections[0]?.id || '__new__', newCol: 'Variables' })
+  }
+  async function create() {
+    const name = sanitizeVar(form.name)
+    if (!name) return
+    let cid = form.collectionId, colName
+    if (cid === '__new__') {
+      const wanted = (form.newCol || 'Variables').trim() || 'Variables'
+      const existing = collections.find(c => c.name.toLowerCase() === wanted.toLowerCase())
+      if (existing) { cid = existing.id; colName = existing.name }
+      else { const r = await window.api.saveCollection({ name: wanted }); cid = r.id; colName = wanted }
+    } else {
+      colName = collections.find(c => c.id === cid)?.name || ''
+    }
+    // Reuse a same-named field if it already exists (don't clobber its default); else create one.
+    const dup = collections.find(c => c.id === cid)?.fields?.some(x => x.name.toLowerCase() === name.toLowerCase())
+    if (!dup) await window.api.saveField({ collection_id: cid, name, default_token: form.val })
+    const token = `{{${colName}.${name}}}`
+    onChange(String(value).slice(0, form.start) + token + String(value).slice(form.end))
+    await reload?.()
+    setForm(null)
+  }
+
+  const Tag = multiline ? 'textarea' : 'input'
+  const lbl = { fontSize: 11, color: 'var(--text-muted)', display: 'grid', gap: 3 }
+  const previewName = (collections.find(c => c.id === form?.collectionId)?.name) || form?.newCol || 'Collection'
+  return (
+    <div style={{ display: 'flex', gap: 4, alignItems: multiline ? 'flex-start' : 'center', position: 'relative', flex: 1, minWidth: 0 }}>
+      <Tag ref={ref} {...(multiline ? { rows } : { type })} value={value ?? ''} placeholder={placeholder || ''}
+        onChange={e => onChange(e.target.value)} onSelect={trackSel} onKeyUp={trackSel} onMouseUp={trackSel}
+        style={{ fontSize: 12, flex: 1, minWidth: 0 }} />
+      {children}
+      <button type="button" title="Highlight text first, then click to turn it into a reusable {{variable}}"
+        onMouseDown={e => { e.preventDefault(); trackSel(); openForm() }}
+        style={{ flexShrink: 0, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6,
+          color: 'var(--accent)', padding: '5px 7px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+        {'{+}'}
+      </button>
+      {form && (
+        <>
+          <div onClick={() => setForm(null)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+          <div style={{ position: 'absolute', top: '100%', right: 0, zIndex: 41, marginTop: 4, width: 280,
+            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.25)', display: 'grid', gap: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Make variable
+            </div>
+            <label style={lbl}>Collection
+              <select value={form.collectionId} onChange={e => setForm(f => ({ ...f, collectionId: e.target.value }))} style={{ fontSize: 12, width: '100%' }}>
+                {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <option value="__new__">＋ New collection…</option>
+              </select>
+            </label>
+            {form.collectionId === '__new__' && (
+              <label style={lbl}>New collection name
+                <input value={form.newCol} onChange={e => setForm(f => ({ ...f, newCol: e.target.value }))} style={{ fontSize: 12, width: '100%' }} />
+              </label>
+            )}
+            <label style={lbl}>Variable name
+              <input autoFocus value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="SELECT_PLACE" style={{ fontSize: 12, width: '100%', fontFamily: 'var(--font-mono)' }} />
+            </label>
+            <label style={lbl}>Value (becomes the field default)
+              <input value={form.val} onChange={e => setForm(f => ({ ...f, val: e.target.value }))}
+                placeholder="the value this should use" style={{ fontSize: 12, width: '100%' }} />
+            </label>
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+              <button onClick={() => setForm(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={create} disabled={!sanitizeVar(form.name)} className="btn-primary" style={{ fontSize: 11, padding: '4px 10px' }}>Create &amp; insert</button>
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
+              {`{{${previewName}.${sanitizeVar(form.name) || 'NAME'}}}`}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // Derive a sensible field name from a selector (#Username → Username, [name=email] → email).
 function fieldNameFromSelector(sel) {
   if (!sel) return ''
@@ -934,6 +1056,14 @@ const INTENTS = [{ k: 'positive', l: '📗 Positive' }, { k: 'negative', l: '�
 // Steps come back from storage with params as a JSON string (see CanvasStep) — parse safely.
 function stepParams(s) {
   try { return typeof s.params === 'string' ? JSON.parse(s.params) : (s.params || {}) } catch { return {} }
+}
+
+// Lower-cased text a step is matched against by the Ctrl+F find bar: its name, action, and the
+// params a tester actually reads (selectors, the value typed, url, comment text).
+function stepHaystack(s) {
+  const p = stepParams(s)
+  return [s.label, s.action, p.selector, p.selector2, p.value, p.url, p.text]
+    .filter(Boolean).join(' ').toLowerCase()
 }
 
 // Inline test-data creator: prefills field/value rows from this scenario's fill steps
@@ -1372,10 +1502,29 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [dragId, setDragId] = useState(null)     // step/group being dragged
   const [overId, setOverId] = useState(null)     // drop-before target (for the indicator line)
   const [activeId, setActiveId] = useState(null) // last-clicked step (highlight)
+  const undoStack = useRef([])                   // past step id-orders, for Ctrl+Z (reorders only)
+  const lastClicked = useRef(null)               // last checkbox-clicked step id, for shift-range select
   const [collections, setCollections] = useState([])
   const [fillMenu, setFillMenu]       = useState(false)   // "Fill form" collection picker open
   const [dataModal, setDataModal]     = useState(false)   // capture/create test data inline
+  const [find, setFind]               = useState('')      // Ctrl+F find-in-steps query
+  const [findOpen, setFindOpen]       = useState(false)
+  const findRef                       = useRef(null)
   const saveChain                     = useRef(Promise.resolve())   // serialize background step saves
+
+  // Ctrl/Cmd+F opens the find bar and focuses it (overriding the browser's own find, which
+  // can't see virtualized/collapsed step cards anyway). Esc closes it from inside the input.
+  useEffect(() => {
+    function onKey(e) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault()
+        setFindOpen(true)
+        requestAnimationFrame(() => findRef.current?.focus())
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   function toggleExpand(id) {
     setExpandedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -1386,8 +1535,23 @@ export default function ScenarioBuilder({ navigate, ctx }) {
 
   // Ticking a group's checkbox selects (or clears) the whole block — its inner steps and
   // any nested groups too. A plain step toggles just itself.
-  function toggleSelect(id) {
+  function toggleSelect(id, shift = false) {
     const idx = steps.findIndex(s => s.id === id)
+    // Shift-click: select every step from the last-clicked checkbox to this one (inclusive),
+    // so you don't tick them one by one. Falls back to a normal toggle if there's no anchor.
+    if (shift && lastClicked.current != null) {
+      const li = steps.findIndex(s => s.id === lastClicked.current)
+      if (li >= 0 && idx >= 0) {
+        const [a, b] = li < idx ? [li, idx] : [idx, li]
+        setSelectedIds(prev => {
+          const n = new Set(prev)
+          for (let k = a; k <= b; k++) n.add(steps[k].id)
+          return n
+        })
+        lastClicked.current = id
+        return
+      }
+    }
     setSelectedIds(prev => {
       const n = new Set(prev)
       if (idx >= 0 && isGroupStart(steps[idx].action)) {
@@ -1399,6 +1563,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       }
       return n
     })
+    lastClicked.current = id
   }
   const selectAll       = () => setSelectedIds(new Set(steps.map(s => s.id)))
   const clearSelection  = () => setSelectedIds(new Set())
@@ -1486,6 +1651,20 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   // Test Data collections power the "Fill form" one-click step generator.
   useEffect(() => { window.api.getCollections().then(setCollections).catch(() => {}) }, [])
 
+  // Ctrl/Cmd+Z undoes the last step position change — unless you're typing in a field (let the
+  // browser do text undo there). Re-bound on steps/active change so it sees the current order.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z'))) return
+      const t = e.target
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      e.preventDefault()
+      undo()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [steps, active])  // eslint-disable-line react-hooks/exhaustive-deps
+
   async function loadScenarios() {
     const data = await window.api.getScenarios(profileId)
     setScenarios(data)
@@ -1497,6 +1676,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     setExpandedIds(new Set())   // collapse for a clean overview on switch
     setSelectedIds(new Set())   // drop any bulk selection from the previous scenario
     setCollapsedGroups(new Set())
+    undoStack.current = []      // undo history is per-scenario
+    lastClicked.current = null
     const s = await window.api.getSteps(scenario.id)
     setSteps(s)
   }
@@ -1702,6 +1883,33 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     setSelectedIds(prev => { if (!prev.has(id)) return prev; const n = new Set(prev); n.delete(id); return n })
   }
 
+  // Snapshot the current step order for undo (position changes only). Capped so it can't grow forever.
+  const pushUndo = () => { undoStack.current.push(steps.map(s => s.id)); if (undoStack.current.length > 50) undoStack.current.shift() }
+
+  // Undo the last position change — re-apply a saved order. Skipped if the step SET changed since
+  // (a delete/add/group), since a reorder can't reconstruct that.
+  async function undo() {
+    if (active?.locked) return
+    const order = undoStack.current.pop()
+    if (!order) return
+    const cur = steps.map(s => s.id)
+    if (order.length !== cur.length || !order.every(id => cur.includes(id)) || order.join() === cur.join()) return
+    await window.api.reorderSteps(active.id, order)
+    setSteps(await window.api.getSteps(active.id))
+  }
+
+  // Group markers are anonymous and matched by depth, so a valid arrangement is just balanced
+  // parentheses: depth never goes negative and ends at 0. Used to reject an end-marker drag that
+  // would invert or cross markers.
+  function groupsBalanced(arr) {
+    let depth = 0
+    for (const s of arr) {
+      if (isGroupStart(s.action)) depth++
+      else if (isGroupEnd(s.action) && --depth < 0) return false
+    }
+    return depth === 0
+  }
+
   // The contiguous span [start,end] of the "unit" at idx: a whole group (start→matched end)
   // if idx is a group marker, otherwise just the single step. Used for block-aware moves.
   function unitRange(arr, idx) {
@@ -1748,6 +1956,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       const [ns, ne] = unitRange(arr, ue + 1)
       newIds = [...ids.slice(0, us), ...ids.slice(ns, ne + 1), ...ids.slice(us, ue + 1), ...ids.slice(ne + 1)]
     }
+    pushUndo()
     await window.api.reorderSteps(active.id, newIds)
     setSteps(await window.api.getSteps(active.id))
   }
@@ -1778,6 +1987,25 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       if (at < 0) at = remaining.length
       const newIds = [...remaining.slice(0, at), ...moving, ...remaining.slice(at)]
       if (newIds.join() === ids.join()) return
+      pushUndo()
+      await window.api.reorderSteps(active.id, newIds)
+      setSteps(await window.api.getSteps(active.id))
+      return
+    }
+
+    // Dragging an END-group marker resizes the group: move ONLY the marker (don't carry the whole
+    // group), so the tester can pull adjacent steps in/out. Reject if the result unbalances markers
+    // (e.g. dropping the end above its start), which would invert the group.
+    if (isGroupEnd(arr[di].action)) {
+      if (dragStepId === beforeId) return
+      const ids = arr.map(s => s.id)
+      const without = ids.filter(id => id !== dragStepId)
+      let at = beforeId == null ? without.length : without.indexOf(beforeId)
+      if (at < 0) at = without.length
+      const newIds = [...without.slice(0, at), dragStepId, ...without.slice(at)]
+      if (newIds.join() === ids.join()) return
+      if (!groupsBalanced(newIds.map(id => arr.find(s => s.id === id)))) return
+      pushUndo()
       await window.api.reorderSteps(active.id, newIds)
       setSteps(await window.api.getSteps(active.id))
       return
@@ -1796,6 +2024,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     if (at < 0) at = remaining.length
     const newIds = [...remaining.slice(0, at), ...unit, ...remaining.slice(at)]
     if (newIds.join() === ids.join()) return   // no-op
+    pushUndo()
     await window.api.reorderSteps(active.id, newIds)
     setSteps(await window.api.getSteps(active.id))
   }
@@ -1813,10 +2042,26 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     let navId = null            // the auto-added "Open the app" step, if we add one
     const recordedIds = []      // steps captured live from the recorder
 
-    // A runnable scenario must start by opening the app. If empty, add that first
-    // so the recorded steps below it actually have a page to run against.
+    // Replay the PREREQUISITE chain first (e.g. a separate Login scenario), mirroring an
+    // isolated run — so recording a scenario whose steps assume a logged-in state lands you
+    // there instead of stranded on the login page. Cycle-guarded; prereq steps are replayed
+    // only (never saved to this scenario). These step objects are passed to the recorder, which
+    // replays them ahead of the scenario's own steps.
+    async function collectPrereqSteps(scenarioId, seen = new Set()) {
+      if (!scenarioId || seen.has(scenarioId)) return []
+      seen.add(scenarioId)
+      const sc = scenarios.find(s => s.id === scenarioId)
+      if (!sc) return []
+      const chain = await collectPrereqSteps(sc.prerequisite_id, seen)
+      return [...chain, ...(await window.api.getSteps(scenarioId))]
+    }
+    const prereqSteps = await collectPrereqSteps(active.prerequisite_id)
+
+    // A runnable scenario must start by opening the app. If empty AND there's no prerequisite to
+    // position the page, add an "Open the app" navigate so the recorded steps have a page to run
+    // against. (With a prerequisite, that chain already opens/logs in — don't double-navigate.)
     let current = steps
-    if (current.length === 0) {
+    if (current.length === 0 && !active.prerequisite_id) {
       const navRes = await window.api.saveStep({
         scenario_id: active.id, action: 'navigate',
         params: { _keyword: 'Given', url: '' }, label: 'Open the app', sort_order: 0
@@ -1854,7 +2099,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
         url: profile.base_url,
         baseUrl: profile.base_url,
         browser: profile.browser || 'chromium',
-        steps: current,
+        steps: [...prereqSteps, ...current],   // prerequisite (login) chain replays first
         runSteps: true
       })
       await chain
@@ -2192,6 +2437,10 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                             {selectedIds.size === steps.length ? 'Deselect all' : 'Select all'}
                           </button>
                         )}
+                        {!locked && (
+                          <button onClick={undo} title="Undo last move (Ctrl+Z)" style={{ background: 'none', border: '1px solid var(--border)',
+                            borderRadius: 6, padding: '5px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>↶ Undo</button>
+                        )}
                         <button onClick={expandAll} style={{ background: 'none', border: '1px solid var(--border)',
                           borderRadius: 6, padding: '5px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>Expand all</button>
                         <button onClick={collapseAll} style={{ background: 'none', border: '1px solid var(--border)',
@@ -2222,6 +2471,25 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                 </div>
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+                {findOpen && (
+                  <div style={{ position: 'sticky', top: 0, zIndex: 5, display: 'flex', alignItems: 'center', gap: 8,
+                    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
+                    padding: '6px 10px', marginBottom: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.18)' }}>
+                    <span style={{ fontSize: 13 }}>🔍</span>
+                    <input ref={findRef} value={find} onChange={e => setFind(e.target.value)}
+                      placeholder="Find in steps — name, action, selector, value…"
+                      onKeyDown={e => { if (e.key === 'Escape') { setFindOpen(false); setFind('') } }}
+                      style={{ flex: 1, fontSize: 12 }} />
+                    {find.trim() && (() => {
+                      const q = find.trim().toLowerCase()
+                      const n = steps.filter(s => stepHaystack(s).includes(q)).length
+                      return <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        {n} match{n !== 1 ? 'es' : ''}</span>
+                    })()}
+                    <button onClick={() => { setFindOpen(false); setFind('') }} title="Close (Esc)"
+                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+                  </div>
+                )}
                 {/* When locked, the cards become non-interactive (read-only) while the
                     scroll container above stays scrollable. */}
                 <div style={{ pointerEvents: locked ? 'none' : 'auto', opacity: locked ? 0.9 : 1 }}>
@@ -2251,6 +2519,10 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                         }
                       }
                     }
+                    // Find-bar matches: highlight hits, dim the rest. Empty query = no dimming.
+                    const q = findOpen ? find.trim().toLowerCase() : ''
+                    const matched = (s) => q && stepHaystack(s).includes(q)
+
                     let depth = 0
                     let hideDepth = null      // depth to return to before un-hiding (nest-aware)
                     const out = []
@@ -2268,15 +2540,19 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                       }
                       if (start && collapsedGroups.has(step.id)) hideDepth = depth - 1   // render the start card, hide its body
 
+                      const hit = matched(step)
                       out.push(
-                        <CanvasStep key={step.id} step={step} index={i} total={steps.length} indent={indent}
+                        <div key={step.id} style={{ borderRadius: 8, transition: 'opacity .12s',
+                          boxShadow: hit ? '0 0 0 2px var(--warning)' : undefined,
+                          opacity: q && !hit ? 0.35 : 1 }}>
+                        <CanvasStep step={step} index={i} total={steps.length} indent={indent}
                           onChange={updateStep} onDelete={deleteStep} onMove={moveStep} onRemoveGroupEnd={removeGroupEnd}
-                          profile={profile} priorSteps={steps.slice(0, i)} collections={collections}
+                          profile={profile} priorSteps={steps.slice(0, i)} collections={collections} reloadCollections={refreshCollections}
                           groupCollectionId={enclosingCol[step.id]}
                           groupCollapsed={collapsedGroups.has(step.id)} onToggleGroup={() => toggleGroupCollapse(step.id)}
                           onUngroup={() => ungroupGroup(step.id)}
                           expanded={expandedIds.has(step.id)} onToggleExpand={() => toggleExpand(step.id)}
-                          selected={selectedIds.has(step.id)} onToggleSelect={() => toggleSelect(step.id)}
+                          selected={selectedIds.has(step.id)} onToggleSelect={(shift) => toggleSelect(step.id, shift)}
                           dragId={dragId} overId={overId} active={activeId === step.id}
                           dragGroupActive={!!dragId && selectedIds.has(dragId) && selectedIds.size > 1}
                           onDragStartStep={(id) => { setDragId(id); setActiveId(id) }}
@@ -2284,6 +2560,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                           onDropStep={(id) => onDropBefore(id)}
                           onDragEndStep={() => { setDragId(null); setOverId(null) }}
                           onActivate={(id) => setActiveId(id)} />
+                        </div>
                       )
                     })
                     // Trailing drop zone — drop here to move a step/group to the very end.

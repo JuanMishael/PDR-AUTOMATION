@@ -57,7 +57,11 @@ async function expandGroupsInner(db, steps) {
       const expandedBody = await expandGroupsInner(db, body)   // resolve any nested groups first
 
       if (repeat && p.collectionId) {
-        const sets = p.group && p.group !== 'all'
+        // A pinned dataSetId runs the body ONCE with just that set (single pass). Otherwise the
+        // body loops once per set in the chosen group (or every set when group is 'all').
+        const sets = p.dataSetId
+          ? db.prepare('SELECT * FROM data_sets WHERE id = ?').all(p.dataSetId)
+          : p.group && p.group !== 'all'
           ? db.prepare('SELECT * FROM data_sets WHERE collection_id = ? AND group_type = ? ORDER BY sort_order').all(p.collectionId, p.group)
           : db.prepare('SELECT * FROM data_sets WHERE collection_id = ? ORDER BY sort_order').all(p.collectionId)
         for (const set of sets) {
@@ -93,6 +97,11 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dat
   const runId = randomUUID()
   const startedAt = new Date().toISOString()
 
+  // Tag every event with the profile so the renderer can demux concurrent (parallel) runs.
+  // 'started' carries the live runId (the stopRun key) up front, before any 'complete'.
+  const tag = (data) => ({ ...data, profileId: profile.id, profileName: profile.name })
+  send('runner:started', tag({ runId }))
+
   // Resolve test-data tokens fresh for THIS run (so {{unique.*}}/{{faker.*}} differ per run).
   // With no collections/sets this is an empty context and the run path is unchanged.
   const dataContext = await buildDataContext(getDb(), dataSetId)
@@ -103,7 +112,7 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dat
     scenarios,
     settings,
     dataContext,
-    onLog: (data) => send('runner:log', data),
+    onLog: (data) => send('runner:log', tag(data)),
     onComplete: () => {}
   })
 
@@ -138,7 +147,7 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dat
     runId: historyId, status: overallStatus, passed, failed, durationMs,
     scenariosTotal: scenarioResults.length, scenariosPassed, scenariosFailed, scenarioResults
   }
-  send('runner:complete', summary)
+  send('runner:complete', tag(summary))
   refocusMainWindow()   // the headful run browser steals focus; hand it back to the app
   return summary
 }

@@ -45,7 +45,7 @@ function ShareButton({ profileId }) {
   )
 }
 
-function ProfileCard({ profile, scenarioCount, runs, navigate }) {
+function ProfileCard({ profile, scenarioCount, runs, navigate, selected, onToggleSelect }) {
   const last = runs[0]
   // Prefer the per-scenario breakdown; fall back to steps for runs recorded before that existed.
   const hasScenarioBreakdown = last && last.scenarios_total > 0
@@ -56,9 +56,12 @@ function ProfileCard({ profile, scenarioCount, runs, navigate }) {
     : null
 
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: 18 }}>
+    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: 18,
+      boxShadow: selected ? '0 0 0 2px var(--accent)' : undefined }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <input type="checkbox" checked={selected} onChange={() => onToggleSelect(profile.id)}
+          title="Select to run in parallel" style={{ width: 'auto', flexShrink: 0, cursor: 'pointer', margin: 0 }} />
         <div style={{
           width: 40, height: 40, borderRadius: 10, flexShrink: 0,
           background: 'var(--accent-soft)', border: '2px solid var(--accent)',
@@ -121,6 +124,11 @@ export default function Dashboard({ navigate }) {
   const [counts, setCounts] = useState({})   // profileId -> scenario count
   const [importMsg, setImportMsg] = useState(null)
   const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState(() => new Set())
+
+  const toggleSelect = (id) => setSelected(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n
+  })
 
   async function load() {
     const ps = await window.api.getProfiles()
@@ -190,8 +198,25 @@ export default function Dashboard({ navigate }) {
             <ProfileCard key={p.id} profile={p}
               scenarioCount={counts[p.id] ?? 0}
               runs={runsByProfile[p.id] || []}
-              navigate={navigate} />
+              navigate={navigate}
+              selected={selected.has(p.id)}
+              onToggleSelect={toggleSelect} />
           ))}
+        </div>
+      )}
+
+      {/* Parallel-run action bar — appears once profiles are ticked */}
+      {selected.size > 0 && (
+        <div style={{ position: 'sticky', bottom: 16, zIndex: 5, display: 'flex', alignItems: 'center', gap: 12,
+          padding: '10px 16px', marginBottom: 24, background: 'var(--surface)', border: '2px solid var(--accent)',
+          borderRadius: 'var(--radius)', boxShadow: '0 6px 20px rgba(0,0,0,0.18)' }}>
+          <span style={{ fontWeight: 700, fontSize: 14 }}>{selected.size} profile{selected.size !== 1 ? 's' : ''} selected</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <button className="btn btn-sm" onClick={() => setSelected(new Set())}>Clear</button>
+            <button className="btn-primary btn-sm" onClick={() => navigate('parallel', { profileIds: [...selected] })}>
+              <Icon name="run" size={14} fill /> Run {selected.size} in parallel
+            </button>
+          </div>
         </div>
       )}
 

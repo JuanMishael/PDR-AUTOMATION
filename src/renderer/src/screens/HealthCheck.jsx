@@ -62,28 +62,34 @@ export default function HealthCheck() {
           {CHECKS.map(item => {
             const r = results[item.key]
             const ok = r?.ok !== false
+            // optional browsers (firefox/webkit) that aren't installed: amber, not red
+            const optionalMissing = !ok && r?.optional
+            const accent = ok ? 'var(--success)' : optionalMissing ? 'var(--warning)' : 'var(--error)'
+            const accentDim = ok ? 'var(--success-dim)' : optionalMissing ? 'var(--warning-dim)' : 'var(--error-dim)'
             return (
               <div key={item.key} className="card" style={{
                 display: 'flex', alignItems: 'center', gap: 16, padding: '14px 18px',
-                borderLeft: `3px solid ${ok ? 'var(--success)' : 'var(--error)'}`
+                borderLeft: `3px solid ${accent}`
               }}>
                 <div style={{
                   width: 36, height: 36, borderRadius: 8, flexShrink: 0,
-                  background: ok ? 'var(--success-dim)' : 'var(--error-dim)',
+                  background: accentDim,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 18, color: ok ? 'var(--success)' : 'var(--error)'
+                  fontSize: 18, color: accent
                 }}>
-                  {ok ? '✓' : '✗'}
+                  {ok ? '✓' : optionalMissing ? '○' : '✗'}
                 </div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>{item.label}</div>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>
+                    {item.label}{r?.optional ? <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · optional</span> : ''}
+                  </div>
                   <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                    {r?.version ? `v${r.version}` : item.desc}
-                    {r?.error ? ` — ${r.error}` : ''}
+                    {r?.version ? `v${r.version}` : optionalMissing ? 'Not installed — only needed if a profile selects it' : item.desc}
+                    {r?.error && !optionalMissing ? ` — ${r.error}` : ''}
                   </div>
                 </div>
-                <span className={`badge badge-${ok ? 'success' : 'error'}`}>
-                  {ok ? 'OK' : 'MISSING'}
+                <span className={`badge badge-${ok ? 'success' : optionalMissing ? 'warning' : 'error'}`}>
+                  {ok ? 'OK' : optionalMissing ? 'OPTIONAL' : 'MISSING'}
                 </span>
               </div>
             )

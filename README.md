@@ -61,8 +61,9 @@ icons, and do/don'ts that keep the look uniform.
 # Install dependencies
 npm install
 
-# Install Playwright browsers (run once per machine)
-npx playwright install chromium firefox webkit
+# Install Playwright browser (run once per machine)
+# Chromium is the default; add `firefox webkit` only if you select those in a profile.
+npx playwright install chromium
 
 # Start in development mode
 npm run dev

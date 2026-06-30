@@ -19,7 +19,10 @@ function ShareProfileButton({ profileId }) {
   )
 }
 
-export default function ProfileConfig({ navigate }) {
+export default function ProfileConfig({ navigate, ctx = {} }) {
+  const projectId = ctx.projectId
+  const projectName = ctx.projectName
+  const backToProject = () => navigate('dashboard', { projectId, projectName })
   const [profiles, setProfiles] = useState([])
   const [form, setForm] = useState(EMPTY)
   const [editing, setEditing] = useState(null)
@@ -29,7 +32,7 @@ export default function ProfileConfig({ navigate }) {
 
   async function load() {
     try {
-      setProfiles(await window.api.getProfiles())
+      setProfiles(await window.api.getProfiles(projectId))
     } catch (e) {
       alert('Could not load profiles: ' + (e?.message || 'unknown error'))
     }
@@ -50,7 +53,8 @@ export default function ProfileConfig({ navigate }) {
     if (!form.name || !form.base_url) return
     setSaving(true)
     try {
-      await window.api.saveProfile(editing ? { ...form, id: editing } : form)
+      // New profiles are stamped with the open project; edits preserve their project (COALESCE in db).
+      await window.api.saveProfile(editing ? { ...form, id: editing } : { ...form, project_id: projectId })
       reset()
       await load()
     } catch (e) {
@@ -80,8 +84,13 @@ export default function ProfileConfig({ navigate }) {
   return (
     <div className="fade-in">
       <div className="page-header">
+        {projectId && (
+          <button className="btn-ghost btn-sm" onClick={backToProject} style={{ marginBottom: 8 }}>
+            ← {projectName || 'Project'}
+          </button>
+        )}
         <h1>{editing ? 'Edit Profile' : 'New Profile'}</h1>
-        <p>Configure a test target — browser, URL, and timeout settings.</p>
+        <p>Configure a test target — browser, URL, and timeout settings{projectName ? ` · in ${projectName}` : ''}.</p>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, maxWidth: 900 }}>

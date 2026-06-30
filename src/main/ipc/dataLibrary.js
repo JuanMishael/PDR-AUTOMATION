@@ -11,6 +11,27 @@ function testDataDir() {
 }
 const sanitize = s => String(s).replace(/[^a-zA-Z0-9\-_]/g, '_')
 const csvCell = c => `"${String(c ?? '').replace(/"/g, '""')}"`
+const escapeRegex = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+// Rewrite {{OldName.field}} → {{NewName.field}} everywhere a collection is referenced BY NAME:
+// step params, field defaults, and set values. (Repeating-group steps reference a collection by
+// collectionId, which a rename doesn't change, so they're unaffected.) The token text is identical
+// inside the stored JSON, so a raw string replace on those columns is safe.
+function rewriteCollectionTokens(db, oldName, newName) {
+  const re = new RegExp('\\{\\{\\s*' + escapeRegex(oldName) + '\\s*\\.', 'g')
+  const sub = `{{${newName}.`
+  const apply = (selectSql, updateSql, col) => {
+    for (const row of db.prepare(selectSql).all()) {
+      const cur = row[col]
+      if (typeof cur !== 'string' || cur.indexOf('{{') === -1) continue
+      const next = cur.replace(re, () => sub)   // function form keeps any $ in newName literal
+      if (next !== cur) db.prepare(updateSql).run(next, row.id)
+    }
+  }
+  apply('SELECT id, params FROM steps', 'UPDATE steps SET params = ? WHERE id = ?', 'params')
+  apply('SELECT id, default_token FROM data_fields', 'UPDATE data_fields SET default_token = ? WHERE id = ?', 'default_token')
+  apply('SELECT id, field_values FROM data_sets', 'UPDATE data_sets SET field_values = ? WHERE id = ?', 'field_values')
+}
 
 // Read a full collection (fields + sets) shaped for export / sharing.
 export function readCollection(db, id) {
@@ -21,13 +42,14 @@ export function readCollection(db, id) {
   return { collection, fields, sets }
 }
 
-// Pick a collection name that doesn't clash with an existing one — suffix " (2)", " (3)"… if taken.
+// Pick a collection name that doesn't clash with an existing one — suffix "_2", "_3"… if taken.
+// Underscore (not " (2)") keeps the name token-friendly: it lands inside {{Name_2.field}} cleanly.
 export function uniqueCollectionName(db, name) {
   const taken = new Set(db.prepare('SELECT name FROM data_collections').all().map(c => c.name.toLowerCase()))
   if (!taken.has(name.toLowerCase())) return name
   let n = 2
-  while (taken.has(`${name} (${n})`.toLowerCase())) n++
-  return `${name} (${n})`
+  while (taken.has(`${name}_${n}`.toLowerCase())) n++
+  return `${name}_${n}`
 }
 
 // Create a NEW collection from an exported payload ({ collection|name, description, fields, sets }).
@@ -68,16 +90,31 @@ export function registerDataLibraryHandlers() {
   })
 
   ipcMain.handle('data:saveCollection', (_, collection) => {
+    const d = db()
+    const name = (collection.name || '').trim()
+    if (!name) return { error: 'Collection name cannot be empty' }
+
+    // Names are how {{Name.field}} tokens find their data, so two collections can't share one
+    // (case-insensitive). Block the clash up front rather than silently suffixing.
+    const clash = d.prepare('SELECT id FROM data_collections WHERE lower(name) = lower(?) AND id != ?')
+      .get(name, collection.id || '')
+    if (clash) return { error: `A collection named "${name}" already exists` }
+
     if (collection.id) {
-      db().prepare(`
-        UPDATE data_collections SET name=?, description=?, updated_at=datetime('now') WHERE id=?
-      `).run(collection.name, collection.description || '', collection.id)
+      const existing = d.prepare('SELECT name FROM data_collections WHERE id = ?').get(collection.id)
+      if (!existing) return { error: 'Collection not found' }
+      const tx = d.transaction(() => {
+        d.prepare(`UPDATE data_collections SET name=?, description=?, updated_at=datetime('now') WHERE id=?`)
+          .run(name, collection.description || '', collection.id)
+        // A rename cascades through every {{OldName.field}} token so references keep resolving.
+        if (existing.name !== name) rewriteCollectionTokens(d, existing.name, name)
+      })
+      tx()
       return { id: collection.id }
     }
     const id = randomUUID()
-    db().prepare(`
-      INSERT INTO data_collections (id, name, description) VALUES (?, ?, ?)
-    `).run(id, collection.name, collection.description || '')
+    d.prepare(`INSERT INTO data_collections (id, name, description) VALUES (?, ?, ?)`)
+      .run(id, name, collection.description || '')
     return { id }
   })
 

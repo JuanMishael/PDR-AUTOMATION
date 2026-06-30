@@ -57,13 +57,31 @@ async function expandGroupsInner(db, steps) {
       const expandedBody = await expandGroupsInner(db, body)   // resolve any nested groups first
 
       if (repeat && p.collectionId) {
-        // A pinned dataSetId runs the body ONCE with just that set (single pass). Otherwise the
-        // body loops once per set in the chosen group (or every set when group is 'all').
-        const sets = p.dataSetId
-          ? db.prepare('SELECT * FROM data_sets WHERE id = ?').all(p.dataSetId)
-          : p.group && p.group !== 'all'
+        // Sets to iterate, all scoped to THIS group's collection — that scoping matters because the
+        // body's {{Collection.field}} tokens key off this collection's NAME (see tokenResolver). A
+        // set from another collection would build the context under the wrong name and resolve every
+        // token to its empty default.
+        const byGroup = () => p.group && p.group !== 'all'
           ? db.prepare('SELECT * FROM data_sets WHERE collection_id = ? AND group_type = ? ORDER BY sort_order').all(p.collectionId, p.group)
           : db.prepare('SELECT * FROM data_sets WHERE collection_id = ? ORDER BY sort_order').all(p.collectionId)
+
+        let sets
+        if (p.dataSetId) {
+          // A pinned dataSetId runs the body ONCE with just that set — but only if it actually
+          // belongs to this group's collection. A stale pin (collection swapped/duplicated after
+          // pinning) is self-healed: re-pin to the same-named set here, else fall back to this
+          // collection's sets, so the data still loads instead of silently filling blanks.
+          sets = db.prepare('SELECT * FROM data_sets WHERE id = ? AND collection_id = ?').all(p.dataSetId, p.collectionId)
+          if (!sets.length) {
+            const pinned = db.prepare('SELECT name FROM data_sets WHERE id = ?').get(p.dataSetId)
+            sets = pinned
+              ? db.prepare('SELECT * FROM data_sets WHERE collection_id = ? AND name = ? ORDER BY sort_order').all(p.collectionId, pinned.name)
+              : []
+            if (!sets.length) sets = byGroup()
+          }
+        } else {
+          sets = byGroup()
+        }
         for (const set of sets) {
           const ctx = await buildDataContext(db, set.id)
           for (const b of expandedBody) {

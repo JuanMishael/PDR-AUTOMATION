@@ -3,6 +3,7 @@ import { ACTION_DEFS, ACTION_CATEGORIES, ACTIONS_BY_CATEGORY } from '../componen
 import { confirmDialog } from '../lib/confirm'
 import { TOKEN_GROUPS } from '../lib/tokens'
 import ApiWorkspace from './ApiWorkspace'
+import CopyToProject from '../components/CopyToProject'
 
 // Default keyword per action category
 const CATEGORY_KEYWORD = {
@@ -1481,6 +1482,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [profileId, setProfileId]     = useState(ctx?.profileId || null)
   const [profileName, setProfileName] = useState(ctx?.profileName || '')
   const [profile, setProfile]         = useState(null)
+  const [project, setProject]         = useState(null)   // the profile's home project (for the Back button)
   const [scenarios, setScenarios]     = useState([])
   const [active, setActive]           = useState(null)   // active scenario
   const [steps, setSteps]             = useState([])
@@ -1508,6 +1510,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [fillMenu, setFillMenu]       = useState(false)   // "Fill form" collection picker open
   const [dataModal, setDataModal]     = useState(false)   // capture/create test data inline
   const [find, setFind]               = useState('')      // Ctrl+F find-in-steps query
+  const [replace, setReplace]         = useState('')      // Ctrl+F replace-with text (VSCode-style)
+  const [showReplace, setShowReplace] = useState(false)   // replace row revealed
   const [findOpen, setFindOpen]       = useState(false)
   const findRef                       = useRef(null)
   const saveChain                     = useRef(Promise.resolve())   // serialize background step saves
@@ -1640,10 +1644,14 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   useEffect(() => {
     if (profileId) {
       loadScenarios()
-      window.api.getProfiles().then(list => {
+      window.api.getProfiles().then(async list => {
         const p = list.find(x => x.id === profileId)
         // Always resolve (fallback to a web stub) so the render fork below never sticks on "Loading".
         setProfile(p || { id: profileId, name: profileName, type: 'web' })
+        if (p?.project_id) {
+          const projs = await window.api.getProjects()
+          setProject(projs.find(pr => pr.id === p.project_id) || null)
+        }
       })
     }
   }, [profileId])
@@ -1874,6 +1882,35 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     saveChain.current = saveChain.current
       .then(() => window.api.saveStep(step))
       .catch(() => {})
+  }
+
+  // Ctrl+F → Replace all: case-insensitive literal replace of `find` with `replace` across this
+  // scenario's steps (string params + label), like VSCode's find/replace scoped to the open file.
+  // Confirmed first because, unlike reorders, this edit isn't on the undo stack.
+  async function replaceAll() {
+    if (active?.locked || !find) return
+    const re = new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+    let occ = 0
+    const changes = []
+    for (const s of steps) {
+      const sp = stepParams(s)
+      let changed = false
+      const np = {}
+      for (const [k, v] of Object.entries(sp)) {
+        const m = typeof v === 'string' ? v.match(re) : null
+        if (m) { np[k] = v.replace(re, () => replace); occ += m.length; changed = true }
+        else np[k] = v
+      }
+      let nl = s.label
+      const lm = typeof s.label === 'string' ? s.label.match(re) : null
+      if (lm) { nl = s.label.replace(re, () => replace); occ += lm.length; changed = true }
+      if (changed) changes.push({ ...s, params: np, label: nl })
+    }
+    if (!changes.length) return
+    if (!(await confirmDialog(`Replace ${occ} occurrence${occ !== 1 ? 's' : ''} of "${find}" with "${replace}" across ${changes.length} step${changes.length !== 1 ? 's' : ''}?`,
+      { confirmText: 'Replace All' }))) return
+    for (const st of changes) await window.api.saveStep(st)
+    setSteps(await window.api.getSteps(active.id))
   }
 
   async function deleteStep(id) {
@@ -2168,6 +2205,12 @@ export default function ScenarioBuilder({ navigate, ctx }) {
 
       {/* Top bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexShrink: 0 }}>
+        {project && (
+          <button className="btn-ghost btn-sm" onClick={() => navigate('dashboard', { projectId: project.id, projectName: project.name })}
+            title={`Back to project ${project.name}`} style={{ flexShrink: 0 }}>
+            ← {project.name}
+          </button>
+        )}
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 800 }}>Scenario Builder</h1>
           <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 2 }}>
@@ -2191,6 +2234,9 @@ export default function ScenarioBuilder({ navigate, ctx }) {
           }}>
             {shareMsg || '⬆ Share Profile'}
           </button>
+          <CopyToProject profileId={profileId} currentProjectId={project?.id}
+            label="→ Copy to project"
+            onDone={m => { setDupMsg(m); setTimeout(() => setDupMsg(null), 5000) }} />
           {active && !locked && (
             <button onClick={record} disabled={recording} title="Open the app and record your actions as steps" style={{
               padding: '7px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600,
@@ -2472,22 +2518,40 @@ export default function ScenarioBuilder({ navigate, ctx }) {
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
                 {findOpen && (
-                  <div style={{ position: 'sticky', top: 0, zIndex: 5, display: 'flex', alignItems: 'center', gap: 8,
+                  <div style={{ position: 'sticky', top: 0, zIndex: 5, display: 'flex', flexDirection: 'column', gap: 6,
                     background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
                     padding: '6px 10px', marginBottom: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.18)' }}>
-                    <span style={{ fontSize: 13 }}>🔍</span>
-                    <input ref={findRef} value={find} onChange={e => setFind(e.target.value)}
-                      placeholder="Find in steps — name, action, selector, value…"
-                      onKeyDown={e => { if (e.key === 'Escape') { setFindOpen(false); setFind('') } }}
-                      style={{ flex: 1, fontSize: 12 }} />
-                    {find.trim() && (() => {
-                      const q = find.trim().toLowerCase()
-                      const n = steps.filter(s => stepHaystack(s).includes(q)).length
-                      return <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                        {n} match{n !== 1 ? 'es' : ''}</span>
-                    })()}
-                    <button onClick={() => { setFindOpen(false); setFind('') }} title="Close (Esc)"
-                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button onClick={() => setShowReplace(v => !v)} title={showReplace ? 'Hide replace' : 'Replace…'}
+                        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12, width: 14 }}>
+                        {showReplace ? '▾' : '▸'}
+                      </button>
+                      <span style={{ fontSize: 13 }}>🔍</span>
+                      <input ref={findRef} value={find} onChange={e => setFind(e.target.value)}
+                        placeholder="Find in steps — name, action, selector, value…"
+                        onKeyDown={e => { if (e.key === 'Escape') { setFindOpen(false); setFind('') } }}
+                        style={{ flex: 1, fontSize: 12 }} />
+                      {find.trim() && (() => {
+                        const q = find.trim().toLowerCase()
+                        const n = steps.filter(s => stepHaystack(s).includes(q)).length
+                        return <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {n} match{n !== 1 ? 'es' : ''}</span>
+                      })()}
+                      <button onClick={() => { setFindOpen(false); setFind('') }} title="Close (Esc)"
+                        style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14 }}>✕</button>
+                    </div>
+                    {showReplace && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 22 }}>
+                        <span style={{ fontSize: 13 }}>↻</span>
+                        <input value={replace} onChange={e => setReplace(e.target.value)}
+                          placeholder={locked ? 'Scenario is locked' : 'Replace with… (case-insensitive, this scenario)'}
+                          disabled={locked}
+                          onKeyDown={e => { if (e.key === 'Enter') replaceAll(); if (e.key === 'Escape') { setFindOpen(false); setFind('') } }}
+                          style={{ flex: 1, fontSize: 12 }} />
+                        <button className="btn btn-sm" onClick={replaceAll} disabled={locked || !find}
+                          title="Replace all matches in this scenario's steps">Replace All</button>
+                      </div>
+                    )}
                   </div>
                 )}
                 {/* When locked, the cards become non-interactive (read-only) while the

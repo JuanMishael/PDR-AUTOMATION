@@ -71,9 +71,9 @@ export default function History({ navigate }) {
       {filtered.length === 0 ? (
         <div className="card empty-state">
           <div className="empty-icon">◷</div>
-          <p>{history.length === 0 ? 'No runs yet. Run a profile from the Dashboard.' : 'No runs match this filter.'}</p>
+          <p>{history.length === 0 ? 'No runs yet. Open a project and run a profile.' : 'No runs match this filter.'}</p>
           {history.length === 0 && (
-            <button className="btn-primary" onClick={() => navigate('dashboard')}>Go to Dashboard</button>
+            <button className="btn-primary" onClick={() => navigate('projects')}>Go to Projects</button>
           )}
         </div>
       ) : (

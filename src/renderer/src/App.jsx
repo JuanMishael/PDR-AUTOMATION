@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import SketchDefs from './components/SketchDefs'
 import { ConfirmHost } from './lib/confirm'
 import Sidebar from './components/Sidebar'
+import Projects from './screens/Projects'
 import Dashboard from './screens/Dashboard'
 import ProfileConfig from './screens/ProfileConfig'
 import ScenarioBuilder from './screens/ScenarioBuilder'
@@ -15,6 +16,7 @@ import Help from './screens/Help'
 import HealthCheck from './screens/HealthCheck'
 
 const SCREENS = {
+  projects: Projects,
   dashboard: Dashboard,
   profile: ProfileConfig,
   scenarios: ScenarioBuilder,
@@ -29,7 +31,7 @@ const SCREENS = {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState('dashboard')
+  const [screen, setScreen] = useState('projects')
   const [ctx, setCtx] = useState({})
   const [appName, setAppName] = useState('PDR-AUTOMATION')
 

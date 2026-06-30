@@ -1,5 +1,6 @@
 import { app } from 'electron'
 import { join } from 'path'
+import { randomUUID } from 'crypto'
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
 
 let _db       // sql.js Database instance
@@ -111,6 +112,16 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS settings (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
+    );
+    -- A Project is a folder grouping profiles (like a Visual Studio solution's projects).
+    -- "Strict" grouping (every profile in exactly one project) is enforced in app code; the
+    -- profiles.project_id column stays nullable so the sql.js ADD COLUMN migration needs no
+    -- NOT-NULL backfill dance (see seedDefaultProject for the one-time migration).
+    CREATE TABLE IF NOT EXISTS projects (
+      id          TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      description TEXT,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS profiles (
       id         TEXT PRIMARY KEY,
@@ -266,9 +277,25 @@ export async function initDb() {
   // (the API analog of a repeating group). Tokens resolve per row at run time.
   try { _db.run('ALTER TABLE api_requests ADD COLUMN iterate_collection_id TEXT') } catch { /* already migrated */ }
   try { _db.run('ALTER TABLE api_requests ADD COLUMN iterate_group TEXT NOT NULL DEFAULT \'\'') } catch { /* already migrated */ }
+  // Profiles now live under a Project (see projects table). Nullable column + app-level "strict".
+  try { _db.run('ALTER TABLE profiles ADD COLUMN project_id TEXT') } catch { /* already migrated */ }
 
   persist()
   seedDefaultSettings()
+  seedDefaultProject()
+}
+
+// One-time migration: home every pre-projects profile under a "Default" project. Runs every
+// startup but is a no-op once there are no orphan profiles (fresh installs stay empty — the
+// user creates their first project explicitly).
+function seedDefaultProject() {
+  const db = getDb()
+  const orphan = db.prepare("SELECT COUNT(*) AS c FROM profiles WHERE project_id IS NULL OR project_id = ''").get()
+  if (!orphan?.c) return
+  const id = randomUUID()
+  db.prepare('INSERT INTO projects (id, name, description) VALUES (?, ?, ?)')
+    .run(id, 'Default', 'Profiles created before Projects existed')
+  db.prepare("UPDATE profiles SET project_id = ? WHERE project_id IS NULL OR project_id = ''").run(id)
 }
 
 function seedDefaultSettings() {

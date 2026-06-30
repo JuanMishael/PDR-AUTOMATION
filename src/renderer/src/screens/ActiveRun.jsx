@@ -101,7 +101,7 @@ export default function ActiveRun({ navigate, ctx }) {
         )}
         {finished && (
           <>
-            <button className="btn-ghost" onClick={() => navigate('dashboard')}>← Back</button>
+            <button className="btn-ghost" onClick={() => navigate('scenarios', { profileId })}>← Back</button>
             <button className="btn-primary" onClick={rerun}>
               ↻ Re-run{scenarioName ? '' : ' All'}
             </button>

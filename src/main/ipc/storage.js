@@ -20,26 +20,60 @@ export function registerStorageHandlers() {
     return { ok: true }
   })
 
+  // --- Projects (folders grouping profiles, like a Visual Studio solution's projects) ---
+  ipcMain.handle('storage:getProjects', () => {
+    return db().prepare('SELECT * FROM projects ORDER BY created_at').all()
+  })
+
+  ipcMain.handle('storage:saveProject', (_, project) => {
+    if (project.id) {
+      db().prepare('UPDATE projects SET name=?, description=? WHERE id=?')
+        .run(project.name, project.description || '', project.id)
+      return { id: project.id }
+    }
+    const id = randomUUID()
+    db().prepare('INSERT INTO projects (id, name, description) VALUES (?, ?, ?)')
+      .run(id, project.name, project.description || '')
+    return { id }
+  })
+
+  // Deleting a project deletes its profiles too (their scenarios/steps cascade via the profile FK).
+  // project_id was added by ALTER so there's no DB-level cascade — we delete the profiles explicitly.
+  ipcMain.handle('storage:deleteProject', (_, id) => {
+    const d = db()
+    const profs = d.prepare('SELECT id FROM profiles WHERE project_id = ?').all(id)
+    const tx = d.transaction(() => {
+      for (const p of profs) d.prepare('DELETE FROM profiles WHERE id = ?').run(p.id)
+      d.prepare('DELETE FROM projects WHERE id = ?').run(id)
+    })
+    tx()
+    return { ok: true }
+  })
+
   // --- Profiles ---
-  ipcMain.handle('storage:getProfiles', () => {
-    return db().prepare('SELECT * FROM profiles ORDER BY created_at DESC').all()
+  ipcMain.handle('storage:getProfiles', (_, projectId) => {
+    return projectId
+      ? db().prepare('SELECT * FROM profiles WHERE project_id = ? ORDER BY created_at DESC').all(projectId)
+      : db().prepare('SELECT * FROM profiles ORDER BY created_at DESC').all()
   })
 
   ipcMain.handle('storage:saveProfile', (_, profile) => {
     if (profile.id) {
+      // COALESCE keeps the existing project_id when an edit form doesn't carry one.
       db().prepare(`
         UPDATE profiles SET name=?, type=?, base_url=?, browser=?, headless=?, timeout=?,
-          updated_at=datetime('now') WHERE id=?
+          project_id=COALESCE(?, project_id), updated_at=datetime('now') WHERE id=?
       `).run(profile.name, profile.type || 'web', profile.base_url, profile.browser || 'chromium',
-          profile.headless ? 1 : 0, profile.timeout || 30000, profile.id)
+          profile.headless ? 1 : 0, profile.timeout || 30000, profile.project_id || null, profile.id)
       return { id: profile.id }
     }
     const id = randomUUID()
     db().prepare(`
-      INSERT INTO profiles (id, name, type, base_url, browser, headless, timeout)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO profiles (id, name, type, base_url, browser, headless, timeout, project_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, profile.name, profile.type || 'web', profile.base_url,
-        profile.browser || 'chromium', profile.headless ? 1 : 0, profile.timeout || 30000)
+        profile.browser || 'chromium', profile.headless ? 1 : 0, profile.timeout || 30000,
+        profile.project_id || null)
     return { id }
   })
 
@@ -110,10 +144,35 @@ export function registerStorageHandlers() {
 
     const tx = d.transaction(() => {
       d.prepare(`
-        INSERT INTO profiles (id, name, type, base_url, browser, headless, timeout)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO profiles (id, name, type, base_url, browser, headless, timeout, project_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `).run(newProfileId, (newName && newName.trim()) || `${prof.name} (copy)`,
-          prof.type, prof.base_url, prof.browser, prof.headless, prof.timeout)
+          prof.type, prof.base_url, prof.browser, prof.headless, prof.timeout, prof.project_id)
+      scenarios.forEach((s, i) => cloneScenario(d, s, newProfileId, i, idMap))
+    })
+    tx()
+    return { id: newProfileId }
+  })
+
+  // "Share to another project": copy a whole profile (+ its scenarios/steps) into a DIFFERENT
+  // project, keeping its name. Test-data collections are global, so {{tokens}} and group
+  // collectionIds still resolve — no remapping needed (unlike the cross-machine file export).
+  ipcMain.handle('storage:copyProfileToProject', (_, profileId, targetProjectId) => {
+    const d = db()
+    const prof = d.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
+    if (!prof) return { error: 'Profile not found' }
+    if (!d.prepare('SELECT id FROM projects WHERE id = ?').get(targetProjectId)) return { error: 'Target project not found' }
+
+    const newProfileId = randomUUID()
+    const scenarios = d.prepare('SELECT * FROM scenarios WHERE profile_id = ? ORDER BY sort_order').all(profileId)
+    const idMap = {}
+    scenarios.forEach(s => { idMap[s.id] = randomUUID() })
+
+    const tx = d.transaction(() => {
+      d.prepare(`
+        INSERT INTO profiles (id, name, type, base_url, browser, headless, timeout, project_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(newProfileId, prof.name, prof.type, prof.base_url, prof.browser, prof.headless, prof.timeout, targetProjectId)
       scenarios.forEach((s, i) => cloneScenario(d, s, newProfileId, i, idMap))
     })
     tx()

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 export default function Results({ ctx, navigate }) {
-  const { runId } = ctx
+  const { runId, back } = ctx
   const [run, setRun] = useState(null)
   const [results, setResults] = useState([])
   const [exporting, setExporting] = useState(null)
@@ -43,12 +43,19 @@ export default function Results({ ctx, navigate }) {
   const failed = results.filter(r => r.status === 'failed').length
   const isPass = run.status === 'passed'
 
+  // Back goes to wherever the run was launched from: a project run passes an explicit `back` to its
+  // project; a single-profile run falls back to that profile's scenarios (its workspace).
+  const backTarget = back || {
+    screen: 'scenarios',
+    ctx: { profileId: run.profile_id, profileName: run.profile_name },
+    label: `Back to ${run.profile_name}`
+  }
+
   return (
     <div className="fade-in" style={{ maxWidth: 900 }}>
-      {/* Back to the scenario builder for this run's profile */}
       <button className="btn-ghost" style={{ padding: '6px 12px', fontSize: 12, marginBottom: 14 }}
-        onClick={() => navigate('scenarios', { profileId: run.profile_id, profileName: run.profile_name })}>
-        ← Back to Scenarios
+        onClick={() => navigate(backTarget.screen, backTarget.ctx)}>
+        ← {backTarget.label}
       </button>
 
       {/* Header */}

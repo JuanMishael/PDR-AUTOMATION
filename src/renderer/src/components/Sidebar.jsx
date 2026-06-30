@@ -1,8 +1,7 @@
 import { Icon } from './SketchDefs'
 
 const NAV = [
-  { id: 'dashboard',  label: 'Dashboard',  icon: 'dashboard' },
-  { id: 'profile',    label: 'Profiles',   icon: 'profile'   },
+  { id: 'projects',   label: 'Projects',   icon: 'dashboard' },
   { id: 'scenarios',  label: 'Scenarios',  icon: 'builder'   },
   { id: 'testdata',   label: 'Test Data',  icon: 'data'      },
   { id: 'history',    label: 'History',    icon: 'history'   },
@@ -38,7 +37,8 @@ export default function Sidebar({ current, navigate, appName = 'PDR-AUTOMATION' 
       {/* Nav */}
       <nav style={{ flex: 1, padding: '12px 10px' }}>
         {NAV.map(item => {
-          const active = current === item.id
+          // The project drill-down screens (dashboard/profile) live under "Projects" in the nav.
+          const active = current === item.id || (item.id === 'projects' && (current === 'dashboard' || current === 'profile'))
           return (
             <button
               key={item.id}

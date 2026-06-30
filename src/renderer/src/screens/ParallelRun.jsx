@@ -49,6 +49,11 @@ export default function ParallelRun({ navigate, ctx }) {
   const allDone = list.length > 0 && list.every(r => r.status !== 'running')
   const running = list.filter(r => r.status === 'running').length
 
+  // A parallel run belongs to a project — its results (and this screen's Back) return there.
+  const back = ctx.projectId
+    ? { screen: 'dashboard', ctx: { projectId: ctx.projectId, projectName: ctx.projectName }, label: `Back to ${ctx.projectName || 'project'}` }
+    : { screen: 'projects', ctx: {}, label: 'Back to Projects' }
+
   return (
     <div className="fade-in" style={{ maxWidth: 900 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
@@ -56,11 +61,11 @@ export default function ParallelRun({ navigate, ctx }) {
           <h1>Parallel Run</h1>
           <p>{allDone ? `All ${list.length} runs finished` : `${running} of ${list.length} running…`}</p>
         </div>
-        <button className="btn-ghost" onClick={() => navigate('dashboard')}>← Back</button>
+        <button className="btn-ghost" onClick={() => navigate(back.screen, back.ctx)}>← {back.label}</button>
       </div>
 
       <div style={{ display: 'grid', gap: 12 }}>
-        {list.map(r => <RunCard key={r.id} run={r} patch={patch} navigate={navigate} />)}
+        {list.map(r => <RunCard key={r.id} run={r} patch={patch} navigate={navigate} back={back} />)}
       </div>
     </div>
   )
@@ -73,7 +78,7 @@ const STATUS = {
   stopped: { color: 'var(--text-muted)', bg: 'var(--surface2)', label: 'Stopped' }
 }
 
-function RunCard({ run, patch, navigate }) {
+function RunCard({ run, patch, navigate, back }) {
   const logRef = useRef(null)
   useEffect(() => { if (run.expanded && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [run.logs, run.expanded])
 
@@ -107,7 +112,7 @@ function RunCard({ run, patch, navigate }) {
         </span>
         {isRunning
           ? <button className="btn-danger btn-sm" onClick={stop}>■ Stop</button>
-          : run.resultRunId && <button className="btn-ghost btn-sm" onClick={() => navigate('results', { runId: run.resultRunId })}>Results →</button>}
+          : run.resultRunId && <button className="btn-ghost btn-sm" onClick={() => navigate('results', { runId: run.resultRunId, back })}>Results →</button>}
       </div>
 
       {run.expanded && (

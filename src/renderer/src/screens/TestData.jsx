@@ -43,15 +43,17 @@ export default function TestData() {
   async function commitCreate() {
     const name = newName.trim()
     if (!name) { cancelCreate(); return }
-    const { id } = await window.api.saveCollection({ name })
+    const res = await window.api.saveCollection({ name })
+    if (res?.error) { alert(res.error); return }   // keep the input open so they can fix the name
     setCreating(false); setNewName('')
-    await load(id)
+    await load(res.id)
   }
 
   async function renameCollection(c, name) {
     const next = (name || '').trim()
     if (!next || next === c.name) return
-    await window.api.saveCollection({ id: c.id, name: next, description: c.description })
+    const res = await window.api.saveCollection({ id: c.id, name: next, description: c.description })
+    if (res?.error) { alert(res.error); return }   // reverts to the old name on screen
     await load(c.id)
   }
 

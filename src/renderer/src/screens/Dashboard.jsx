@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '../components/SketchDefs'
+import CopyToProject from '../components/CopyToProject'
 
 function timeAgo(iso) {
   if (!iso) return ''
@@ -45,7 +46,7 @@ function ShareButton({ profileId }) {
   )
 }
 
-function ProfileCard({ profile, scenarioCount, runs, navigate, selected, onToggleSelect }) {
+function ProfileCard({ profile, scenarioCount, runs, navigate, selected, onToggleSelect, currentProjectId, onCopied }) {
   const last = runs[0]
   // Prefer the per-scenario breakdown; fall back to steps for runs recorded before that existed.
   const hasScenarioBreakdown = last && last.scenarios_total > 0
@@ -113,12 +114,16 @@ function ProfileCard({ profile, scenarioCount, runs, navigate, selected, onToggl
           <Icon name="run" size={15} fill /> Run
         </button>
         <ShareButton profileId={profile.id} />
+        <CopyToProject profileId={profile.id} currentProjectId={currentProjectId}
+          className="btn btn-sm" label="→ Project" onDone={onCopied} />
       </div>
     </div>
   )
 }
 
-export default function Dashboard({ navigate }) {
+export default function Dashboard({ navigate, ctx = {} }) {
+  const projectId = ctx.projectId
+  const projectName = ctx.projectName || 'Profiles'
   const [profiles, setProfiles] = useState([])
   const [history, setHistory] = useState([])
   const [counts, setCounts] = useState({})   // profileId -> scenario count
@@ -131,7 +136,7 @@ export default function Dashboard({ navigate }) {
   })
 
   async function load() {
-    const ps = await window.api.getProfiles()
+    const ps = await window.api.getProfiles(projectId)
     setProfiles(ps)
     const entries = await Promise.all(
       ps.map(async p => [p.id, (await window.api.getScenarios(p.id)).length])
@@ -140,10 +145,14 @@ export default function Dashboard({ navigate }) {
     window.api.getHistory().then(setHistory)
   }
 
-  useEffect(() => { load() }, [])
+  // The dashboard is always a project drill-down. Reached without a project (e.g. a stale "← Back"),
+  // bounce to the Projects list so there's always a project context.
+  useEffect(() => { if (!projectId) navigate('projects') }, [projectId])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { if (projectId) load() }, [projectId])  // eslint-disable-line react-hooks/exhaustive-deps
 
   async function importProfile() {
-    const res = await window.api.importProfile()
+    const res = await window.api.importProfile(projectId)
     if (res?.cancelled) return
     if (res?.ok) { setImportMsg(`✓ Imported "${res.name}" (${res.scenarioCount} scenario${res.scenarioCount !== 1 ? 's' : ''})`); await load() }
     else setImportMsg(`✗ ${res?.error || 'Import failed'}`)
@@ -154,6 +163,11 @@ export default function Dashboard({ navigate }) {
   const runsByProfile = {}
   for (const h of history) (runsByProfile[h.profile_id] ||= []).push(h)
 
+  // Recent-runs list is scoped to this project's profiles.
+  const projProfileIds = new Set(profiles.map(p => p.id))
+  const projectHistory = history.filter(h => projProfileIds.has(h.profile_id))
+  const webRunnable = profiles.filter(p => p.type !== 'api').map(p => p.id)
+
   // Float the most-recently-run profile to the top; never-run profiles sink (keep creation order).
   const lastRunAt = p => { const r = runsByProfile[p.id]?.[0]; return r ? new Date(r.started_at).getTime() : -1 }
   const q = search.trim().toLowerCase()
@@ -161,11 +175,16 @@ export default function Dashboard({ navigate }) {
     .filter(p => !q || p.name.toLowerCase().includes(q) || (p.base_url || '').toLowerCase().includes(q))
     .sort((a, b) => lastRunAt(b) - lastRunAt(a))
 
+  if (!projectId) return null  // bouncing to Projects (see effect above)
+
   return (
     <div className="fade-in">
       <div className="page-header">
-        <h1>Dashboard</h1>
-        <p>Welcome back — {profiles.length} profile{profiles.length !== 1 ? 's' : ''} configured</p>
+        <button className="btn-ghost btn-sm" onClick={() => navigate('projects')} style={{ marginBottom: 8 }}>
+          ← All Projects
+        </button>
+        <h1>{projectName}</h1>
+        <p>{profiles.length} profile{profiles.length !== 1 ? 's' : ''} in this project</p>
       </div>
 
       {/* Profiles */}
@@ -176,10 +195,16 @@ export default function Dashboard({ navigate }) {
             placeholder="🔍 Search profiles…" style={{ fontSize: 12, maxWidth: 220 }} />
         )}
         {importMsg && <span style={{ fontSize: 12, color: importMsg.startsWith('✓') ? 'var(--ok)' : 'var(--bad)' }}>{importMsg}</span>}
+        {webRunnable.length > 0 && (
+          <button className="btn-primary btn-sm" onClick={() => navigate('parallel', { profileIds: webRunnable, projectId, projectName })}
+            title={`Run all ${webRunnable.length} web profiles in this project in parallel`}>
+            <Icon name="run" size={14} fill /> Run project
+          </button>
+        )}
         <button className="btn btn-sm" onClick={importProfile} title="Import a profile shared by another QA (.json)">
           ⬇ Import Profile
         </button>
-        <button className="btn btn-sm" onClick={() => navigate('profile')}>
+        <button className="btn btn-sm" onClick={() => navigate('profile', { projectId, projectName })}>
           <Icon name="plus" size={15} /> New Profile
         </button>
       </div>
@@ -188,7 +213,7 @@ export default function Dashboard({ navigate }) {
         <div className="card empty-state">
           <div className="empty-icon"><Icon name="profile" size={36} /></div>
           <p>No profiles yet. Create one to get started.</p>
-          <button className="btn-primary" onClick={() => navigate('profile')}>+ Create Profile</button>
+          <button className="btn-primary" onClick={() => navigate('profile', { projectId, projectName })}>+ Create Profile</button>
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', gap: 14, marginBottom: 34 }}>
@@ -200,7 +225,9 @@ export default function Dashboard({ navigate }) {
               runs={runsByProfile[p.id] || []}
               navigate={navigate}
               selected={selected.has(p.id)}
-              onToggleSelect={toggleSelect} />
+              onToggleSelect={toggleSelect}
+              currentProjectId={projectId}
+              onCopied={m => { setImportMsg(m); setTimeout(() => setImportMsg(null), 4000) }} />
           ))}
         </div>
       )}
@@ -213,7 +240,7 @@ export default function Dashboard({ navigate }) {
           <span style={{ fontWeight: 700, fontSize: 14 }}>{selected.size} profile{selected.size !== 1 ? 's' : ''} selected</span>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             <button className="btn btn-sm" onClick={() => setSelected(new Set())}>Clear</button>
-            <button className="btn-primary btn-sm" onClick={() => navigate('parallel', { profileIds: [...selected] })}>
+            <button className="btn-primary btn-sm" onClick={() => navigate('parallel', { profileIds: [...selected], projectId, projectName })}>
               <Icon name="run" size={14} fill /> Run {selected.size} in parallel
             </button>
           </div>
@@ -221,14 +248,14 @@ export default function Dashboard({ navigate }) {
       )}
 
       {/* Recent runs */}
-      {history.length > 0 && (
+      {projectHistory.length > 0 && (
         <div>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
             <h2 className="eyebrow">Recent Runs</h2>
             <button className="btn btn-sm" onClick={() => navigate('history')}>View All →</button>
           </div>
           <div style={{ display: 'grid', gap: 6 }}>
-            {history.slice(0, 6).map(h => {
+            {projectHistory.slice(0, 6).map(h => {
               const detail = h.scenarios_total > 0
                 ? `${h.scenarios_passed}/${h.scenarios_total} scenarios`
                 : `${h.steps_passed}/${h.steps_total} steps`

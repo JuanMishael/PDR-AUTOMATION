@@ -12,11 +12,17 @@ contextBridge.exposeInMainWorld('api', {
   offRunLog: () => ipcRenderer.removeAllListeners('runner:log'),
   offRunComplete: () => ipcRenderer.removeAllListeners('runner:complete'),
 
+  // Storage — Projects (folders grouping profiles)
+  getProjects: () => ipcRenderer.invoke('storage:getProjects'),
+  saveProject: (project) => ipcRenderer.invoke('storage:saveProject', project),
+  deleteProject: (id) => ipcRenderer.invoke('storage:deleteProject', id),
+
   // Storage — Profiles
-  getProfiles: () => ipcRenderer.invoke('storage:getProfiles'),
+  getProfiles: (projectId) => ipcRenderer.invoke('storage:getProfiles', projectId),
   saveProfile: (profile) => ipcRenderer.invoke('storage:saveProfile', profile),
   deleteProfile: (id) => ipcRenderer.invoke('storage:deleteProfile', id),
   duplicateProfile: (profileId, newName) => ipcRenderer.invoke('storage:duplicateProfile', profileId, newName),
+  copyProfileToProject: (profileId, targetProjectId) => ipcRenderer.invoke('storage:copyProfileToProject', profileId, targetProjectId),
   copyScenarios: (scenarioIds, targetProfileId) => ipcRenderer.invoke('storage:copyScenarios', scenarioIds, targetProfileId),
 
   // Storage — Scenarios
@@ -95,7 +101,10 @@ contextBridge.exposeInMainWorld('api', {
 
   // Profile portability — share a whole profile (scenarios + steps + referenced test data)
   exportProfile: (profileId) => ipcRenderer.invoke('transfer:exportProfile', profileId),
-  importProfile: () => ipcRenderer.invoke('transfer:importProfile'),
+  importProfile: (projectId) => ipcRenderer.invoke('transfer:importProfile', projectId),
+  // Project portability — share a whole project (all its profiles + deduped test data)
+  exportProject: (projectId) => ipcRenderer.invoke('transfer:exportProject', projectId),
+  importProject: () => ipcRenderer.invoke('transfer:importProject'),
 
   // Re-assert keyboard focus on the app window (e.g. after a native confirm/alert that
   // otherwise leaves Electron's inputs dead until the window is manually re-activated).

@@ -198,7 +198,8 @@ export const ACTION_DEFS = {
     params: [
       { key: 'selector', label: 'Selector', placeholder: 'h1' },
       { key: 'text', label: 'Expected Text', placeholder: 'Welcome back' },
-      { key: 'exact', label: 'Exact match?', type: 'boolean' }
+      { key: 'exact', label: 'Exact match?', type: 'boolean' },
+      { key: 'timeout', label: 'Max wait (ms)', type: 'number', placeholder: 'blank = 5000; raise for slow/transient toasts' }
     ]
   },
   assertValue: {

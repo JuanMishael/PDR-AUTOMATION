@@ -498,10 +498,14 @@ function actionToCode(action, p, baseUrl) {
     case 'assertHidden':
       return `await expect(page.locator(${sel})).toBeHidden();`
 
-    case 'assertText':
+    case 'assertText': {
+      // Optional per-step max wait — the assert polls (and latches on first match), so a longer
+      // window lets it span a slow async chain AND catch a transient toast within its brief life.
+      const opt = Number(p.timeout) > 0 ? `, { timeout: ${Number(p.timeout)} }` : ''
       return p.exact
-        ? `await expect(page.locator(${sel})).toHaveText(${JSON.stringify(p.text)});`
-        : `await expect(page.locator(${sel})).toContainText(${JSON.stringify(p.text)});`
+        ? `await expect(page.locator(${sel})).toHaveText(${JSON.stringify(p.text)}${opt});`
+        : `await expect(page.locator(${sel})).toContainText(${JSON.stringify(p.text)}${opt});`
+    }
 
     case 'assertValue':
       return `await expect(page.locator(${sel})).toHaveValue(${JSON.stringify(p.value)});`

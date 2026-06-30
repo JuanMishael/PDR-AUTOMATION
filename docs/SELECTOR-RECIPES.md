@@ -69,3 +69,48 @@ When  →  Set Checkbox  #pchild425  → Should end up checked? ✅
 - Use **Assert Checked** only when you want to *prove* state (it's allowed to fail);
   use **Set Checkbox** when you want to *ensure* state (flow-safe, never fails on state).
 - It has a **Wait before (ms)** field for boxes that render a beat late or sit behind a modal animation.
+
+---
+
+## Asserting a transient toast / confirmation modal
+
+**Symptom:** A success message ("Successfully created!") flashes in a modal after a Save,
+then auto-dismisses. **Assert Text** fails even though you saw the message — either it
+times out, or it reports a received value like `" × "` (just the modal's close button).
+
+**Why it's tricky** — two timing walls, on a message that only lives ~2 seconds:
+
+```js
+// shown deep inside nested AJAX success callbacks, then auto-hidden:
+$('#CONFIRMATIONMODALMESSAGE').append('<strong><center>' + LABEL + '</center></strong>');
+setTimeout(function () { $('#CONFIRMATIONMODALMESSAGE').empty(); ... }, 2000);
+```
+
+- **Calm playback ON** → the assert first waits for the *whole* network chain to go quiet.
+  By the time it looks, the 2s timer already emptied the message → miss.
+- **Calm playback ON, default 5s wait** → if the network chain is slow (e.g. two sequential
+  round-trips before the toast shows), the toast appears *after* the assert's 5s window → miss,
+  reported as `" × "` (the message node was empty the whole time).
+
+**Recipe** — make the assert poll across the chain and latch on the first match:
+
+```
+When  →  Click        (Save)
+When  →  Assert Text   #CONFIRMATIONMODALMESSAGE  contains "Successfully created!"
+                       ☑ Skip calm-playback wait on this step   (_noSettle)
+                       Max wait (ms): 15000
+```
+
+- **Tick "Skip calm-playback wait" (`_noSettle`)** on the *assert* step so it starts polling the
+  instant Save is clicked — not after the network settles past the toast's life.
+- **Set Max wait** above the default 5000 (try 15000) so the poll window spans "slow chain →
+  toast appears → 2s life". The assert passes the moment the text shows, even though it vanishes after.
+- **Target the message node's own id** (`#CONFIRMATIONMODALMESSAGE`), not a deep
+  `div:nth-of-type(2) > p > strong > center` path — the chain breaks on any Bootstrap reflow,
+  and `#MODALCONFIRMATION` (the parent) drags in the `×` close button.
+
+**Still failing at a generous Max wait (e.g. 20000)?** Then it's *not* timing — the toast
+genuinely never showed. Many of these messages are hardcoded on a success branch
+(`if (FEATID != "") { ... show toast ... }`) with inner errors swallowed, so the toast can be
+skipped while everything returns 200. In that case assert the **network response** in the
+per-step network trace instead of the toast — it's the real signal.

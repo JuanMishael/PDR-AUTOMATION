@@ -41,7 +41,9 @@ PDR-AUTOMATION (Electron desktop app)
 │   ├── Results              → pass/fail per step, screenshots, export
 │   ├── History              → past runs, status, duration, re-export
 │   ├── HealthCheck          → is Node.js + Playwright browsers installed?
-│   └── Settings             → global defaults (browser, retention, screenshots)
+│   ├── ParallelRun          → fire several profiles AT ONCE, a live card per profile
+│   └── Settings             → global defaults (browser, retention, screenshots,
+│                              calm-playback settle toggle + settle cap)
 │
 ├── PRELOAD (secure bridge)
 │   └── window.api.*  → whitelisted IPC calls only (no direct Node in renderer)
@@ -131,9 +133,12 @@ suffixed and every reference inside the copied steps is rewritten — collection
 4. webRunner.js finds SYSTEM Node.js (via `where node`) and spawns it ONCE
    running the generated script   ← NOT Electron's own binary (that crashes)
         ↓
-5. Playwright drives a real browser; per-step + per-scenario logs stream over IPC → ActiveRun
+5. Playwright drives a real browser; per-step + per-scenario logs stream over IPC → ActiveRun.
+   Before each step the script `_settle()`s for the prior step's network to quiet ("calm
+   playback", bounded, per-step `_noSettle` opt-out), and can capture that step's requests/
+   responses (per-step **network trace**)
         ↓
-6. Results saved to History; screenshots/traces captured on failure
+6. Results saved to History; screenshots/traces captured on failure; network log via View Network Log
         ↓
 7. User exports a report (HTML / CSV / Word) from Results or History
 ```
@@ -145,6 +150,10 @@ suffixed and every reference inside the copied steps is rewritten — collection
   Prerequisites are ignored here (scenario order *is* the setup).
 - **Per-scenario ▶ Run (isolated)** — runs one scenario in a fresh browser, first replaying
   its **prerequisite** chain (e.g. Login) if set. For debugging a single scenario.
+- **⚡ Parallel Run** — several **profiles** run at the same time, each a fully independent Run All
+  (own Playwright process + browser + temp dir). The shared `runner:started/log/complete` streams
+  are demuxed by `profileId` (`ParallelRun.jsx`). Faster across environments; **no** shared state
+  *between* profiles (within each, it's still a normal state-carrying Run All).
 - **Data-driven** — a **repeating group** repeats its step range once per data set in a
   collection+group, resolving each row's tokens. Per-iteration results are labeled by set name.
   Logout goes *inside* the loop body as the reset. This is now the **only** data-driven entry
@@ -203,8 +212,10 @@ gate was removed as redundant with repeating groups.)
 
 Each step card also has: **Gherkin keyword badge** (Given/When/Then), a **⠿ drag grip**,
 ↑↓ move, screenshot toggle, a **⊘ skip toggle** (disable the step/group without deleting — it's
-dropped from the generated script), a **{ }** token-insert button on value fields, **Notes**, and
-**Expected Result** fields — so non-technical users read it like a test spec.
+dropped from the generated script), a **{ }** token-insert button on value fields, a **Skip
+calm-playback wait** toggle (`_noSettle`, for polling/streaming screens or to catch a transient
+toast), **Notes**, and **Expected Result** fields — so non-technical users read it like a test
+spec. **Assert Text** also has a **Max wait (ms)** field to poll longer for slow/transient content.
 
 **Skip / disable:** a step or group flips `params._skip`; a scenario flips its `skipped` column
 (via the ⋯ menu). The runner drops `_skip` steps/groups in `expandGroups`, and Run All excludes
@@ -277,6 +288,13 @@ breakdown, recent-runs streak).
   referenced test data); import remaps collection ids/names + prereqs so it runs on any machine
 - Collapsible step cards + drag-and-drop reordering for an at-a-glance, rearrangeable scenario
 
+**Run robustness & speed (done):**
+- 🐢 **Calm playback** — each step waits for the prior step's network to quiet before acting
+  (bounded, never fails the step); global toggle + settle cap in Settings, per-step `_noSettle` opt-out
+- 🌐 **Per-step network trace** — capture a step's requests/responses; review via View Network Log in Results
+- ⚡ **Parallel runs** — fire several profiles at once, each an independent browser process (ParallelRun)
+- ⏱ **Assert Text Max wait** — per-step poll window above the 5s default, for slow/transient content
+
 **Test data & data-driven (done):**
 - 🗂 Test Data Library — collections (form shape) + data sets (positive/negative/edge) + tokens
   (`{{Collection.field}}` / `{{faker.*}}` / `{{unique.*}}`), resolved at generate-time
@@ -320,5 +338,6 @@ scenarios that depend on an already-failed one via `prerequisite_id`).
 - Record & playback architecture (Phase 2) — feasible inside this Electron+Playwright setup?
 - Should custom steps evolve into reusable "sub-scenarios" / composable building blocks?
 - Reporting: what would make exports more useful for QA sign-off / audit trails?
-- Scaling: running many profiles/scenarios in parallel vs. the current sequential model.
+- Scaling: profile-level **Parallel Run** ships today — is scenario-level parallelism worth it,
+  given Run All deliberately shares one browser session for state carry-over?
 ```

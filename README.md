@@ -26,6 +26,9 @@ Build and run browser automation scripts through a point-and-click UI — no cod
 - **⊘ Skip / disable** — temporarily turn off a **step**, a whole **group**, or a **scenario** without deleting it (dimmed + struck-through). Skipped steps/groups are dropped from the generated script; skipped scenarios are excluded from **Run All** (an explicit single-scenario ▶ run still runs them) — handy for isolating or parking a flaky case
 - **Continuous runs** — "Run All" runs every scenario in order in **one browser session**; state carries over (stay logged in, keep created records). A failing scenario doesn't stop the rest — each gets its **own pass/fail** (see [How a run works](#how-a-run-works))
 - **Per-scenario isolated run** — run a single scenario in a fresh browser, optionally re-running a prerequisite (e.g. Login) first, for debugging
+- **⚡ Parallel runs** — kick off several **profiles at once**, each as an independent run (own Playwright process + browser + temp dir), with a live card per profile. For getting through many environments/suites faster — unlike "Run All", these don't share a browser session, so they're independent, not state-carrying
+- **🐢 Calm playback** — before each step the runner waits for the page's network to go quiet (bounded best-effort, never fails the step) so actions don't fire mid-load. Toggle it (and the settle cap) in **Settings**. Opt a **single step** out with **"Skip calm-playback wait"** (`_noSettle`) — for polling/streaming screens, or to start an assertion polling *immediately* so it catches a transient toast before it auto-dismisses (pair it with **Assert Text → Max wait** to span a slow async chain; see [docs/SELECTOR-RECIPES.md](docs/SELECTOR-RECIPES.md))
+- **🌐 Network trace** — capture each step's requests/responses and review them in the results via **View Network Log**. Lets you confirm an API actually returned the right status/body, instead of trusting a UI message that may be hardcoded on the success path
 - **Replicate environments** — duplicate a whole profile (e.g. staging → prebau) or copy scenarios into another profile; just change the Base URL
 - **📤 Share a profile (export / import)** — there's no central server, so export a whole profile to a single `.automation-profile.json` file (its scenarios + steps **and** the Test Data Library collections it references) and another QA imports it from their Dashboard. The bundle is self-contained: referenced collections travel with it, and on import any name clashes are suffixed and the references inside the steps (`{{Collection.field}}` tokens **and** repeating-group bindings) are rewritten so it runs immediately
 - **Dashboard** — a card per profile showing scenario count, last-run status & time, the last run's "X/Y scenarios passed" breakdown, and a recent-runs streak
@@ -86,8 +89,8 @@ src/
                 #   health, selectorTester, elementPicker, recorder, dataLibrary, transfer
   renderer/
     src/
-      screens/  # Dashboard, ScenarioBuilder, ApiWorkspace (API profiles), ActiveRun, Results,
-                #   History, Settings, HealthCheck, TestData, Help
+      screens/  # Dashboard, ScenarioBuilder, ApiWorkspace (API profiles), ActiveRun, ParallelRun,
+                #   Results, History, Settings, HealthCheck, TestData, Help
       components/ # Sidebar, StepCard, action definitions
       lib/      # confirm (in-app dialog used instead of native confirm/prompt)
   preload/      # Context bridge
@@ -107,6 +110,8 @@ Key shared modules:
 
 - **Run All** generates **one** script for the whole profile and runs every scenario in order, in a single browser — so login and created state carry from one scenario to the next.
 - **Per-scenario ▶ Run** runs just that scenario (plus an optional prerequisite) in a fresh browser.
+- **⚡ Parallel Run** fires several profiles at the same time — each is a *separate* Run All (own browser process), so they finish faster but **don't** share state with each other.
+- **🐢 Calm playback** sits *inside* the generated script: each step `await _settle(cap)`s for the prior step's network to quiet before acting (skipped per-step via `_noSettle`). It's a bounded best-effort wait — a never-idle app just proceeds at the cap.
 - **Groups & loops** are expanded *before* the script is generated (`runner.js` → `expandGroups`): a repeating group's body is unrolled once per data set in its collection+group, each iteration's `{{tokens}}` resolved from that set (labels prefixed with the set name so per-row pass/fail is readable). Non-repeating groups are purely organizational and just inline their steps. Group markers never reach the generated script.
 
 ### Pass/fail (per scenario)
@@ -131,6 +136,6 @@ A run records **a pass/fail verdict for each scenario**, not just one verdict fo
 - Self-healing selector fallback chain (auto-try by-text / role+name / nearby-label on failure)
 - "Blocked" scenario marking — skip/flag scenarios whose prerequisite already failed
 
-**Recently shipped** (was Phase 2): assert-mode recording, smart waits, Test Data Library + data-driven loops, step groups, drag-and-drop reordering, inline scenario rename, copy steps between scenarios, group-aware selection.
+**Recently shipped** (was Phase 2): assert-mode recording, smart waits, Test Data Library + data-driven loops, step groups, drag-and-drop reordering, inline scenario rename, copy steps between scenarios, group-aware selection, **calm-playback network settle** (+ per-step `_noSettle` opt-out), **per-step network trace** in results, **parallel profile runs**, **Set Checkbox** action, and a per-step **Max wait** on Assert Text.
 
 **In progress:** 🔌 **API profiles (beta)** — SOAP/REST request collections with a shared `{{token}}` store, click-to-extract, an auth/token policy, and WSDL import. Remaining: SOAP-fault token auto-refresh and API-shaped report formatting.

@@ -4,6 +4,7 @@ import { installSelectorGen, recorderListener } from '../core/injectedScripts'
 import { refocusMainWindow } from '../core/windowFocus'
 import { launchSessionContext } from '../core/browserSession'
 import { buildDataContext } from '../core/tokenResolver'
+import { expandGroups } from '../core/groupExpand'
 import { getDb } from '../core/db'
 
 // During the recorder's pre-Start replay we're only repositioning the browser to the
@@ -72,7 +73,10 @@ export function registerRecorderHandlers() {
         page.setDefaultNavigationTimeout(timeout)
         // Resolve test-data tokens so replay types real values (matches a run's no-set defaults).
         const dataContext = await buildDataContext(getDb(), null)
-        const replay = await replaySteps(page, steps, baseUrl, dataContext)
+        // Expand repeating groups to a single representative pass (their first selected set), so a
+        // positive/negative group replays with real row values instead of bare field defaults.
+        const prepared = await expandGroups(getDb(), steps, { firstSetOnly: true })
+        const replay = await replaySteps(page, prepared, baseUrl, dataContext)
         if (!replay.ok) {
           try { event.sender.send('recorder:notice', replay.error || 'Some earlier steps could not be replayed — continuing from where they stopped.') } catch { /* renderer gone */ }
         }

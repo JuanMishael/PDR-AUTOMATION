@@ -3,6 +3,7 @@ import { replaySteps } from '../core/stepReplay'
 import { installSelectorGen } from '../core/injectedScripts'
 import { launchSessionContext } from '../core/browserSession'
 import { buildDataContext } from '../core/tokenResolver'
+import { expandGroups } from '../core/groupExpand'
 import { getDb } from '../core/db'
 
 export function registerSelectorTesterHandlers() {
@@ -35,16 +36,19 @@ export function registerSelectorTesterHandlers() {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout })
 
       // Resolve test-data tokens so replay uses real values, not literal {{tokens}} (matches a run).
+      // Expand repeating groups to their first selected set so grouped steps replay with real rows.
       const dataContext = await buildDataContext(getDb(), null)
+      const prepSetup = await expandGroups(getDb(), setupSteps, { firstSetOnly: true })
+      const prepSteps = await expandGroups(getDb(), steps, { firstSetOnly: true })
 
       // Best-effort setup: replay the scenario's prerequisite (e.g. Login) chain first so a gated
       // page is reachable. NON-FATAL — the persistent profile may already be logged in, in which
       // case these steps fail on absent login fields; that's fine, we're already where we need to be.
       // Fail fast (capped) so a stale login step doesn't stall the whole test.
-      if (setupSteps.length) {
+      if (prepSetup.length) {
         page.setDefaultTimeout(Math.min(timeout, 8000))
-        await replaySteps(page, setupSteps, baseUrl, dataContext)   // ignore result — best-effort
-        page.setDefaultTimeout(timeout)                             // restore full budget for the real test
+        await replaySteps(page, prepSetup, baseUrl, dataContext)   // ignore result — best-effort
+        page.setDefaultTimeout(timeout)                            // restore full budget for the real test
       }
 
       // "Test from the top" — replay the steps above this card so mid-flow elements
@@ -53,8 +57,8 @@ export function registerSelectorTesterHandlers() {
       // returns 0 matches against the bare page and misleads the tester. Strict: a failure here
       // means the target genuinely isn't reachable, so surface it.
       let ranSteps = 0
-      if (runSteps && steps.length) {
-        const replay = await replaySteps(page, steps, baseUrl, dataContext)
+      if (runSteps && prepSteps.length) {
+        const replay = await replaySteps(page, prepSteps, baseUrl, dataContext)
         if (!replay.ok) return replay
         ranSteps = replay.ranSteps
       }

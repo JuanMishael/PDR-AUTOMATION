@@ -184,6 +184,17 @@ gate was removed as redundant with repeating groups.)
 
 **Demonstrate-don't-declare tooling** (all share `stepReplay.js` + `injectedScripts.js`):
 
+> **Replay mirrors a real run.** The pre-interaction replay these tools use now behaves like the
+> generated run, so you land where a run would instead of stranded on a login page:
+> it replays the scenario's **prerequisite (Login) chain** first — **best-effort** (the persistent
+> profile may already be logged in, so a failed re-login is tolerated); resolves `{{Collection.field}}`
+> `/{{faker.*}}/{{unique.*}}` **tokens** (types real values, not literal `{{tokens}}`); expands a
+> **repeating group** to a single pass against its **first selected set** (`groupExpand.js`,
+> `firstSetOnly`); and its **Navigate** honors *Wait until* (default `domcontentloaded`) + *Nav timeout*
+> and tolerates `ERR_ABORTED` / redirect-to-self (heavy map/GIS pages never fire `load`). Record
+> prepends the prereq chain to its own replay; Pick/Test take it as a best-effort `setupSteps` prefix
+> while their same-scenario prior steps stay strict.
+
 - **🎯 Picker** — opens a headful browser (replaying steps above so you can pick mid-flow
   elements, e.g. inside a modal), you click the element, a robust selector is generated.
 - **● Recorder** — headful browser with a Pause/Resume + Stop bar; captures
@@ -259,6 +270,8 @@ spec. **Assert Text** also has a **Max wait (ms)** field to poll longer for slow
 - Internal/QA sites may use self-signed SSL → `ignoreHTTPSErrors: true` is on by default on every browser context
 - Login pages with warning modals → use text/attribute selectors (e.g. `button:has-text("OK")`) + a wait for animations; avoid generic class selectors that match multiple elements
 - Internal URLs may only be reachable on a specific network / VPN
+- **Map/GIS/SPA pages never go network-idle** (tile streaming, polling) → keep **Navigate**'s *Wait until* on `domcontentloaded`, not `load`/`networkidle`, or `goto` hangs. A `navigate` to the page you're already on (e.g. a post-login redirect already took you there) can raise `net::ERR_ABORTED` — both the run and the replay tolerate it, so no need to work around it
+- **Persistent login profile:** picker/recorder/selector-test share one on-disk browser profile, so a login done once carries across them. Switch users / log out via **session:clear** (wipes the profile). Closing the app now reaps any open run/tool browsers instead of orphaning them
 
 ---
 
@@ -277,6 +290,9 @@ breakdown, recent-runs streak).
 - ● Recorder — record clicks/typing into step cards live (survives navigations); Pause/Resume
   + ✓ Assert mode (record a visibility check)
 - ⊙ Selector tester "from the top" — replay steps above before testing a selector
+- **Replay parity** — pick/test/record replay now matches a run: prereq (Login) chain first
+  (best-effort), `{{tokens}}` resolved, repeating groups expanded to their first set, and
+  Navigate honors *Wait until*/*Nav timeout* + tolerates `ERR_ABORTED`
 - Continuous run model — Run All shares one browser session across scenarios
 - **Per-scenario pass/fail** — Run All continues past a failing scenario; each scenario gets
   its own verdict (`scenarios_total/passed/failed` in history)
@@ -294,6 +310,10 @@ breakdown, recent-runs streak).
 - 🌐 **Per-step network trace** — capture a step's requests/responses; review via View Network Log in Results
 - ⚡ **Parallel runs** — fire several profiles at once, each an independent browser process (ParallelRun)
 - ⏱ **Assert Text Max wait** — per-step poll window above the 5s default, for slow/transient content
+- 🧹 **History retention enforced** — on startup, run rows older than `history_retention_days`
+  (Settings) are pruned, so the full-serialize sql.js saves + startup reads stay bounded
+- 🧯 **Clean shutdown** — app quit / Stop reaps in-flight run *and* interactive-tool browsers
+  (Windows tree-kill), so nothing is orphaned in the background
 
 **Test data & data-driven (done):**
 - 🗂 Test Data Library — collections (form shape) + data sets (positive/negative/edge) + tokens

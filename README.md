@@ -89,8 +89,9 @@ runs execute with the Electron-bundled Node and the bundled Chromium.
 ```
 src/
   main/
-    core/       # db, scriptGenerator, webRunner, stepReplay, injectedScripts, tokenResolver,
-                #   windowFocus, portability (profile export/import serialize/deserialize),
+    core/       # db, scriptGenerator, webRunner, stepReplay, groupExpand (group/loop → steps),
+                #   injectedScripts, tokenResolver, windowFocus, browserSession (shared login profile),
+                #   portability (profile export/import serialize/deserialize),
                 #   apiEngine (HTTP + {{var}}/extract/token engine), wsdlImport (WSDL → SOAP collection)
     ipc/        # IPC handlers: storage, runner, apiRunner (API send/run/WSDL-import), reporter,
                 #   health, selectorTester, elementPicker, recorder, dataLibrary, transfer
@@ -105,7 +106,8 @@ src/
 
 Key shared modules:
 
-- `core/stepReplay.js` — replays existing steps against a live page (used by the picker, recorder, and selector tester to reach mid-flow state)
+- `core/stepReplay.js` — replays existing steps against a live page (used by the picker, recorder, and selector tester to reach mid-flow state); resolves `{{tokens}}` and tolerates SPA `ERR_ABORTED` navigations like a real run
+- `core/groupExpand.js` — expands group/loop blocks into a flat step list; a repeating group unrolls once per data set for a run, or once against its **first set** for replay (`firstSetOnly`). Shared by `runner.js` and the replay handlers
 - `core/injectedScripts.js` — in-page scripts injected into the picker/recorder browser; **single source of truth** for selector generation (`id → data-testid → name/aria → text → CSS path`)
 - `core/scriptGenerator.js` — turns one or more scenarios into a single Playwright script (one browser per run)
 - `core/tokenResolver.js` — resolves `{{Collection.field}}` / `{{faker.*}}` / `{{unique.*}}` tokens to concrete values at generate-time, so the emitted script stays plain JS
@@ -119,7 +121,8 @@ Key shared modules:
 - **Per-scenario ▶ Run** runs just that scenario (plus an optional prerequisite) in a fresh browser.
 - **⚡ Parallel Run** fires several profiles at the same time — each is a *separate* Run All (own browser process), so they finish faster but **don't** share state with each other.
 - **🐢 Calm playback** sits *inside* the generated script: each step `await _settle(cap)`s for the prior step's network to quiet before acting (skipped per-step via `_noSettle`). It's a bounded best-effort wait — a never-idle app just proceeds at the cap.
-- **Groups & loops** are expanded *before* the script is generated (`runner.js` → `expandGroups`): a repeating group's body is unrolled once per data set in its collection+group, each iteration's `{{tokens}}` resolved from that set (labels prefixed with the set name so per-row pass/fail is readable). Non-repeating groups are purely organizational and just inline their steps. Group markers never reach the generated script.
+- **Groups & loops** are expanded *before* the script is generated (`core/groupExpand.js`, called from `runner.js`): a repeating group's body is unrolled once per data set in its collection+group, each iteration's `{{tokens}}` resolved from that set (labels prefixed with the set name so per-row pass/fail is readable). Non-repeating groups are purely organizational and just inline their steps. Group markers never reach the generated script.
+- **Record / Pick / Test replay mirrors a run.** Before you record, pick an element, or test a selector, the pre-interaction replay (`stepReplay.js`) now does what a run does: replays the scenario's prerequisite **Login** chain first (best-effort), resolves `{{tokens}}` to real values, expands a repeating group to its **first set** (`groupExpand.js` `firstSetOnly`), and navigates with the step's *Wait until*/*Nav timeout* while tolerating `ERR_ABORTED` — so you land on the gated page instead of stuck at login.
 
 ### Pass/fail (per scenario)
 
@@ -143,6 +146,6 @@ A run records **a pass/fail verdict for each scenario**, not just one verdict fo
 - Self-healing selector fallback chain (auto-try by-text / role+name / nearby-label on failure)
 - "Blocked" scenario marking — skip/flag scenarios whose prerequisite already failed
 
-**Recently shipped** (was Phase 2): assert-mode recording, smart waits, Test Data Library + data-driven loops, step groups, drag-and-drop reordering, inline scenario rename, copy steps between scenarios, group-aware selection, **calm-playback network settle** (+ per-step `_noSettle` opt-out), **per-step network trace** in results, **parallel profile runs**, **Set Checkbox** action, and a per-step **Max wait** on Assert Text.
+**Recently shipped** (was Phase 2): assert-mode recording, smart waits, Test Data Library + data-driven loops, step groups, drag-and-drop reordering, inline scenario rename, copy steps between scenarios, group-aware selection, **calm-playback network settle** (+ per-step `_noSettle` opt-out), **per-step network trace** in results, **parallel profile runs**, **Set Checkbox** action, a per-step **Max wait** on Assert Text, **replay parity for record/pick/test** (prereq Login chain + `{{token}}` resolution + first-set groups + `ERR_ABORTED`-tolerant navigate), **enforced history retention**, and **clean-shutdown browser reaping**.
 
 **In progress:** 🔌 **API profiles (beta)** — SOAP/REST request collections with a shared `{{token}}` store, click-to-extract, an auth/token policy, and WSDL import. Remaining: SOAP-fault token auto-refresh and API-shaped report formatting.

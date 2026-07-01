@@ -2,6 +2,8 @@ import { ipcMain } from 'electron'
 import { replaySteps } from '../core/stepReplay'
 import { installSelectorGen } from '../core/injectedScripts'
 import { launchSessionContext } from '../core/browserSession'
+import { buildDataContext } from '../core/tokenResolver'
+import { getDb } from '../core/db'
 
 export function registerSelectorTesterHandlers() {
   ipcMain.handle('selector:test', async (_, args) => {
@@ -10,6 +12,7 @@ export function registerSelectorTesterHandlers() {
       selector,
       browser: browserName = 'chromium',
       steps = [],
+      setupSteps = [],
       baseUrl = '',
       runSteps = false,
       timeout = 20000
@@ -31,13 +34,27 @@ export function registerSelectorTesterHandlers() {
 
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout })
 
+      // Resolve test-data tokens so replay uses real values, not literal {{tokens}} (matches a run).
+      const dataContext = await buildDataContext(getDb(), null)
+
+      // Best-effort setup: replay the scenario's prerequisite (e.g. Login) chain first so a gated
+      // page is reachable. NON-FATAL — the persistent profile may already be logged in, in which
+      // case these steps fail on absent login fields; that's fine, we're already where we need to be.
+      // Fail fast (capped) so a stale login step doesn't stall the whole test.
+      if (setupSteps.length) {
+        page.setDefaultTimeout(Math.min(timeout, 8000))
+        await replaySteps(page, setupSteps, baseUrl, dataContext)   // ignore result — best-effort
+        page.setDefaultTimeout(timeout)                             // restore full budget for the real test
+      }
+
       // "Test from the top" — replay the steps above this card so mid-flow elements
       // (the AUTHORIZED USERS modal, post-login content) actually exist before we test.
       // Without this, any selector for an element that appears after navigate+click
-      // returns 0 matches against the bare page and misleads the tester.
+      // returns 0 matches against the bare page and misleads the tester. Strict: a failure here
+      // means the target genuinely isn't reachable, so surface it.
       let ranSteps = 0
       if (runSteps && steps.length) {
-        const replay = await replaySteps(page, steps, baseUrl)
+        const replay = await replaySteps(page, steps, baseUrl, dataContext)
         if (!replay.ok) return replay
         ranSteps = replay.ranSteps
       }

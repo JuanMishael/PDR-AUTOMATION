@@ -3,6 +3,8 @@ import { replaySteps } from '../core/stepReplay'
 import { installSelectorGen, recorderListener } from '../core/injectedScripts'
 import { refocusMainWindow } from '../core/windowFocus'
 import { launchSessionContext } from '../core/browserSession'
+import { buildDataContext } from '../core/tokenResolver'
+import { getDb } from '../core/db'
 
 // During the recorder's pre-Start replay we're only repositioning the browser to the
 // current flow state — not asserting an exact element like the picker does. So cap how
@@ -68,7 +70,9 @@ export function registerRecorderHandlers() {
         // give slow pages the full navigation budget so a real load isn't cut short.
         page.setDefaultTimeout(Math.min(timeout, REPLAY_ACTION_TIMEOUT_CAP))
         page.setDefaultNavigationTimeout(timeout)
-        const replay = await replaySteps(page, steps, baseUrl)
+        // Resolve test-data tokens so replay types real values (matches a run's no-set defaults).
+        const dataContext = await buildDataContext(getDb(), null)
+        const replay = await replaySteps(page, steps, baseUrl, dataContext)
         if (!replay.ok) {
           try { event.sender.send('recorder:notice', replay.error || 'Some earlier steps could not be replayed — continuing from where they stopped.') } catch { /* renderer gone */ }
         }

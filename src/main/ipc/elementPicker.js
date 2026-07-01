@@ -3,6 +3,8 @@ import { replaySteps } from '../core/stepReplay'
 import { installSelectorGen, pickerListener } from '../core/injectedScripts'
 import { refocusMainWindow } from '../core/windowFocus'
 import { launchSessionContext, clearSession } from '../core/browserSession'
+import { buildDataContext } from '../core/tokenResolver'
+import { getDb } from '../core/db'
 
 // Cap how long a single replayed setup step waits on a (possibly stale) element. The
 // replay is only repositioning to the target — failing in a few seconds lets the tester
@@ -19,6 +21,7 @@ export function registerElementPickerHandlers() {
       url,
       browser: browserName = 'chromium',
       steps = [],
+      setupSteps = [],
       baseUrl = '',
       runSteps = false,
       timeout = 20000
@@ -48,6 +51,18 @@ export function registerElementPickerHandlers() {
 
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout })
 
+      // Resolve test-data tokens so replay uses real values, not literal {{tokens}} (matches a run).
+      const dataContext = await buildDataContext(getDb(), null)
+
+      // Best-effort setup: replay the scenario's prerequisite (e.g. Login) chain first so a gated
+      // page is reachable. NON-FATAL — a persistent session may already be logged in (these steps
+      // then no-op-fail on absent fields) and the pick is tolerant of replay misses anyway.
+      if (setupSteps.length) {
+        page.setDefaultTimeout(Math.min(timeout, REPLAY_ACTION_TIMEOUT_CAP))
+        page.setDefaultNavigationTimeout(timeout)
+        await replaySteps(page, setupSteps, baseUrl, dataContext)   // ignore result — best-effort
+      }
+
       // Replay the steps above so the tester can pick mid-flow elements (inside a modal).
       // The listener stays disarmed during replay so generated clicks aren't captured.
       let ranSteps = 0
@@ -56,7 +71,7 @@ export function registerElementPickerHandlers() {
         // the full navigation budget.
         page.setDefaultTimeout(Math.min(timeout, REPLAY_ACTION_TIMEOUT_CAP))
         page.setDefaultNavigationTimeout(timeout)
-        const replay = await replaySteps(page, steps, baseUrl)
+        const replay = await replaySteps(page, steps, baseUrl, dataContext)
         ranSteps = replay.ranSteps || 0
         // A replay miss is NON-FATAL: keep the browser open at wherever it got to so the
         // tester can navigate to the element by hand and still pick it, instead of aborting.

@@ -49,7 +49,7 @@ function buildRecordedParams(p) {
 
 // ─── Test Selector Button ─────────────────────────────────────────────────────
 
-function TestSelectorButton({ selector, baseUrl, browser, priorSteps = [], onUse, onUseFallback }) {
+function TestSelectorButton({ selector, baseUrl, browser, priorSteps = [], setupSteps = [], onUse, onUseFallback }) {
   const [open, setOpen]         = useState(false)
   const [url, setUrl]           = useState('')
   const [testing, setTesting]   = useState(false)
@@ -100,6 +100,7 @@ function TestSelectorButton({ selector, baseUrl, browser, priorSteps = [], onUse
         browser: browser || 'chromium',
         baseUrl: baseUrl || '',
         steps: replay ? priorSteps : [],
+        setupSteps,                       // login/prereq chain — replayed best-effort to reach gated pages
         runSteps: replay
       })
       setResult(res)
@@ -304,7 +305,7 @@ function TestSelectorButton({ selector, baseUrl, browser, priorSteps = [], onUse
 
 // ─── Pick Button (element picker) ─────────────────────────────────────────────
 
-function PickButton({ baseUrl, browser, priorSteps = [], onPicked, onPickedFallback }) {
+function PickButton({ baseUrl, browser, priorSteps = [], setupSteps = [], onPicked, onPickedFallback }) {
   const [picking, setPicking] = useState(false)
   const [msg, setMsg] = useState(null)
   const [candidates, setCandidates] = useState(null)   // non-null → chooser open
@@ -328,6 +329,7 @@ function PickButton({ baseUrl, browser, priorSteps = [], onPicked, onPickedFallb
         browser: browser || 'chromium',
         baseUrl: baseUrl || '',
         steps: priorSteps,
+        setupSteps,                       // login/prereq chain — replayed best-effort to reach gated pages
         runSteps: priorSteps.length > 0
       })
       if (res?.ok) {
@@ -473,7 +475,7 @@ function SelectorChooser({ title, candidates, onUse, onFallback, onClose }) {
 
 // ─── Canvas Step ─────────────────────────────────────────────────────────────
 
-function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGroupEnd, profile, priorSteps = [], collections = [], reloadCollections = null, groupCollectionId = null, indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, dragGroupActive = false, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
+function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGroupEnd, profile, priorSteps = [], setupSteps = [], collections = [], reloadCollections = null, groupCollectionId = null, indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, dragGroupActive = false, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
   // Drag-and-drop wiring shared by the normal card and the group cards.
   const dragging = dragId === step.id || (dragGroupActive && selected)
   const showDropLine = overId === step.id && dragId && dragId !== step.id
@@ -773,6 +775,7 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                     baseUrl={profile?.base_url}
                     browser={profile?.browser}
                     priorSteps={priorSteps}
+                    setupSteps={setupSteps}
                     onPicked={sel => updateParam(p.key, sel)}
                     onPickedFallback={p.key === 'selector' ? (sel => updateParam('selector2', sel)) : null}
                   />
@@ -781,6 +784,7 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                     baseUrl={profile?.base_url}
                     browser={profile?.browser}
                     priorSteps={priorSteps}
+                    setupSteps={setupSteps}
                     onUse={sel => updateParam(p.key, sel)}
                     onUseFallback={p.key === 'selector' ? (sel => updateParam('selector2', sel)) : null}
                   />
@@ -1498,6 +1502,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [dupMsg, setDupMsg]           = useState(null)
   const [recording, setRecording]     = useState(false)
   const [recNotice, setRecNotice]     = useState(null)  // non-blocking replay heads-up (never a native modal)
+  const [prereqSteps, setPrereqSteps] = useState([])    // active scenario's Run-needs (login) chain, for pick/test/record replay
   const [expandedIds, setExpandedIds] = useState(() => new Set())
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [collapsedGroups, setCollapsedGroups] = useState(() => new Set())   // groupStart ids hidden
@@ -1529,6 +1534,27 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  // Resolve a scenario's prerequisite ("Run needs") chain into a flat step list — e.g. a separate
+  // Login scenario — so pick/test/record can replay it first and land on a gated page instead of
+  // the login screen. Cycle-guarded; mirrors the isolated-run prereq collection in the main process.
+  async function resolvePrereqChain(prerequisiteId, seen = new Set()) {
+    if (!prerequisiteId || seen.has(prerequisiteId)) return []
+    seen.add(prerequisiteId)
+    const sc = scenarios.find(s => s.id === prerequisiteId)
+    if (!sc) return []
+    const chain = await resolvePrereqChain(sc.prerequisite_id, seen)
+    return [...chain, ...(await window.api.getSteps(prerequisiteId))]
+  }
+
+  // Keep the active scenario's prereq (login) chain resolved so the per-step Pick/Test buttons can
+  // replay it best-effort before their own prior steps (the Record button resolves its own fresh copy).
+  useEffect(() => {
+    let cancelled = false
+    if (!active?.prerequisite_id) { setPrereqSteps([]); return }
+    resolvePrereqChain(active.prerequisite_id).then(s => { if (!cancelled) setPrereqSteps(s) })
+    return () => { cancelled = true }
+  }, [active?.prerequisite_id, scenarios])
 
   function toggleExpand(id) {
     setExpandedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -2081,18 +2107,9 @@ export default function ScenarioBuilder({ navigate, ctx }) {
 
     // Replay the PREREQUISITE chain first (e.g. a separate Login scenario), mirroring an
     // isolated run — so recording a scenario whose steps assume a logged-in state lands you
-    // there instead of stranded on the login page. Cycle-guarded; prereq steps are replayed
-    // only (never saved to this scenario). These step objects are passed to the recorder, which
-    // replays them ahead of the scenario's own steps.
-    async function collectPrereqSteps(scenarioId, seen = new Set()) {
-      if (!scenarioId || seen.has(scenarioId)) return []
-      seen.add(scenarioId)
-      const sc = scenarios.find(s => s.id === scenarioId)
-      if (!sc) return []
-      const chain = await collectPrereqSteps(sc.prerequisite_id, seen)
-      return [...chain, ...(await window.api.getSteps(scenarioId))]
-    }
-    const prereqSteps = await collectPrereqSteps(active.prerequisite_id)
+    // there instead of stranded on the login page. Resolved fresh here (not from state) so a
+    // just-set prerequisite is picked up. Prereq steps are replayed only, never saved.
+    const prereq = await resolvePrereqChain(active.prerequisite_id)
 
     // A runnable scenario must start by opening the app. If empty AND there's no prerequisite to
     // position the page, add an "Open the app" navigate so the recorded steps have a page to run
@@ -2136,7 +2153,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
         url: profile.base_url,
         baseUrl: profile.base_url,
         browser: profile.browser || 'chromium',
-        steps: [...prereqSteps, ...current],   // prerequisite (login) chain replays first
+        steps: [...prereq, ...current],   // prerequisite (login) chain replays first
         runSteps: true
       })
       await chain
@@ -2611,7 +2628,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                           opacity: q && !hit ? 0.35 : 1 }}>
                         <CanvasStep step={step} index={i} total={steps.length} indent={indent}
                           onChange={updateStep} onDelete={deleteStep} onMove={moveStep} onRemoveGroupEnd={removeGroupEnd}
-                          profile={profile} priorSteps={steps.slice(0, i)} collections={collections} reloadCollections={refreshCollections}
+                          profile={profile} priorSteps={steps.slice(0, i)} setupSteps={prereqSteps} collections={collections} reloadCollections={refreshCollections}
                           groupCollectionId={enclosingCol[step.id]}
                           groupCollapsed={collapsedGroups.has(step.id)} onToggleGroup={() => toggleGroupCollapse(step.id)}
                           onUngroup={() => ungroupGroup(step.id)}

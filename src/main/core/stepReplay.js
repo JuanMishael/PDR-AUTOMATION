@@ -10,6 +10,7 @@
 
 import { findDragHandleRect, synthDrag } from './dragHelpers'
 import { mapPickPixel, mapSetZoom } from './mapHelpers'
+import { resolveParams } from './tokenResolver'
 
 export const REPLAYABLE = new Set([
   'navigate', 'reload', 'goBack', 'goForward', 'waitForUrl',
@@ -63,7 +64,27 @@ async function smartUpload(page, p) {
 
 export async function replayStep(page, action, p, baseUrl) {
   switch (action) {
-    case 'navigate':           return page.goto(resolveUrl(p.url, baseUrl))
+    case 'navigate': {
+      // Mirror the generated run's navigate so replay behaves the same way:
+      //  • honor the step's Wait until (default 'domcontentloaded', NOT Playwright's 'load' —
+      //    heavy map/GIS apps may never fire 'load' or go network-idle, so waiting for it hangs
+      //    or invites the ERR_ABORTED race below);
+      //  • honor the step's Nav timeout when set;
+      //  • tolerate the SPA aborting a redundant load (ERR_ABORTED) or redirecting to itself
+      //    ("interrupted by another navigation") — both mean we're effectively already there.
+      const WAIT_UNTIL = ['commit', 'domcontentloaded', 'load', 'networkidle']
+      const waitUntil = WAIT_UNTIL.includes(p.waitUntil) ? p.waitUntil : 'domcontentloaded'
+      const navTimeout = Number(p.navTimeout) > 0 ? Number(p.navTimeout) : 0
+      const opts = navTimeout ? { waitUntil, timeout: navTimeout } : { waitUntil }
+      const settleState = waitUntil === 'networkidle' ? 'domcontentloaded' : waitUntil
+      try {
+        await page.goto(resolveUrl(p.url, baseUrl), opts)
+      } catch (e) {
+        if (!/ERR_ABORTED|interrupted by another navigation/i.test(e.message || '')) throw e
+        await page.waitForLoadState(settleState).catch(() => {})
+      }
+      return undefined
+    }
     case 'reload':             return page.reload()
     case 'goBack':             return page.goBack()
     case 'goForward':          return page.goForward()
@@ -179,12 +200,14 @@ async function settle(page) {
   try { await page.waitForLoadState('networkidle', { timeout: REPLAY_SETTLE_CAP }) } catch { /* proceed */ }
 }
 
-export async function replaySteps(page, steps, baseUrl) {
+export async function replaySteps(page, steps, baseUrl, dataContext = null) {
   let ranSteps = 0
   for (let i = 0; i < steps.length; i++) {
     const action = steps[i].action
     if (!REPLAYABLE.has(action)) continue
-    const p = parseParams(steps[i].params)
+    // Resolve {{Collection.field}} / {{faker.*}} / {{unique.*}} tokens the same way a run does,
+    // so replay types the real value — not the literal token text — into the page.
+    const p = dataContext ? resolveParams(parseParams(steps[i].params), dataContext) : parseParams(steps[i].params)
     try {
       await replayStep(page, action, p, baseUrl)
       await settle(page)   // wait for this step's network to quiet before the next

@@ -7,6 +7,16 @@ import { app } from 'electron'
 // survives to the next launch — the tester signs in once, not every pick.
 const profileDir = () => join(app.getPath('userData'), 'pdr-browser-profile')
 
+// Every live interactive session's close fn, so app-quit can tear them down. Without this a
+// recorder/picker window left open at quit orphans a Chromium that keeps holding the profile
+// lock — forcing the next launch to fall back to incognito (lost login).
+const liveSessions = new Set()
+
+export async function closeAllSessions() {
+  await Promise.allSettled([...liveSessions].map(close => close()))
+  liveSessions.clear()
+}
+
 /**
  * Launch a browser that REMEMBERS the tester's login.
  *
@@ -47,6 +57,7 @@ export async function launchSessionContext(browserName = 'chromium', { headless 
   page.setDefaultTimeout(timeout)
 
   const close = async () => {
+    liveSessions.delete(close)
     try {
       const browser = context.browser()
       await context.close()
@@ -55,6 +66,7 @@ export async function launchSessionContext(browserName = 'chromium', { headless 
       /* ignore */
     }
   }
+  liveSessions.add(close)
 
   return { context, page, persistent, close }
 }

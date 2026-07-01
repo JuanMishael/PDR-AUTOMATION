@@ -10,6 +10,8 @@ if (app.isPackaged) {
   process.env.PLAYWRIGHT_BROWSERS_PATH = join(process.resourcesPath, 'pw-browsers')
 }
 import { initDb, flushDb } from './core/db'
+import { stopAllRuns } from './core/webRunner'
+import { closeAllSessions } from './core/browserSession'
 import { nudgeWindowFocus } from './core/windowFocus'
 import { registerRunnerHandlers } from './ipc/runner'
 import { registerApiRunnerHandlers } from './ipc/apiRunner'
@@ -81,8 +83,9 @@ app.whenReady().then(async () => {
   })
 })
 
-// Flush any debounced DB write before the process exits so no save is lost.
-app.on('before-quit', () => flushDb())
+// Flush any debounced DB write before the process exits so no save is lost, and stop any
+// in-flight runs so closing the app doesn't leave orphaned node/browser processes behind.
+app.on('before-quit', () => { stopAllRuns(); closeAllSessions(); flushDb() })
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

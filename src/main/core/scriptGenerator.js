@@ -320,14 +320,19 @@ function actionToCode(action, p, baseUrl) {
         : `{ waitUntil: '${waitUntil}' }`
       // networkidle may never settle on live apps; use a lighter state to recover with.
       const settle = waitUntil === 'networkidle' ? 'domcontentloaded' : waitUntil
-      // Skip if we're already on the target page (continuous Run All carries the session
-      // over, so a scenario's "Open the app" is a no-op there). Compare by origin+path so
-      // a post-login #hash or ?query doesn't defeat the skip. Tolerate the SPA aborting a
-      // redundant load (ERR_ABORTED) or redirecting to itself ("interrupted by another
-      // navigation") — both mean we're effectively already there.
+      // Skip if we're already on the EXACT target URL (continuous Run All carries the session
+      // over, so a scenario's "Open the app" is a no-op there). Compare origin+path+search+hash
+      // so an intentional navigation to a different ?query or #hash — how map/SPA apps route —
+      // isn't silently swallowed; only a truly identical URL is skipped. Trailing '/' tolerated.
+      // Tolerate the SPA aborting a redundant load (ERR_ABORTED) or redirecting to itself
+      // ("interrupted by another navigation") — both mean we're effectively already there.
       return `const _target = ${url};
     const _samePage = (a, b) => {
-      try { const x = new URL(a), y = new URL(b); return x.origin === y.origin && x.pathname.replace(/\\/+$/, '') === y.pathname.replace(/\\/+$/, ''); }
+      try {
+        const x = new URL(a), y = new URL(b);
+        return x.origin === y.origin && x.pathname.replace(/\\/+$/, '') === y.pathname.replace(/\\/+$/, '')
+          && x.search === y.search && x.hash === y.hash;
+      }
       catch (e) { return (a || '').replace(/\\/+$/, '') === (b || '').replace(/\\/+$/, ''); }
     };
     if (!_samePage(_target, page.url())) {

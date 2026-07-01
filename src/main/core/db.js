@@ -283,6 +283,20 @@ export async function initDb() {
   persist()
   seedDefaultSettings()
   seedDefaultProject()
+  pruneHistory()
+}
+
+// Drop history rows older than history_retention_days. sql.js serializes the WHOLE db on
+// every save, and each history row carries the full run log + scenario_results — so without
+// pruning, saves and startup reads get steadily slower. Runs once at launch. 0/blank = keep all.
+function pruneHistory() {
+  const db = getDb()
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'history_retention_days'").get()
+  const days = Number(row?.value)
+  if (!Number.isFinite(days) || days <= 0) return
+  // started_at is stored as an ISO string (…T…Z); wrap in datetime() so both sides are the
+  // same normalized format and the comparison isn't a raw string mismatch.
+  db.prepare(`DELETE FROM history WHERE datetime(started_at) < datetime('now', ?)`).run(`-${days} days`)
 }
 
 // One-time migration: home every pre-projects profile under a "Default" project. Runs every

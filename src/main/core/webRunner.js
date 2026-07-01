@@ -27,6 +27,18 @@ function getNodeExecutable() {
 
 const activeRuns = new Map()
 
+// Kill the spawned run AND its browser subtree. A plain proc.kill() only terminates the
+// node script; on Windows the Chromium it launched is a separate process that would keep
+// running headful in the background. taskkill /T reaps the whole tree.
+function killProc(proc) {
+  if (!proc || proc.killed) return
+  if (process.platform === 'win32') {
+    try { execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: 'ignore' }) } catch { proc.kill() }
+  } else {
+    proc.kill('SIGTERM')
+  }
+}
+
 export async function runWeb({ runId, profile, scenarios = [], settings = {}, dataContext = null, onLog, onComplete }) {
   const tmpDir = join(app.getPath('temp'), 'pdr-runs')
   const outputDir = join(tmpDir, runId)
@@ -148,9 +160,16 @@ export async function runWeb({ runId, profile, scenarios = [], settings = {}, da
 export function stopRun(runId) {
   const proc = activeRuns.get(runId)
   if (proc) {
-    proc.kill('SIGTERM')
+    killProc(proc)
     activeRuns.delete(runId)
     return true
   }
   return false
+}
+
+// Stop every in-flight run — called on app quit so closing the window doesn't leave
+// orphaned node/browser processes running in the background.
+export function stopAllRuns() {
+  for (const proc of activeRuns.values()) killProc(proc)
+  activeRuns.clear()
 }

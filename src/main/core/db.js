@@ -279,6 +279,9 @@ export async function initDb() {
   try { _db.run('ALTER TABLE api_requests ADD COLUMN iterate_group TEXT NOT NULL DEFAULT \'\'') } catch { /* already migrated */ }
   // Profiles now live under a Project (see projects table). Nullable column + app-level "strict".
   try { _db.run('ALTER TABLE profiles ADD COLUMN project_id TEXT') } catch { /* already migrated */ }
+  // Mobile view: launch the browser with a phone viewport + touch + mobile UA, for web apps that
+  // only render in mobile. Applies to runs AND the picker/recorder/selector-test (see deviceProfile).
+  try { _db.run('ALTER TABLE profiles ADD COLUMN mobile INTEGER NOT NULL DEFAULT 0') } catch { /* already migrated */ }
 
   persist()
   seedDefaultSettings()

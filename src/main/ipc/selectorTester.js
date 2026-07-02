@@ -16,7 +16,8 @@ export function registerSelectorTesterHandlers() {
       setupSteps = [],
       baseUrl = '',
       runSteps = false,
-      timeout = 20000
+      timeout = 20000,
+      mobile = false
     } = args || {}
 
     if (!selector?.trim()) return { ok: false, error: 'No selector entered' }
@@ -26,7 +27,7 @@ export function registerSelectorTesterHandlers() {
     try {
       // Shares the persistent profile, so a login done in the picker/recorder carries
       // over here too — selectors for gated pages resolve without re-auth.
-      const session = await launchSessionContext(browserName, { headless: true, timeout })
+      const session = await launchSessionContext(browserName, { headless: true, timeout, mobile })
       const { context, page } = session
       close = session.close
       // Inject the shared selector generator so we can compute robust "Strengthen"

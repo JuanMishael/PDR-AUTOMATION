@@ -31,7 +31,8 @@ export function registerRecorderHandlers() {
       steps = [],
       baseUrl = '',
       runSteps = false,
-      timeout = 20000
+      timeout = 20000,
+      mobile = false
     } = args || {}
 
     if (!url?.trim()) return { ok: false, error: 'No URL — set a Base URL in the profile' }
@@ -39,7 +40,7 @@ export function registerRecorderHandlers() {
     let close
     try {
       // Persistent profile → recording continues under the login the tester already did.
-      const session = await launchSessionContext(browserName, { headless: false, timeout })
+      const session = await launchSessionContext(browserName, { headless: false, timeout, mobile })
       const { context, page } = session
       close = session.close
 

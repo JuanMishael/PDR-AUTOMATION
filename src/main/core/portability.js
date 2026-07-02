@@ -94,7 +94,7 @@ export function serializeCollection(db, id) {
 function profileMeta(profile) {
   return {
     name: profile.name, type: profile.type, base_url: profile.base_url,
-    browser: profile.browser, headless: profile.headless, timeout: profile.timeout
+    browser: profile.browser, headless: profile.headless, mobile: profile.mobile, timeout: profile.timeout
   }
 }
 
@@ -244,10 +244,10 @@ function importProfileEntry(db, entry, projectId, idMap, renameRegexes) {
   const p = entry.profile
   const profileId = randomUUID()
   const profileName = uniqueProfileName(db, p.name)
-  db.prepare(`INSERT INTO profiles (id, name, type, base_url, browser, headless, timeout, project_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+  db.prepare(`INSERT INTO profiles (id, name, type, base_url, browser, headless, mobile, timeout, project_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(profileId, profileName, p.type || 'web', p.base_url || '', p.browser || 'chromium',
-      p.headless ? 1 : 0, p.timeout || 30000, projectId || null)
+      p.headless ? 1 : 0, p.mobile ? 1 : 0, p.timeout || 30000, projectId || null)
 
   const scenarios = entry.scenarios || []
   const newIdByName = new Map()

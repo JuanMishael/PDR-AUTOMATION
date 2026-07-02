@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { confirmDialog } from '../lib/confirm'
 
-const EMPTY = { name: '', type: 'web', base_url: '', browser: 'chromium', headless: false, timeout: 30000 }
+const EMPTY = { name: '', type: 'web', base_url: '', browser: 'chromium', headless: false, mobile: false, timeout: 30000 }
 
 // Export a profile (+ its scenarios/steps + referenced test data) to a shareable file.
 function ShareProfileButton({ profileId }) {
@@ -40,7 +40,7 @@ export default function ProfileConfig({ navigate, ctx = {} }) {
 
   function edit(p) {
     setEditing(p.id)
-    setForm({ name: p.name, type: p.type, base_url: p.base_url, browser: p.browser, headless: !!p.headless, timeout: p.timeout })
+    setForm({ name: p.name, type: p.type, base_url: p.base_url, browser: p.browser, headless: !!p.headless, mobile: !!p.mobile, timeout: p.timeout })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -142,6 +142,14 @@ export default function ProfileConfig({ navigate, ctx = {} }) {
                 <input type="checkbox" checked={form.headless} style={{ width: 'auto' }}
                   onChange={e => field('headless', e.target.checked)} />
                 Run headless (no visible browser window)
+              </label>
+            )}
+            {form.type !== 'api' && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row',
+                textTransform: 'none', letterSpacing: 'normal', fontWeight: 500, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={form.mobile} style={{ width: 'auto' }}
+                  onChange={e => field('mobile', e.target.checked)} />
+                Mobile view (phone viewport + touch — for apps that only work on mobile)
               </label>
             )}
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>

@@ -17,6 +17,7 @@
 import { resolveParams } from './tokenResolver'
 import { findDragHandleRect, synthDrag } from './dragHelpers'
 import { mapPickPixel, mapSetZoom } from './mapHelpers'
+import { mobileContextOptions } from './deviceProfile'
 
 export function generateScript({ profile, scenarios = [], settings = {}, outputDir = '', dataContext = null, downloadsDir = '' }) {
   const timeout = profile.timeout || 30000
@@ -27,6 +28,10 @@ export function generateScript({ profile, scenarios = [], settings = {}, outputD
   // a prior step triggered has actually landed — instead of clicking/typing into a half-loaded
   // page. Default ON. It's a bounded best-effort settle (never fails the step), so a never-idle
   // app (polling/SSE) just proceeds at the cap. Disable per-step with params._noSettle.
+  // Mobile view: emulate a phone (viewport + touch + UA) so a mobile-only web app renders right.
+  const mobile = profile.mobile === 1 || profile.mobile === true
+  const ctxOptions = { ignoreHTTPSErrors: true, acceptDownloads: true, ...mobileContextOptions(profile.browser, mobile) }
+
   const settleEnabled = settings.settle_before_action !== '0'
   // Cap on the per-step settle. 0 = no limit (wait until the network is fully idle) — only safe
   // on apps that actually go quiet; on a polling/streaming app it waits the whole step out.
@@ -209,7 +214,7 @@ ${settleHelper}
 
   try {
     browser = await ${browserLaunchExpr(profile)}
-    context = await browser.newContext({ ignoreHTTPSErrors: true, acceptDownloads: true });
+    context = await browser.newContext(${JSON.stringify(ctxOptions)});
     page = await context.newPage();
     page.setDefaultTimeout(${timeout});
     ${netInstrument}

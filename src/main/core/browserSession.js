@@ -1,6 +1,7 @@
 import { join } from 'path'
 import { rm } from 'fs/promises'
 import { app } from 'electron'
+import { mobileContextOptions } from './deviceProfile'
 
 // One on-disk Chromium profile shared by the interactive tools (picker / recorder /
 // selector test). Cookies + localStorage live here, so a login done in any of them
@@ -34,22 +35,25 @@ export async function closeAllSessions() {
  * lock, or it's unwritable) we degrade gracefully to a throwaway context so the tool
  * still works — just without the remembered session for that one run.
  */
-export async function launchSessionContext(browserName = 'chromium', { headless = false, timeout = 20000 } = {}) {
+export async function launchSessionContext(browserName = 'chromium', { headless = false, timeout = 20000, mobile = false } = {}) {
   const pw = await import('playwright')
   const browserType = pw[browserName] || pw.chromium
+  // Match the run's mobile emulation so picking/recording/testing sees the same (mobile) page.
+  const mobileOpts = mobileContextOptions(browserName, mobile)
 
   let context
   let persistent = true
   try {
     context = await browserType.launchPersistentContext(profileDir(), {
       headless,
-      ignoreHTTPSErrors: true
+      ignoreHTTPSErrors: true,
+      ...mobileOpts
     })
   } catch {
     // Profile locked by a still-closing window, or unwritable — degrade to incognito.
     persistent = false
     const browser = await browserType.launch({ headless })
-    context = await browser.newContext({ ignoreHTTPSErrors: true })
+    context = await browser.newContext({ ignoreHTTPSErrors: true, ...mobileOpts })
   }
 
   // A persistent context starts with one blank page; reuse it instead of opening another.

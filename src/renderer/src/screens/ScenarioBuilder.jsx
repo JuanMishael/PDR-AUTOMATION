@@ -49,7 +49,7 @@ function buildRecordedParams(p) {
 
 // ─── Test Selector Button ─────────────────────────────────────────────────────
 
-function TestSelectorButton({ selector, baseUrl, browser, priorSteps = [], setupSteps = [], onUse, onUseFallback }) {
+function TestSelectorButton({ selector, baseUrl, browser, mobile = false, priorSteps = [], setupSteps = [], onUse, onUseFallback }) {
   const [open, setOpen]         = useState(false)
   const [url, setUrl]           = useState('')
   const [testing, setTesting]   = useState(false)
@@ -98,6 +98,7 @@ function TestSelectorButton({ selector, baseUrl, browser, priorSteps = [], setup
         url,
         selector,
         browser: browser || 'chromium',
+        mobile: !!mobile,
         baseUrl: baseUrl || '',
         steps: replay ? priorSteps : [],
         setupSteps,                       // login/prereq chain — replayed best-effort to reach gated pages
@@ -305,7 +306,7 @@ function TestSelectorButton({ selector, baseUrl, browser, priorSteps = [], setup
 
 // ─── Pick Button (element picker) ─────────────────────────────────────────────
 
-function PickButton({ baseUrl, browser, priorSteps = [], setupSteps = [], onPicked, onPickedFallback }) {
+function PickButton({ baseUrl, browser, mobile = false, priorSteps = [], setupSteps = [], onPicked, onPickedFallback }) {
   const [picking, setPicking] = useState(false)
   const [msg, setMsg] = useState(null)
   const [candidates, setCandidates] = useState(null)   // non-null → chooser open
@@ -327,6 +328,7 @@ function PickButton({ baseUrl, browser, priorSteps = [], setupSteps = [], onPick
       const res = await window.api.pickElement({
         url: baseUrl,
         browser: browser || 'chromium',
+        mobile: !!mobile,
         baseUrl: baseUrl || '',
         steps: priorSteps,
         setupSteps,                       // login/prereq chain — replayed best-effort to reach gated pages
@@ -774,6 +776,7 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                   <PickButton
                     baseUrl={profile?.base_url}
                     browser={profile?.browser}
+                    mobile={profile?.mobile}
                     priorSteps={priorSteps}
                     setupSteps={setupSteps}
                     onPicked={sel => updateParam(p.key, sel)}
@@ -783,6 +786,7 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                     selector={params[p.key]}
                     baseUrl={profile?.base_url}
                     browser={profile?.browser}
+                    mobile={profile?.mobile}
                     priorSteps={priorSteps}
                     setupSteps={setupSteps}
                     onUse={sel => updateParam(p.key, sel)}
@@ -2153,6 +2157,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
         url: profile.base_url,
         baseUrl: profile.base_url,
         browser: profile.browser || 'chromium',
+        mobile: !!profile.mobile,
         steps: [...prereq, ...current],   // prerequisite (login) chain replays first
         runSteps: true
       })

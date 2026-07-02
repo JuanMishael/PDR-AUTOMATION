@@ -25,7 +25,8 @@ export function registerElementPickerHandlers() {
       setupSteps = [],
       baseUrl = '',
       runSteps = false,
-      timeout = 20000
+      timeout = 20000,
+      mobile = false
     } = args || {}
 
     if (!url?.trim()) return { ok: false, error: 'No URL — set a Base URL in the profile' }
@@ -34,7 +35,7 @@ export function registerElementPickerHandlers() {
     try {
       // Persistent profile → the tester's login from a previous pick/record is still
       // there, so no re-login just to reach a gated element.
-      const session = await launchSessionContext(browserName, { headless: false, timeout })
+      const session = await launchSessionContext(browserName, { headless: false, timeout, mobile })
       const { context, page } = session
       close = session.close
 

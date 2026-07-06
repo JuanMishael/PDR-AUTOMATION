@@ -328,13 +328,18 @@ function FieldRow({ field, formUrl, reload }) {
 
 // --- Data sets grouped by intent ---
 function SetsSection({ collection, reload }) {
-  async function addSet(group) {
+  const [menuGroup, setMenuGroup] = useState(null)   // which group's Add-set dropdown is open
+
+  // source = an existing set to copy values from, or null for a blank set
+  async function addSet(group, source = null) {
+    setMenuGroup(null)
     const count = collection.sets.filter(s => s.group_type === group).length
+    const values = source ? (() => { try { return JSON.parse(source.field_values || '{}') } catch { return {} } })() : {}
     await window.api.saveDataSet({
       collection_id: collection.id,
-      name: `${group} set ${count + 1}`,
+      name: source ? `${source.name} (copy)` : `${group} set ${count + 1}`,
       group_type: group,
-      values: {},
+      values,
       sort_order: count
     })
     await reload()
@@ -348,11 +353,31 @@ function SetsSection({ collection, reload }) {
           <div key={g.key} className="card">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: sets.length ? 12 : 0 }}>
               <h2 className="eyebrow" style={{ margin: 0 }}>{g.emoji} {g.label} sets</h2>
-              <button className="btn btn-sm" onClick={() => addSet(g.key)}
-                disabled={collection.fields.length === 0}
-                title={collection.fields.length === 0 ? 'Add fields first' : ''}>
-                <Icon name="plus" size={14} /> Add set
-              </button>
+              <div style={{ position: 'relative' }}>
+                <button className="btn btn-sm" onClick={() => setMenuGroup(o => o === g.key ? null : g.key)}
+                  disabled={collection.fields.length === 0}
+                  title={collection.fields.length === 0 ? 'Add fields first' : ''}>
+                  <Icon name="plus" size={14} /> Add set ▾
+                </button>
+                {menuGroup === g.key && (
+                  <>
+                    <div onClick={() => setMenuGroup(null)} style={{ position: 'fixed', inset: 0, zIndex: 19 }} />
+                    <div style={{ position: 'absolute', top: '100%', right: 0, zIndex: 20, marginTop: 4, minWidth: 220,
+                      maxHeight: 320, overflowY: 'auto', background: 'var(--surface, #fff)', border: '1px solid var(--border)',
+                      borderRadius: 8, boxShadow: '0 6px 20px rgba(0,0,0,.18)' }}>
+                      <button onClick={() => addSet(g.key)} style={exportItem}>
+                        Blank set <span style={exportHint}>empty {g.label.toLowerCase()} set</span>
+                      </button>
+                      {sets.map(s => (
+                        <button key={s.id} onClick={() => addSet(g.key, s)}
+                          style={{ ...exportItem, borderTop: '1px solid var(--border)' }}>
+                          Duplicate “{s.name}” <span style={exportHint}>copy its field values</span>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
             {sets.length === 0 ? (
               <p style={{ fontSize: 13, color: 'var(--ink-faint)', margin: '8px 0 0' }}>No {g.label.toLowerCase()} sets.</p>

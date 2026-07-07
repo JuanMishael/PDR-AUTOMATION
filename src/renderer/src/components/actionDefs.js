@@ -286,17 +286,74 @@ export const ACTION_DEFS = {
   // --- Notes ---
   // A free-text note for human readers. Does nothing at run time (emits a // comment line).
   comment: {
-    label: 'Comment', category: 'Util',
+    label: 'Comment', category: 'Util', platform: 'any',
     summary: p => p.text || '',
     params: [{ key: 'text', label: 'Note', type: 'textarea', placeholder: 'Note for readers — ignored when running' }]
-  }
+  },
+
+  // ═══ Native Android (platform:'android') — driven via Appium, not the browser. Selector is a
+  // strategy + locator; key is `locator` (NOT `selector`) so the web element-picker stays off. ═══
+  tapEl: {
+    label: 'Tap', category: 'Interaction', platform: 'android',
+    summary: p => `${p.strategy || 'accessibility id'}: ${p.locator}`,
+    params: [
+      { key: 'strategy', label: 'Find by', type: 'select', options: ['accessibility id', 'id', 'xpath', 'uiautomator', 'text'], default: 'accessibility id' },
+      { key: 'locator', label: 'Locator', placeholder: 'Search settings  /  com.app:id/btn  /  //android.widget.Button' },
+      { key: 'timeout', label: 'Max wait (ms)', type: 'number', placeholder: 'blank = profile default' }
+    ]
+  },
+  typeText: {
+    label: 'Type Text', category: 'Interaction', platform: 'android',
+    summary: p => `${p.locator} = "${p.value}"`,
+    params: [
+      { key: 'strategy', label: 'Find by', type: 'select', options: ['accessibility id', 'id', 'xpath', 'uiautomator', 'text'], default: 'accessibility id' },
+      { key: 'locator', label: 'Locator', placeholder: 'com.app:id/search' },
+      { key: 'value', label: 'Text to type', placeholder: 'hello' },
+      { key: 'clearFirst', label: 'Clear field first?', type: 'boolean' }
+    ]
+  },
+  pressBack: { label: 'Press Back', category: 'Interaction', platform: 'android', params: [] },
+  assertVisibleEl: {
+    label: 'Assert Visible', category: 'Assertions', platform: 'android',
+    summary: p => `${p.strategy || 'accessibility id'}: ${p.locator}`,
+    params: [
+      { key: 'strategy', label: 'Find by', type: 'select', options: ['accessibility id', 'id', 'xpath', 'uiautomator', 'text'], default: 'accessibility id' },
+      { key: 'locator', label: 'Locator', placeholder: 'Wi‑Fi' },
+      { key: 'timeout', label: 'Max wait (ms)', type: 'number', placeholder: 'blank = profile default' }
+    ]
+  },
+  assertTextEl: {
+    label: 'Assert Text', category: 'Assertions', platform: 'android',
+    summary: p => `"${p.text}" in ${p.locator}`,
+    params: [
+      { key: 'strategy', label: 'Find by', type: 'select', options: ['accessibility id', 'id', 'xpath', 'uiautomator', 'text'], default: 'accessibility id' },
+      { key: 'locator', label: 'Locator', placeholder: 'com.app:id/title' },
+      { key: 'text', label: 'Expected text', placeholder: 'Welcome' },
+      { key: 'exact', label: 'Exact match?', type: 'boolean' },
+      { key: 'timeout', label: 'Max wait (ms)', type: 'number', placeholder: 'blank = profile default' }
+    ]
+  },
+  waitMs: {
+    label: 'Wait (ms)', category: 'Waits', platform: 'android',
+    summary: p => `${p.ms}ms`,
+    params: [{ key: 'ms', label: 'Milliseconds', type: 'number', placeholder: '1000' }]
+  },
+  screenshotEl: { label: 'Take Screenshot', category: 'Util', platform: 'android', params: [] }
 }
 
 export const ACTION_CATEGORIES = ['Navigation', 'Interaction', 'Mouse', 'Assertions', 'Waits', 'Flow', 'Util']
 
-export const ACTIONS_BY_CATEGORY = ACTION_CATEGORIES.reduce((acc, cat) => {
-  acc[cat] = Object.entries(ACTION_DEFS)
-    .filter(([, def]) => def.category === cat && !def.hidden)
-    .map(([key, def]) => ({ key, ...def }))
-  return acc
-}, {})
+// platform: web actions have none (default 'web'); 'android' shows only for android profiles;
+// 'any' (e.g. Comment) shows for both. Filtered per-profile in the builder palette.
+export function actionsForPlatform(platform) {
+  return ACTION_CATEGORIES.reduce((acc, cat) => {
+    acc[cat] = Object.entries(ACTION_DEFS)
+      .filter(([, def]) => def.category === cat && !def.hidden
+        && (def.platform === 'any' || (def.platform || 'web') === platform))
+      .map(([key, def]) => ({ key, ...def }))
+    return acc
+  }, {})
+}
+
+// Back-compat default (web) for existing importers.
+export const ACTIONS_BY_CATEGORY = actionsForPlatform('web')

@@ -13,6 +13,7 @@ const SECTIONS = [
   { id: 'concepts',    label: 'Core Concepts' },
   { id: 'profiles',    label: 'Profiles' },
   { id: 'api',         label: 'API Profiles ·β' },
+  { id: 'android',     label: 'Android Apps ·β' },
   { id: 'scenarios',   label: 'Scenarios & Steps' },
   { id: 'recorder',    label: 'Recorder & Picker' },
   { id: 'uploads',     label: 'File Uploads' },
@@ -361,6 +362,89 @@ export default function Help() {
               Note for SOAP: variable names are case-sensitive (<Code>{'{{Token}}'}</Code> ≠ <Code>{'{{token}}'}</Code>),
               and an expired token usually comes back as a SOAP <em>Fault</em> (HTTP 200), so re-send the token request to
               refresh it for now.
+            </p>
+          </Section>
+
+          <Section id="android" title={<>Android Apps <Beta /></>} refMap={refMap}
+            subtitle="Automate a real Android app on a connected phone — native taps and asserts, not a web page.">
+            <div className="card" style={{ marginBottom: 14, borderColor: 'var(--warn-line)', background: 'var(--warn-bg)' }}>
+              <p style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.6, margin: 0 }}>
+                <strong>Android is in beta.</strong> You can build and run a scenario of native steps (tap, type,
+                assert, wait) against a real device. The element <em>picker</em> and <em>recorder</em> aren't built
+                for Android yet — you type locators by hand for now (this page shows how to find them).
+              </p>
+            </div>
+            <p style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
+              An <strong>Android profile</strong> drives a phone through <strong>Appium</strong> instead of a browser.
+              Create one in <strong>Profiles → New Profile</strong> and pick <strong>📱 Android</strong> as the type.
+            </p>
+
+            <div style={{ fontFamily: 'var(--font-hand)', fontSize: 17, color: 'var(--ink)', margin: '10px 0 6px' }}>One-time setup</div>
+            <div className="card">
+              <Define term="Phone">Enable <strong>Developer Options</strong> (Settings → About phone → tap <strong>Build number</strong> 7×), then turn on <strong>USB debugging</strong>. Plug in over USB and tap <strong>Allow</strong> on the prompt.</Define>
+              <Define term="adb">Install Android <strong>platform-tools</strong> and check the phone is seen: <Code>adb devices</Code> should list it as <Code>device</Code>. If it says <Code>unauthorized</Code>, tap Allow on the phone.</Define>
+              <Define term="Appium">Start the automation server before running: <Code>npx appium</Code> in a terminal. Leave it running. (Some phones also need <strong>“USB debugging (Security settings)”</strong> on — MIUI/ColorOS.)</Define>
+            </div>
+
+            <div style={{ fontFamily: 'var(--font-hand)', fontSize: 17, color: 'var(--ink)', margin: '10px 0 6px' }}>Finding the App Package &amp; Launch Activity</div>
+            <p style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
+              A profile needs the app's <strong>package</strong> (which app). The <strong>launch activity</strong> (which
+              screen it opens on) is optional — leave it blank and Appium opens the app's normal home screen.
+            </p>
+            <div className="card">
+              <Step n="1" title="Open the app on your phone">
+                Put it on the screen you want to start from.
+              </Step>
+              <Step n="2" title="Ask the phone what's on screen">
+                Run: <Code>adb shell dumpsys window | findstr mCurrentFocus</Code>
+                {' '}(PowerShell: <Code>Select-String mCurrentFocus</Code>). It prints something like{' '}
+                <Code>…&nbsp;com.example.app/com.example.app.LoginActivity</Code>.
+              </Step>
+              <Step n="3" title="Split it on the slash">
+                Left of the <Code>/</Code> is the <strong>App Package</strong> (<Code>com.example.app</Code>); right of it
+                is the <strong>Launch Activity</strong>. A leading <Code>.</Code> means it's relative to the package.
+              </Step>
+            </div>
+            <p style={{ fontSize: 12.5, color: 'var(--ink-faint)', marginTop: 8 }}>
+              To find an app by name instead: <Code>adb shell pm list packages | findstr whatsapp</Code>. Package names
+              are reverse-domain, e.g. <Code>com.instagram.android</Code>.
+            </p>
+
+            <div style={{ fontFamily: 'var(--font-hand)', fontSize: 17, color: 'var(--ink)', margin: '10px 0 6px' }}>Finding locators for steps</div>
+            <p style={{ fontSize: 13, color: 'var(--ink-soft)', lineHeight: 1.6 }}>
+              Each native step finds an element by a <strong>strategy</strong> + a <strong>locator</strong>. To see what's
+              on a screen, dump its layout while it's open:
+            </p>
+            <div className="card" style={{ marginBottom: 10 }}>
+              <p style={{ fontSize: 13, color: 'var(--ink)', margin: '0 0 8px' }}>
+                <Code>adb shell uiautomator dump /sdcard/ui.xml</Code><br />
+                <Code>adb pull /sdcard/ui.xml</Code>
+              </p>
+              <p style={{ fontSize: 12.5, color: 'var(--ink-soft)', margin: 0, lineHeight: 1.6 }}>
+                Open <Code>ui.xml</Code> and read the attributes off each element. Match them to a <strong>Find by</strong>:
+              </p>
+            </div>
+            <div className="card">
+              <Define term="accessibility id">The element's <Code>content-desc</Code>. Most reliable when present.</Define>
+              <Define term="id">The element's <Code>resource-id</Code>, e.g. <Code>com.example.app:id/username</Code>.</Define>
+              <Define term="text">The visible <Code>text</Code>, e.g. <Code>Log in</Code>. Easy but breaks if the wording/language changes.</Define>
+              <Define term="xpath">A path expression, e.g. <Code>//android.widget.EditText[1]</Code>. Powerful but brittle — a last resort.</Define>
+              <Define term="uiautomator">An Android <Code>UiSelector</Code> expression for advanced matches. Optional.</Define>
+            </div>
+
+            <div style={{ fontFamily: 'var(--font-hand)', fontSize: 17, color: 'var(--ink)', margin: '10px 0 6px' }}>Native steps</div>
+            <div className="card">
+              <Define term="Tap">Tap the element found by strategy + locator.</Define>
+              <Define term="Type Text">Type into a field. Optionally clear it first.</Define>
+              <Define term="Press Back">The hardware/gesture Back button.</Define>
+              <Define term="Assert Visible">Pass only if the element is on screen (waits up to the timeout).</Define>
+              <Define term="Assert Text">Pass if the element's text matches (contains, or exact).</Define>
+              <Define term="Wait (ms)">Pause a fixed number of milliseconds.</Define>
+              <Define term="Take Screenshot">Capture the current screen.</Define>
+            </div>
+            <p style={{ fontSize: 12.5, color: 'var(--ink-faint)', marginTop: 12 }}>
+              iOS isn't supported (it needs a Mac). Runs, results and History work exactly like web runs — build a
+              scenario, hit Run, watch it drive the phone.
             </p>
           </Section>
 

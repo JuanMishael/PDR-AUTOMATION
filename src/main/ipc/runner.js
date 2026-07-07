@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
 import { getDb } from '../core/db'
 import { runWeb, stopRun } from '../core/webRunner'
+import { runNative, stopNativeRun } from '../core/nativeRunner'
 import { buildDataContext } from '../core/tokenResolver'
 import { expandGroups } from '../core/groupExpand'
 import { refocusMainWindow } from '../core/windowFocus'
@@ -40,7 +41,10 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dat
   // With no collections/sets this is an empty context and the run path is unchanged.
   const dataContext = await buildDataContext(getDb(), dataSetId)
 
-  const { status, results, scenarioResults = [], fatalError, tracePath, networkPath } = await runWeb({
+  // Native Android profiles run through Appium; web/everything-else through the Playwright runner.
+  // Both return the same shape, so the rest of executeRun is engine-agnostic.
+  const engine = profile.type === 'android' ? runNative : runWeb
+  const { status, results, scenarioResults = [], fatalError, tracePath, networkPath } = await engine({
     runId,
     profile,
     scenarios,
@@ -154,6 +158,7 @@ export function registerRunnerHandlers() {
   })
 
   ipcMain.handle('runner:stop', async (_, runId) => {
-    return { stopped: stopRun(runId) }
+    // runId maps to exactly one engine; try both — the non-matching one is a no-op.
+    return { stopped: stopRun(runId) || stopNativeRun(runId) }
   })
 }

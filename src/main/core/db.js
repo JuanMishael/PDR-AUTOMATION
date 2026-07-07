@@ -282,6 +282,9 @@ export async function initDb() {
   // Mobile view: launch the browser with a phone viewport + touch + mobile UA, for web apps that
   // only render in mobile. Applies to runs AND the picker/recorder/selector-test (see deviceProfile).
   try { _db.run('ALTER TABLE profiles ADD COLUMN mobile INTEGER NOT NULL DEFAULT 0') } catch { /* already migrated */ }
+  // Native Android profile (type='android'): base_url holds the app package; app_activity is the
+  // optional launch activity (blank = let Appium resolve the main one). Driven via Appium, not Playwright.
+  try { _db.run('ALTER TABLE profiles ADD COLUMN app_activity TEXT NOT NULL DEFAULT \'\'') } catch { /* already migrated */ }
 
   persist()
   seedDefaultSettings()

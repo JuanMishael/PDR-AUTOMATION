@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { confirmDialog } from '../lib/confirm'
 
-const EMPTY = { name: '', type: 'web', base_url: '', browser: 'chromium', headless: false, mobile: false, timeout: 30000 }
+const EMPTY = { name: '', type: 'web', base_url: '', browser: 'chromium', headless: false, mobile: false, timeout: 30000, app_activity: '' }
 
 // Export a profile (+ its scenarios/steps + referenced test data) to a shareable file.
 function ShareProfileButton({ profileId }) {
@@ -40,7 +40,7 @@ export default function ProfileConfig({ navigate, ctx = {} }) {
 
   function edit(p) {
     setEditing(p.id)
-    setForm({ name: p.name, type: p.type, base_url: p.base_url, browser: p.browser, headless: !!p.headless, mobile: !!p.mobile, timeout: p.timeout })
+    setForm({ name: p.name, type: p.type, base_url: p.base_url, browser: p.browser, headless: !!p.headless, mobile: !!p.mobile, timeout: p.timeout, app_activity: p.app_activity || '' })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -101,6 +101,7 @@ export default function ProfileConfig({ navigate, ctx = {} }) {
               <label>Profile Type</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 {[['web', '🌐 Web App', 'Browser automation — scenarios & steps'],
+                  ['android', '📱 Android · beta', 'Native Android app automation via Appium (beta) — needs a connected phone + running Appium server'],
                   ['api', '🔌 API · beta', 'Postman/SoapUI-style request collection (beta — still in progress)']].map(([val, lbl, hint]) => (
                   <button key={val} type="button" title={hint}
                     className={form.type === val ? 'btn-primary' : 'btn-ghost'}
@@ -117,11 +118,19 @@ export default function ProfileConfig({ navigate, ctx = {} }) {
                 placeholder={form.type === 'api' ? 'e.g. Billing API — Staging' : 'e.g. PPGIS Staging'} />
             </div>
             <div>
-              <label>Base URL *</label>
+              <label>{form.type === 'android' ? 'App Package *' : 'Base URL *'}</label>
               <input value={form.base_url} onChange={e => field('base_url', e.target.value)}
-                placeholder={form.type === 'api' ? 'https://api.example.com' : 'https://staging.example.com'} />
+                placeholder={form.type === 'android' ? 'com.android.settings'
+                  : form.type === 'api' ? 'https://api.example.com' : 'https://staging.example.com'} />
             </div>
-            {form.type !== 'api' && (
+            {form.type === 'android' && (
+              <div>
+                <label>Launch Activity (optional)</label>
+                <input value={form.app_activity} onChange={e => field('app_activity', e.target.value)}
+                  placeholder=".Settings — blank = let Appium pick the main activity" />
+              </div>
+            )}
+            {form.type === 'web' && (
               <div>
                 <label>Browser</label>
                 <select value={form.browser} onChange={e => field('browser', e.target.value)}>
@@ -136,7 +145,7 @@ export default function ProfileConfig({ navigate, ctx = {} }) {
               <input type="number" value={form.timeout} min={1000} step={1000}
                 onChange={e => field('timeout', Number(e.target.value))} />
             </div>
-            {form.type !== 'api' && (
+            {form.type === 'web' && (
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row',
                 textTransform: 'none', letterSpacing: 'normal', fontWeight: 500, fontSize: 13, cursor: 'pointer' }}>
                 <input type="checkbox" checked={form.headless} style={{ width: 'auto' }}
@@ -144,7 +153,7 @@ export default function ProfileConfig({ navigate, ctx = {} }) {
                 Run headless (no visible browser window)
               </label>
             )}
-            {form.type !== 'api' && (
+            {form.type === 'web' && (
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row',
                 textTransform: 'none', letterSpacing: 'normal', fontWeight: 500, fontSize: 13, cursor: 'pointer' }}>
                 <input type="checkbox" checked={form.mobile} style={{ width: 'auto' }}
@@ -185,9 +194,10 @@ export default function ProfileConfig({ navigate, ctx = {} }) {
                       <div style={{ fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
                         {p.name}
                         {p.type === 'api' && <span className="badge badge-warn" style={{ fontSize: 9 }}>API · beta</span>}
+                        {p.type === 'android' && <span className="badge badge-warn" style={{ fontSize: 9 }}>Android · beta</span>}
                       </div>
                       <div style={{ color: 'var(--text-muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {(p.type === 'api' ? 'API' : p.browser)} · {p.base_url}
+                        {p.type === 'api' ? 'API' : p.type === 'android' ? '📱 Android' : p.browser} · {p.base_url}
                       </div>
                     </div>
                   </div>

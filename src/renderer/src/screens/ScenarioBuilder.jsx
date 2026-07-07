@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { ACTION_DEFS, ACTION_CATEGORIES, ACTIONS_BY_CATEGORY } from '../components/actionDefs'
+import { ACTION_DEFS, ACTION_CATEGORIES, actionsForPlatform } from '../components/actionDefs'
 import { confirmDialog } from '../lib/confirm'
 import { TOKEN_GROUPS } from '../lib/tokens'
 import ApiWorkspace from './ApiWorkspace'
@@ -2196,9 +2196,11 @@ export default function ScenarioBuilder({ navigate, ctx }) {
 
   const locked = !!active?.locked
 
+  // Palette shows only the active profile's platform (native android actions vs web actions).
+  const palette = actionsForPlatform(profile?.type === 'android' ? 'android' : 'web')
   const filteredCategories = ACTION_CATEGORIES.map(cat => ({
     cat,
-    actions: ACTIONS_BY_CATEGORY[cat].filter(a =>
+    actions: palette[cat].filter(a =>
       !search || a.label.toLowerCase().includes(search.toLowerCase())
     )
   })).filter(({ actions }) => actions.length > 0)

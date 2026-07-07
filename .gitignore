@@ -24,6 +24,10 @@ pw-browsers/
 *.log
 npm-debug.log*
 
+# Android UI dumps (may contain on-screen credentials) + probe artifacts
+ui.xml
+scripts/*.png
+
 # OS
 .DS_Store
 Thumbs.db

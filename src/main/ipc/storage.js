@@ -62,18 +62,19 @@ export function registerStorageHandlers() {
       // COALESCE keeps the existing project_id when an edit form doesn't carry one.
       db().prepare(`
         UPDATE profiles SET name=?, type=?, base_url=?, browser=?, headless=?, mobile=?, timeout=?,
-          project_id=COALESCE(?, project_id), updated_at=datetime('now') WHERE id=?
+          app_activity=?, project_id=COALESCE(?, project_id), updated_at=datetime('now') WHERE id=?
       `).run(profile.name, profile.type || 'web', profile.base_url, profile.browser || 'chromium',
-          profile.headless ? 1 : 0, profile.mobile ? 1 : 0, profile.timeout || 30000, profile.project_id || null, profile.id)
+          profile.headless ? 1 : 0, profile.mobile ? 1 : 0, profile.timeout || 30000,
+          profile.app_activity || '', profile.project_id || null, profile.id)
       return { id: profile.id }
     }
     const id = randomUUID()
     db().prepare(`
-      INSERT INTO profiles (id, name, type, base_url, browser, headless, mobile, timeout, project_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO profiles (id, name, type, base_url, browser, headless, mobile, timeout, app_activity, project_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, profile.name, profile.type || 'web', profile.base_url,
         profile.browser || 'chromium', profile.headless ? 1 : 0, profile.mobile ? 1 : 0, profile.timeout || 30000,
-        profile.project_id || null)
+        profile.app_activity || '', profile.project_id || null)
     return { id }
   })
 

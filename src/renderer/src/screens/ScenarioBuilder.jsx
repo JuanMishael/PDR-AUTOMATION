@@ -4,6 +4,7 @@ import { confirmDialog } from '../lib/confirm'
 import { TOKEN_GROUPS } from '../lib/tokens'
 import ApiWorkspace from './ApiWorkspace'
 import CopyToProject from '../components/CopyToProject'
+import NativePickButton from '../components/NativePickButton'
 
 // Default keyword per action category
 const CATEGORY_KEYWORD = {
@@ -510,6 +511,12 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
     onChange(updated)
   }
 
+  // Set several params in one update — needed when a single action (e.g. the native picker)
+  // fills more than one field at once; calling updateParam twice would use stale `params`.
+  function updateParams(patch) {
+    onChange({ ...step, params: { ...params, ...patch } })
+  }
+
   function cycleKeyword() {
     const opts = ['Given', 'When', 'Then']
     const next = opts[(opts.indexOf(keyword) + 1) % opts.length]
@@ -747,6 +754,7 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
 
         {def.params.map(p => {
           const isSelector = p.key === 'selector' || p.key === 'selector2' || p.key === 'source' || p.key === 'target'
+          const isNativeLocator = profile?.type === 'android' && p.key === 'locator'
           return (
             <ParamRow key={p.key} label={p.label}>
               {p.type === 'boolean' ? (
@@ -792,6 +800,11 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                     onUse={sel => updateParam(p.key, sel)}
                     onUseFallback={p.key === 'selector' ? (sel => updateParam('selector2', sel)) : null}
                   />
+                </VarInput>
+              ) : isNativeLocator ? (
+                <VarInput value={params[p.key] || ''} onChange={v => updateParam(p.key, v)} placeholder={p.placeholder}
+                  collections={collections} groupCollectionId={groupCollectionId} reload={reloadCollections}>
+                  <NativePickButton onPick={(strategy, locator) => updateParams({ strategy, locator })} />
                 </VarInput>
               ) : (p.type !== 'number' || p.varOk) ? (
                 // varOk lets an otherwise-numeric field (e.g. clickAt X/Y) hold a {{token}};

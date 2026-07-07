@@ -78,6 +78,9 @@ contextBridge.exposeInMainWorld('api', {
   // Element picker — opts: { url, browser, steps, baseUrl, runSteps }
   pickElement: (opts) => ipcRenderer.invoke('picker:pick', opts),
 
+  // Native (Android) picker — dumps the phone's current screen → { elements } or { error }
+  nativePickElements: () => ipcRenderer.invoke('native:pickElements'),
+
   // Browser session — wipe the saved login shared by picker/recorder/selector test
   clearBrowserSession: () => ipcRenderer.invoke('session:clear'),
 

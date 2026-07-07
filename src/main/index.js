@@ -20,6 +20,7 @@ import { registerReporterHandlers } from './ipc/reporter'
 import { registerHealthHandlers } from './ipc/health'
 import { registerSelectorTesterHandlers } from './ipc/selectorTester'
 import { registerElementPickerHandlers } from './ipc/elementPicker'
+import { registerNativePickerHandlers } from './ipc/nativePicker'
 import { registerRecorderHandlers } from './ipc/recorder'
 import { registerDataLibraryHandlers } from './ipc/dataLibrary'
 import { registerTransferHandlers } from './ipc/transfer'
@@ -68,6 +69,7 @@ app.whenReady().then(async () => {
   registerHealthHandlers()
   registerSelectorTesterHandlers()
   registerElementPickerHandlers()
+  registerNativePickerHandlers()
   registerRecorderHandlers()
   registerDataLibraryHandlers()
   registerTransferHandlers()

@@ -710,6 +710,21 @@ function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, aut
   const detected = detectRequestFields(draft.body, draft.body_type).fields
   const headerFields = detectHeaderFields(draft.body)
 
+  // Reusing an existing collection: the dropdown only binds it — it doesn't touch the body. This
+  // tokenizes the body's placeholders to {{col.field}} for the fields the collection actually has
+  // (e.g. <tns:projectId>?</> → <tns:projectId>{{createAndStartProject.projectId}}</>).
+  const [wireMsg, setWireMsg] = useState(null)
+  const collFieldNames = new Set((col?.fields || []).map(f => f.name))
+  const wirable = detected.filter(f => collFieldNames.has(f))
+  function wireBodyToCollection() {
+    const { fields, kind } = detectRequestFields(draft.body, draft.body_type)
+    const match = fields.filter(f => collFieldNames.has(f))
+    if (!match.length) { setWireMsg(`✗ No body fields match “${col.name}”. Field names must match the XML elements.`); return }
+    patch({ body: rewireBody(draft.body, draft.body_type, match, col.name, kind) })
+    const skipped = fields.filter(f => !collFieldNames.has(f))
+    setWireMsg(`✓ Wired ${match.length} field${match.length === 1 ? '' : 's'} to {{${col.name}.*}}.${skipped.length ? ` Not in the collection (left as-is): ${skipped.join(', ')}.` : ''}`)
+  }
+
   // Auto-build action — the fast path to a test-case collection from the request's own fields.
   const autoCreate = (
     <div className="sketch" style={{ padding: '10px 12px', background: 'var(--accent-soft)', display: 'grid', gap: 6 }}>
@@ -778,8 +793,15 @@ function DataIterateTab({ draft, collections, patch, navigate, onAutoCreate, aut
           </select>
         )}
         {colId && <span className="badge badge-busy" style={{ fontSize: 10 }}>{setCount} run{setCount === 1 ? '' : 's'}</span>}
+        {colId && wirable.length > 0 && (
+          <button className="btn-ghost" style={{ fontSize: 11, padding: '4px 10px' }} onClick={wireBodyToCollection}
+            title={`Replace body placeholders with {{${col.name}.field}} for: ${wirable.join(', ')}`}>
+            🔗 Wire body to {'{{'}{col.name}{'}}'} ({wirable.length})
+          </button>
+        )}
         {colId && <button className="btn-ghost" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => navigate('testdata')}>Edit rows →</button>}
       </div>
+      {wireMsg && <p style={{ fontSize: 11, margin: 0, color: wireMsg.startsWith('✓') ? 'var(--ok)' : 'var(--bad)' }}>{wireMsg}</p>}
       {col && <InlineDataEditor collection={col} group={group} onReload={onReload} />}
     </div>
   )
@@ -1027,7 +1049,7 @@ function ExtractEditor({ rows, onChange }) {
   return (
     <div style={{ display: 'grid', gap: 6 }}>
       <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: '0 0 4px' }}>
-        Pull a value out of the response into a variable (e.g. <code>access_token</code> → <code>token</code>). JSON/XML use a dot path like <code>data.access_token</code>.
+        Pull a value out of the response into a variable (e.g. <code>access_token</code> → <code>token</code>). JSON/XML use a <em>full</em> dot path like <code>data.access_token</code> — for SOAP that's the whole envelope (<code>Envelope.Body.…Result</code>), not just the field name. Tip: click the value in the response Tree to fill the path for you.
       </p>
       {list.map((r, i) => (
         <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

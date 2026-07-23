@@ -18,6 +18,7 @@ import { resolveParams } from './tokenResolver'
 import { findDragHandleRect, synthDrag } from './dragHelpers'
 import { mapPickPixel, mapSetZoom } from './mapHelpers'
 import { mobileContextOptions } from './deviceProfile'
+import { healAlts } from './healChain'
 
 export function generateScript({ profile, scenarios = [], settings = {}, outputDir = '', dataContext = null, downloadsDir = '' }) {
   const timeout = profile.timeout || 30000
@@ -298,8 +299,15 @@ function generateStep(step, index, baseUrl, { screenshotOnFail = false, outputDi
 
 function locatorExpr(p) {
   const sel = p.selector ? JSON.stringify(p.selector) : "'body'"
-  if (p.selector2 && p.selector2.trim()) {
-    return `page.locator(${sel}).or(page.locator(${JSON.stringify(p.selector2.trim())})).first()`
+  // Self-healing: OR the primary with the manual Alt Selector + auto-captured chain, so a
+  // drifted primary still resolves via an alternative that re-finds the same element.
+  // ponytail: .or().first() unions and picks DOM order, not primary-first — if a stale auto
+  // alt ever matches a WRONG element while the primary still exists, swap this for a
+  // primary-preferring resolve() (try primary, fall back only on 0 matches).
+  const alts = healAlts(p)
+  if (alts.length) {
+    const ors = alts.map(a => `.or(page.locator(${JSON.stringify(a)}))`).join('')
+    return `page.locator(${sel})${ors}.first()`
   }
   return `page.locator(${sel})`
 }

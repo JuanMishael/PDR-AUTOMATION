@@ -40,20 +40,36 @@ export async function buildDataContext(db, dataSetId) {
     }
   }
 
-  if (dataSetId) {
-    const set = db.prepare('SELECT * FROM data_sets WHERE id = ?').get(dataSetId)
-    if (set) {
-      const cname = byId[set.collection_id]
-      let values = {}
-      try { values = JSON.parse(set.field_values || '{}') } catch { values = {} }
-      for (const [field, val] of Object.entries(values)) {
-        // Empty string is a meaningful value (negative testing), so override even if blank.
-        if (cname != null && val != null) tokens.set(key(cname, field), String(val))
-      }
-    }
+  // The explicitly chosen set (a per-run pick, or a repeating group's per-iteration set) fully
+  // OWNS its collection — including fields it leaves blank/omitted, so negative-testing an empty
+  // field works (no positive value leaks in). Every OTHER collection the scenario might touch is
+  // seeded with its REPRESENTATIVE set (first positive, else first) so a plain {{Collection.field}}
+  // still fills the value the tester typed instead of the field's (usually empty) default_token —
+  // even across multiple collections. Plain run = no chosen set → every collection uses its rep set.
+  // A field no set defines keeps its default_token (e.g. a {{faker.*}} default survives).
+  const chosen = dataSetId ? db.prepare('SELECT * FROM data_sets WHERE id = ?').get(dataSetId) : null
+  for (const c of collections) {
+    if (chosen && c.id === chosen.collection_id) continue
+    applySet(db, tokens, byId, db.prepare(
+      `SELECT * FROM data_sets WHERE collection_id = ?
+       ORDER BY (group_type = 'positive') DESC, sort_order LIMIT 1`).get(c.id))
   }
+  if (chosen) applySet(db, tokens, byId, chosen)
 
   return { tokens, uniqueCache: new Map() }
+}
+
+// Overlay one set's field values onto the token map (keyed by its collection's name).
+function applySet(db, tokens, byId, set) {
+  if (!set) return
+  const cname = byId[set.collection_id]
+  if (cname == null) return
+  let values = {}
+  try { values = JSON.parse(set.field_values || '{}') } catch { values = {} }
+  for (const [field, val] of Object.entries(values)) {
+    // Empty string is a meaningful value (negative testing), so override even if blank.
+    if (val != null) tokens.set(key(cname, field), String(val))
+  }
 }
 
 function key(collection, field) {

@@ -7,12 +7,28 @@ export default function ActiveRun({ navigate, ctx }) {
   const [summary, setSummary] = useState(null)
   const [runId, setRunId] = useState(null)
   const [runNonce, setRunNonce] = useState(0)      // bump to re-trigger the run effect
+  const [dataSetId, setDataSetId] = useState(ctx.dataSetId || null) // per-run data set; null = auto (first positive)
+  const [setOptions, setSetOptions] = useState([]) // { id, label } across all collections' sets
   const logRef = useRef(null)
   const launchedNonce = useRef(null)               // which runNonce we've actually spawned
 
-  // Runs start immediately — both Run All and a single-scenario run get their data from
-  // repeating-group bindings + field defaults (no global data-set picker). {{tokens}} resolve
-  // at generate-time; a group resolves its own set per iteration.
+  // One coherent data set per run: a set is a whole row (user-name + password belong together),
+  // so the choice is per-run, not per-step. Default (null) = each collection's first positive set.
+  useEffect(() => {
+    window.api.getCollections().then(cols => {
+      const opts = []
+      for (const c of cols || []) {
+        for (const s of c.sets || []) {
+          opts.push({ id: s.id, label: `${c.name} · ${s.group_type} · ${s.name}` })
+        }
+      }
+      setSetOptions(opts)
+    }).catch(() => {})
+  }, [])
+
+  // Runs start immediately with the chosen data set (dataSetId; null = each collection's first
+  // positive set). {{tokens}} resolve at generate-time; a repeating group still resolves its own
+  // set per iteration, independent of this per-run pick.
   useEffect(() => {
     if (!profileId) return
 
@@ -38,8 +54,8 @@ export default function ActiveRun({ navigate, ctx }) {
       setSummary(null)
       setStatus('running')
       const runPromise = scenarioId
-        ? window.api.runScenario(profileId, scenarioId)
-        : window.api.runProfile(profileId)
+        ? window.api.runScenario(profileId, scenarioId, dataSetId)
+        : window.api.runProfile(profileId, dataSetId)
       runPromise.then(result => {
         if (result?.error) {
           setLogs(prev => [...prev, { type: 'error', text: result.error }])
@@ -71,6 +87,12 @@ export default function ActiveRun({ navigate, ctx }) {
   }
   const finished = status === 'passed' || status === 'failed' || status === 'stopped'
 
+  // Pick a data set for the run. If the current run already finished, re-run immediately with it.
+  function chooseSet(id) {
+    setDataSetId(id)
+    if (finished) { setRunId(null); setRunNonce(n => n + 1) }
+  }
+
   const STATUS_CONFIG = {
     running: { color: 'var(--warning)',  bg: 'var(--warning-dim)',  label: 'Running' },
     passed:  { color: 'var(--success)',  bg: 'var(--success-dim)',  label: 'Passed' },
@@ -87,6 +109,18 @@ export default function ActiveRun({ navigate, ctx }) {
           <h1>Active Run</h1>
           <p>{scenarioName ? `Running scenario: ${scenarioName}` : 'Running all scenarios (one continuous session)…'}</p>
         </div>
+        {setOptions.length > 0 && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)' }}
+            title="Run every {{Collection.field}} step against this data set. Auto = each collection's first positive set.">
+            <span>Data set</span>
+            <select value={dataSetId || ''} disabled={status === 'running'}
+              onChange={e => chooseSet(e.target.value || null)}
+              style={{ fontSize: 11, maxWidth: 220 }}>
+              <option value="">Auto — first positive</option>
+              {setOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+          </label>
+        )}
         <span style={{
           padding: '5px 14px', borderRadius: 999, fontSize: 11, fontWeight: 800,
           textTransform: 'uppercase', letterSpacing: '0.07em',

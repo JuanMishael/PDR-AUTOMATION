@@ -11,6 +11,7 @@
 import { findDragHandleRect, synthDrag } from './dragHelpers'
 import { mapPickPixel, mapSetZoom } from './mapHelpers'
 import { resolveParams } from './tokenResolver'
+import { healAlts } from './healChain'
 
 export const REPLAYABLE = new Set([
   'navigate', 'reload', 'goBack', 'goForward', 'waitForUrl',
@@ -27,8 +28,13 @@ export function parseParams(p) {
 
 function locator(page, p) {
   const sel = p.selector || 'body'
-  if (p.selector2 && p.selector2.trim()) {
-    return page.locator(sel).or(page.locator(p.selector2.trim())).first()
+  // Self-healing fallback chain — mirrors scriptGenerator.locatorExpr so replay behaves
+  // like a real run. See healChain.js for the .or().first() DOM-order caveat.
+  const alts = healAlts(p)
+  if (alts.length) {
+    let l = page.locator(sel)
+    for (const a of alts) l = l.or(page.locator(a))
+    return l.first()
   }
   return page.locator(sel)
 }

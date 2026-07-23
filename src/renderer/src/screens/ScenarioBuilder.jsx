@@ -50,7 +50,7 @@ function buildRecordedParams(p) {
 
 // ─── Test Selector Button ─────────────────────────────────────────────────────
 
-function TestSelectorButton({ selector, baseUrl, browser, mobile = false, priorSteps = [], setupSteps = [], onUse, onUseFallback }) {
+function TestSelectorButton({ selector, baseUrl, browser, mobile = false, priorSteps = [], setupSteps = [], onUse, onUseFallback, onUseChain }) {
   const [open, setOpen]         = useState(false)
   const [url, setUrl]           = useState('')
   const [testing, setTesting]   = useState(false)
@@ -271,7 +271,9 @@ function TestSelectorButton({ selector, baseUrl, browser, mobile = false, priorS
                               {onUse && (
                                 <button onClick={() => {
                                   onUse(c.selector)
-                                  if (onUseFallback) { const alt = bestFallback(strengthenOptions, c.selector); if (alt) onUseFallback(alt.selector) }
+                                  const alt = onUseFallback ? bestFallback(strengthenOptions, c.selector) : null
+                                  if (alt) onUseFallback(alt.selector)
+                                  if (onUseChain) onUseChain(healingChain(strengthenOptions, c.selector, alt?.selector))
                                   setOpen(false)
                                 }} className="btn-primary"
                                   style={{ fontSize: 11, padding: '4px 10px' }}>Use</button>
@@ -307,7 +309,7 @@ function TestSelectorButton({ selector, baseUrl, browser, mobile = false, priorS
 
 // ─── Pick Button (element picker) ─────────────────────────────────────────────
 
-function PickButton({ baseUrl, browser, mobile = false, priorSteps = [], setupSteps = [], onPicked, onPickedFallback }) {
+function PickButton({ baseUrl, browser, mobile = false, priorSteps = [], setupSteps = [], onPicked, onPickedFallback, onPickedChain }) {
   const [picking, setPicking] = useState(false)
   const [msg, setMsg] = useState(null)
   const [candidates, setCandidates] = useState(null)   // non-null → chooser open
@@ -360,12 +362,17 @@ function PickButton({ baseUrl, browser, mobile = false, priorSteps = [], setupSt
   function use(sel) {
     onPicked(sel)
     let withFallback = false
-    if (onPickedFallback) {
-      const alt = bestFallback(candidates, sel)
-      if (alt) { onPickedFallback(alt.selector); withFallback = true }
+    const alt = onPickedFallback ? bestFallback(candidates, sel) : null
+    if (alt) { onPickedFallback(alt.selector); withFallback = true }
+    // Auto self-healing chain from the remaining unique candidates.
+    let chainN = 0
+    if (onPickedChain) {
+      const chain = healingChain(candidates, sel, alt?.selector)
+      onPickedChain(chain); chainN = chain.length
     }
     setCandidates(null)
-    setMsg({ type: 'ok', text: withFallback ? 'Selector + auto fallback set' : 'Selector set' })
+    const extra = [withFallback && 'fallback', chainN && `${chainN} healing`].filter(Boolean).join(' + ')
+    setMsg({ type: 'ok', text: extra ? `Selector + ${extra} set` : 'Selector set' })
     setTimeout(() => setMsg(null), 3500)
   }
 
@@ -410,6 +417,43 @@ function PickButton({ baseUrl, browser, mobile = false, priorSteps = [], setupSt
   )
 }
 
+// Collections a scenario actually references — via a {{Name.field}} token or a repeating group's
+// collectionId — so the Run picker lists only relevant sets, not every collection in the DB.
+function collectionsUsedInSteps(steps, collections) {
+  if (!collections.length) return []
+  const names = new Set(), ids = new Set()
+  const TOKEN = /\{\{\s*([^{}]+?)\s*\}\}/g
+  for (const s of steps || []) {
+    let p; try { p = typeof s.params === 'string' ? JSON.parse(s.params) : (s.params || {}) } catch { p = {} }
+    if (p.collectionId) ids.add(String(p.collectionId))
+    for (const v of Object.values(p)) {
+      if (typeof v !== 'string') continue
+      let m; TOKEN.lastIndex = 0
+      while ((m = TOKEN.exec(v))) {
+        const raw = m[1].trim(), dot = raw.indexOf('.')
+        if (dot > 0) names.add(raw.slice(0, dot).trim().toLowerCase())
+      }
+    }
+  }
+  return collections.filter(c => ids.has(String(c.id)) || names.has(c.name.toLowerCase()))
+}
+
+// "Run against" data-set picker beside each Run button — one compact select so the tester chooses
+// positive/negative BEFORE running (not after, on the run screen). A set is one coherent row, so the
+// choice is per-run. Auto (null) = each collection's first positive set. Hidden when no sets apply.
+function RunDataPicker({ options, value, onChange, compact = false }) {
+  if (!options || !options.length) return null
+  const fs = compact ? 11 : 12
+  return (
+    <select value={value || ''} onChange={e => onChange(e.target.value || null)}
+      title="Data set to run against. Auto = each collection's first positive set."
+      style={{ fontSize: fs, maxWidth: 220, padding: compact ? '4px 8px' : '6px 10px', cursor: 'pointer' }}>
+      <option value="">🧪 Auto — first positive</option>
+      {options.map(o => <option key={o.id} value={o.id}>🧪 {o.label}</option>)}
+    </select>
+  )
+}
+
 // Best auto-fallback for a chosen primary: a DIFFERENT unique candidate, preferring a
 // different strategy (kind) so the .or() is genuine redundancy, not a near-duplicate.
 // All candidates derive from the same clicked element, so any of them re-finds it.
@@ -418,6 +462,21 @@ function bestFallback(candidates, primarySel) {
   const primary = candidates.find(c => c.selector === primarySel)
   const uniques = candidates.filter(c => c.count === 1 && c.selector !== primarySel)
   return uniques.find(c => c.kind !== primary?.kind) || uniques[0] || null
+}
+
+// Self-healing chain: every OTHER unique candidate (all derive from the same clicked
+// element, so any re-finds it), one per kind so the chain is genuine redundancy, capped.
+// Excludes the chosen primary and the manual fallback. Feeds params.selectorChain.
+function healingChain(candidates, primarySel, fallbackSel) {
+  if (!candidates) return []
+  const skip = new Set([primarySel, fallbackSel])
+  const out = [], kinds = new Set()
+  for (const c of candidates) {
+    if (c.count !== 1 || skip.has(c.selector) || kinds.has(c.kind)) continue
+    kinds.add(c.kind); out.push(c.selector)
+    if (out.length >= 3) break
+  }
+  return out
 }
 
 // Shared ranked-candidate list used by both Pick (choose a robust selector) and
@@ -779,6 +838,7 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                   )}
                 </div>
               ) : isSelector ? (
+                <div style={{ display: 'grid', gap: 4 }}>
                 <VarInput value={params[p.key] || ''} onChange={v => updateParam(p.key, v)} placeholder={p.placeholder}
                   collections={collections} groupCollectionId={groupCollectionId} reload={reloadCollections}>
                   <PickButton
@@ -789,6 +849,7 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                     setupSteps={setupSteps}
                     onPicked={sel => updateParam(p.key, sel)}
                     onPickedFallback={p.key === 'selector' ? (sel => updateParam('selector2', sel)) : null}
+                    onPickedChain={p.key === 'selector' ? (arr => updateParam('selectorChain', arr)) : null}
                   />
                   <TestSelectorButton
                     selector={params[p.key]}
@@ -799,8 +860,20 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                     setupSteps={setupSteps}
                     onUse={sel => updateParam(p.key, sel)}
                     onUseFallback={p.key === 'selector' ? (sel => updateParam('selector2', sel)) : null}
+                    onUseChain={p.key === 'selector' ? (arr => updateParam('selectorChain', arr)) : null}
                   />
                 </VarInput>
+                {p.key === 'selector' && Array.isArray(params.selectorChain) && params.selectorChain.length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 10, color: 'var(--text-muted)' }}
+                    title={'Self-healing fallbacks — tried if the selector drifts:\n' + params.selectorChain.join('\n')}>
+                    <span>🩹 {params.selectorChain.length} self-healing fallback{params.selectorChain.length > 1 ? 's' : ''}</span>
+                    <button onClick={() => updateParam('selectorChain', [])}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 10, textDecoration: 'underline', padding: 0 }}>
+                      clear
+                    </button>
+                  </div>
+                )}
+                </div>
               ) : isNativeLocator ? (
                 <VarInput value={params[p.key] || ''} onChange={v => updateParam(p.key, v)} placeholder={p.placeholder}
                   collections={collections} groupCollectionId={groupCollectionId} reload={reloadCollections}>
@@ -973,6 +1046,39 @@ function VarInput({ value, onChange, placeholder, type = 'text', multiline = fal
   const ref = useRef(null)
   const selRef = useRef({ start: 0, end: 0 })
   const [form, setForm] = useState(null)
+  const [data, setData] = useState(null)   // inline "edit this field's data across all sets" popover
+
+  // If the field holds a {{Collection.field}} token pointing at a REAL field, offer inline editing
+  // of that field's value across every set — so changing what a step types doesn't mean a trip to
+  // Test Data → the collection → the positive/negative section. Ignores faker/unique/now namespaces
+  // (their collection lookup just fails).
+  const editable = (() => {
+    const raw = (String(value || '').match(/\{\{\s*([^{}]+?)\s*\}\}/) || [])[1]
+    if (!raw) return null
+    const dot = raw.indexOf('.')
+    if (dot <= 0) return null
+    const colName = raw.slice(0, dot).trim().toLowerCase(), fieldRaw = raw.slice(dot + 1).trim().toLowerCase()
+    const col = collections.find(c => c.name.toLowerCase() === colName)
+    const field = col && (col.fields || []).find(f => f.name.toLowerCase() === fieldRaw)
+    return field ? { col, field: field.name } : null
+  })()
+
+  function openData() {
+    const rows = (editable.col.sets || []).map(s => {
+      let v = {}; try { v = JSON.parse(s.field_values || '{}') } catch {}
+      return { id: s.id, name: s.name, group_type: s.group_type, sort_order: s.sort_order, values: v, val: v[editable.field] ?? '' }
+    })
+    setData({ field: editable.field, colName: editable.col.name, rows })
+  }
+  async function saveData() {
+    for (const r of data.rows) {
+      if ((r.values[data.field] ?? '') === r.val) continue   // only write changed sets
+      await window.api.saveDataSet({ id: r.id, name: r.name, group_type: r.group_type,
+        sort_order: r.sort_order, values: { ...r.values, [data.field]: r.val } })
+    }
+    await reload?.()
+    setData(null)
+  }
 
   function trackSel() {
     const el = ref.current
@@ -1020,6 +1126,44 @@ function VarInput({ value, onChange, placeholder, type = 'text', multiline = fal
           color: 'var(--accent)', padding: '5px 7px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
         {'{+}'}
       </button>
+      {editable && (
+        <button type="button" title={`Edit ${editable.col.name} · ${editable.field} for every set — no trip to Test Data`}
+          onMouseDown={e => { e.preventDefault(); openData() }}
+          style={{ flexShrink: 0, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6,
+            color: 'var(--accent)', padding: '5px 7px', fontSize: 12, cursor: 'pointer' }}>
+          ✎
+        </button>
+      )}
+      {data && (
+        <>
+          <div onClick={() => setData(null)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+          <div style={{ position: 'absolute', top: '100%', right: 0, zIndex: 41, marginTop: 4, width: 320,
+            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 12,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.25)', display: 'grid', gap: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontFamily: 'var(--font-mono)' }}>
+              {data.colName} · {data.field}
+            </div>
+            {data.rows.length === 0
+              ? <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>No data sets yet — add one in Test Data.</div>
+              : <div style={{ display: 'grid', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
+                  {data.rows.map((r, i) => (
+                    <label key={r.id} style={{ display: 'grid', gap: 2, fontSize: 10, color: 'var(--text-muted)' }}>
+                      <span>{r.group_type} · {r.name}</span>
+                      <input value={r.val}
+                        onChange={e => setData(d => ({ ...d, rows: d.rows.map((x, j) => j === i ? { ...x, val: e.target.value } : x) }))}
+                        style={{ fontSize: 12, width: '100%' }} />
+                    </label>
+                  ))}
+                </div>}
+            {data.rows.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button onClick={() => setData(null)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+                <button onClick={saveData} className="btn-primary" style={{ fontSize: 11, padding: '4px 10px' }}>Save</button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
       {form && (
         <>
           <div onClick={() => setForm(null)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
@@ -1514,7 +1658,6 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [dragSid, setDragSid]         = useState(null)   // scenario being dragged
   const [overSid, setOverSid]         = useState(null)   // scenario drop target (highlight)
   const [search, setSearch]           = useState('')
-  const [exporting, setExporting]     = useState(false)
   const [shareMsg, setShareMsg]       = useState(null)
   const [dupMsg, setDupMsg]           = useState(null)
   const [recording, setRecording]     = useState(false)
@@ -1529,6 +1672,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const undoStack = useRef([])                   // past step id-orders, for Ctrl+Z (reorders only)
   const lastClicked = useRef(null)               // last checkbox-clicked step id, for shift-range select
   const [collections, setCollections] = useState([])
+  const [runDataSetId, setRunDataSetId] = useState(null)  // data set to run against; null = auto (first positive)
   const [fillMenu, setFillMenu]       = useState(false)   // "Fill form" collection picker open
   const [dataModal, setDataModal]     = useState(false)   // capture/create test data inline
   const [find, setFind]               = useState('')      // Ctrl+F find-in-steps query
@@ -1537,6 +1681,16 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const [findOpen, setFindOpen]       = useState(false)
   const findRef                       = useRef(null)
   const saveChain                     = useRef(Promise.resolve())   // serialize background step saves
+
+  // "Run against" options for the picker by each Run button — ONLY the sets of collections this
+  // scenario actually references (via a token or a group), not every collection in the DB. Always
+  // name the collection so it's clear which data (e.g. Login-SauceDemo) the run will use.
+  const usedCols = collectionsUsedInSteps(steps, collections)
+  const runSetOptions = usedCols.flatMap(c => (c.sets || []).map(s => ({
+    id: s.id, label: `${c.name} · ${s.group_type} · ${s.name}`
+  })))
+  // A selection from a previously-active scenario may not exist here — fall back to Auto silently.
+  const runSetId = runSetOptions.some(o => o.id === runDataSetId) ? runDataSetId : null
 
   // Ctrl/Cmd+F opens the find bar and focuses it (overriding the browser's own find, which
   // can't see virtualized/collapsed step cards anyway). Esc closes it from inside the input.
@@ -2200,13 +2354,6 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     }
   }
 
-  async function exportTestCase() {
-    if (!active || !steps.length) return
-    setExporting(true)
-    try { await window.api.exportSteps(profileId, active.id) }
-    finally { setExporting(false) }
-  }
-
   const locked = !!active?.locked
 
   // Palette shows only the active profile's platform (native android actions vs web actions).
@@ -2298,16 +2445,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                 style={{ background: 'none', border: 'none', color: 'var(--ink-soft)', fontSize: 16, cursor: 'pointer', lineHeight: 1, flexShrink: 0 }}>×</button>
             </div>
           )}
-          {active && steps.length > 0 && (
-            <button onClick={exportTestCase} disabled={exporting} style={{
-              padding: '7px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600,
-              background: 'transparent', border: '1px solid var(--border)',
-              color: 'var(--text-muted)', cursor: exporting ? 'not-allowed' : 'pointer'
-            }}>
-              {exporting ? 'Exporting…' : '↓ Export'}
-            </button>
-          )}
-          <button className="btn-primary" onClick={() => navigate('run', { profileId })}
+          <RunDataPicker options={runSetOptions} value={runSetId} onChange={setRunDataSetId} />
+          <button className="btn-primary" onClick={() => navigate('run', { profileId, dataSetId: runSetId })}
             title="Run all scenarios in order, in one continuous browser session (state carries over)">
             ▶ Run All
           </button>
@@ -2478,19 +2617,13 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     {steps.length} step{steps.length !== 1 ? 's' : ''}
                   </span>
                   <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <button className="btn-primary" onClick={() => navigate('run', { profileId, scenarioId: active.id, scenarioName: active.name })}
+                    <RunDataPicker options={runSetOptions} value={runSetId} onChange={setRunDataSetId} compact />
+                    <button className="btn-primary" onClick={() => navigate('run', { profileId, scenarioId: active.id, scenarioName: active.name, dataSetId: runSetId })}
                       title="Run just this scenario (with its 'Run needs' prerequisite) in a fresh browser"
                       style={{ padding: '5px 12px', fontSize: 12 }}>
                       ▶ Run scenario
                     </button>
-                    <button onClick={() => toggleLockScenario(active.id)}
-                      title={locked ? 'Unlock — allow editing the steps again' : 'Lock — make these steps read-only so they can’t be changed by accident'}
-                      style={{ padding: '5px 10px', fontSize: 12, fontWeight: 600, borderRadius: 6, cursor: 'pointer',
-                        background: locked ? 'rgba(245,158,11,0.12)' : 'transparent',
-                        border: `1px solid ${locked ? 'rgba(245,158,11,0.4)' : 'var(--border)'}`,
-                        color: locked ? '#F59E0B' : 'var(--text-muted)' }}>
-                      {locked ? '🔓 Unlock' : '🔒 Lock'}
-                    </button>
+                    {/* Lock/Unlock lives in each scenario row's ⋯ menu — no duplicate button here. */}
                     {selectedIds.size > 0 && !locked && (
                       <>
                         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{selectedIds.size} selected · drag any one to move them together</span>
@@ -2524,10 +2657,17 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                           <button onClick={undo} title="Undo last move (Ctrl+Z)" style={{ background: 'none', border: '1px solid var(--border)',
                             borderRadius: 6, padding: '5px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>↶ Undo</button>
                         )}
-                        <button onClick={expandAll} style={{ background: 'none', border: '1px solid var(--border)',
-                          borderRadius: 6, padding: '5px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>Expand all</button>
-                        <button onClick={collapseAll} style={{ background: 'none', border: '1px solid var(--border)',
-                          borderRadius: 6, padding: '5px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>Collapse all</button>
+                        {(() => {
+                          const allExpanded = steps.length > 0 && expandedIds.size >= steps.length
+                          return (
+                            <button onClick={allExpanded ? collapseAll : expandAll}
+                              title={allExpanded ? 'Collapse every step' : 'Expand every step'}
+                              style={{ background: 'none', border: '1px solid var(--border)',
+                                borderRadius: 6, padding: '5px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                              {allExpanded ? '⊟ Collapse all' : '⊞ Expand all'}
+                            </button>
+                          )
+                        })()}
                       </>
                     )}
                   </div>

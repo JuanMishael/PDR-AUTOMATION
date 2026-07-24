@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto'
 import { getDb } from '../core/db'
 import { runWeb, stopRun } from '../core/webRunner'
 import { runNative, stopNativeRun } from '../core/nativeRunner'
-import { buildDataContext } from '../core/tokenResolver'
+import { buildDataContext, findUnresolvedTokens } from '../core/tokenResolver'
 import { expandGroups } from '../core/groupExpand'
 import { refocusMainWindow } from '../core/windowFocus'
 
@@ -40,6 +40,15 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dat
   // Resolve test-data tokens fresh for THIS run (so {{unique.*}}/{{faker.*}} differ per run).
   // With no collections/sets this is an empty context and the run path is unchanged.
   const dataContext = await buildDataContext(getDb(), dataSetId)
+
+  // Surface bad test-data references BEFORE the browser opens. An unresolved {{Collection.field}}
+  // is typed into the page literally, which looks like "the field didn't fill" — name it instead
+  // of letting the tester hunt. Warning only; the run still proceeds.
+  const unresolved = findUnresolvedTokens(scenarios, dataContext)
+  if (unresolved.length) {
+    send('runner:log', tag({ type: 'error',
+      text: `⚠ Unresolved test data: ${unresolved.join(', ')} — no such collection/field, so this is typed in literally. Check the name in Test Data.` }))
+  }
 
   // Native Android profiles run through Appium; web/everything-else through the Playwright runner.
   // Both return the same shape, so the rest of executeRun is engine-agnostic.

@@ -394,31 +394,33 @@ function actionToCode(action, p, baseUrl) {
     case 'hover':
       return `await ${loc}.hover();`
 
+    // These all go through `loc` (not page.<verb>(selector)) so the self-healing fallback chain
+    // applies to typing/selecting too — a drifted selector on a Fill Input heals like a Click does.
     case 'focus':
-      return `await page.focus(${sel});`
+      return `await ${loc}.focus();`
 
     case 'selectOption':
-      return `await page.selectOption(${sel}, ${JSON.stringify(p.value)});`
+      return `await ${loc}.selectOption(${JSON.stringify(p.value)});`
 
     // setChecked is idempotent: only toggles if the box isn't already in the
     // desired state, then no-ops. Keeps the flow moving regardless of starting
     // state — no manual if/else needed.
     case 'setCheckbox': {
       const pre = p.waitBefore > 0 ? `await page.waitForTimeout(${Number(p.waitBefore)});\n    ` : ''
-      return `${pre}await page.setChecked(${sel}, ${p.checked === false ? 'false' : 'true'});`
+      return `${pre}await ${loc}.setChecked(${p.checked === false ? 'false' : 'true'});`
     }
 
     case 'fill':
-      return `await page.fill(${sel}, ${JSON.stringify(p.value ?? '')});`
+      return `await ${loc}.fill(${JSON.stringify(p.value ?? '')});`
 
     case 'type':
-      return `await page.type(${sel}, ${JSON.stringify(p.value ?? '')}, { delay: ${p.delay ?? 50} });`
+      return `await ${loc}.type(${JSON.stringify(p.value ?? '')}, { delay: ${p.delay ?? 50} });`
 
     case 'clearInput':
-      return `await page.fill(${sel}, '');`
+      return `await ${loc}.fill('');`
 
     case 'pressKey':
-      return `await page.press(${sel}, ${JSON.stringify(p.key)});`
+      return `await ${loc}.press(${JSON.stringify(p.key)});`
 
     case 'uploadFile':
       // Routed through the smart _uploadFile helper: handles a hidden file input, the

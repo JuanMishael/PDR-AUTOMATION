@@ -106,13 +106,15 @@ export async function replayStep(page, action, p, baseUrl) {
       return loc.click()
     }
 
+    // Typing/selecting goes through locator() too, so the self-healing chain applies here exactly
+    // as it does in the generated run (mirrors scriptGenerator).
     case 'hover':              return locator(page, p).hover()
-    case 'focus':              return page.focus(p.selector)
-    case 'selectOption':       return page.selectOption(p.selector, p.value)
-    case 'fill':               return page.fill(p.selector, p.value ?? '')
-    case 'type':               return page.type(p.selector, p.value ?? '', { delay: p.delay ?? 50 })
-    case 'clearInput':         return page.fill(p.selector, '')
-    case 'pressKey':           return page.press(p.selector || 'body', p.key)
+    case 'focus':              return locator(page, p).focus()
+    case 'selectOption':       return locator(page, p).selectOption(p.value)
+    case 'fill':               return locator(page, p).fill(p.value ?? '')
+    case 'type':               return locator(page, p).type(p.value ?? '', { delay: p.delay ?? 50 })
+    case 'clearInput':         return locator(page, p).fill('')
+    case 'pressKey':           return locator(page, p).press(p.key)
     case 'uploadFile':         return smartUpload(page, p)
     case 'dragAndDrop':        return page.dragAndDrop(p.source, p.target)
 

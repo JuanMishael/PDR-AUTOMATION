@@ -149,6 +149,38 @@ function resolveUnique(rawKey, ctx) {
   return out
 }
 
+/**
+ * Tokens in these scenarios that reference a collection/field which doesn't exist. Those resolve
+ * to nothing and get typed into the page LITERALLY ("{{Login.usernam}}"), which reads to a tester
+ * as "the field didn't fill" with no clue why — the exact failure this warns about. Generator
+ * namespaces (faker/unique/now) always resolve, so they're never reported.
+ * Returns the distinct offending token strings, e.g. ['{{Login-SauceDemo.usernam}}'].
+ */
+export function findUnresolvedTokens(scenarios, ctx) {
+  if (!ctx || !ctx.tokens) return []
+  const out = new Set()
+  const RE = /\{\{\s*([^{}]+?)\s*\}\}/g
+  for (const sc of scenarios || []) {
+    for (const st of sc.steps || []) {
+      let p
+      try { p = typeof st.params === 'string' ? JSON.parse(st.params) : (st.params || {}) } catch { p = {} }
+      for (const v of Object.values(p)) {
+        if (typeof v !== 'string') continue
+        let m; RE.lastIndex = 0
+        while ((m = RE.exec(v))) {
+          const raw = m[1].trim()
+          const dot = raw.indexOf('.')
+          const ns = (dot === -1 ? raw : raw.slice(0, dot)).toLowerCase()
+          if (ns === 'faker' || ns === 'unique' || ns === 'now') continue
+          const rest = dot === -1 ? '' : raw.slice(dot + 1).trim()
+          if (!ctx.tokens.has(key(ns, rest))) out.add(m[0])
+        }
+      }
+    }
+  }
+  return [...out]
+}
+
 // Resolve every string value in a params object (one level deep — params are flat).
 export function resolveParams(params, ctx) {
   if (!ctx || !params || typeof params !== 'object') return params

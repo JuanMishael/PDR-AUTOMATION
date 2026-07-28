@@ -50,18 +50,73 @@ export function generateScript({ profile, scenarios = [], settings = {}, outputD
   // still stops that scenario (the failing step rethrows); only the per-scenario
   // boundary is caught here. Browser-setup failures still hit the outer try → fatal.
   let globalIndex = 0
+
+  // Group/loop markers are expanded away by expandGroups before we get here; drop any that slip
+  // through. If-block markers (ifStart/elseStart/ifEnd) survive expansion and are turned into real
+  // runtime if/else below — a condition can only be evaluated live, not statically unrolled.
+  const DEAD_MARKERS = ['groupStart', 'groupEnd', 'loopStart', 'loopEnd']
+
+  // Emit a flat step list that MAY contain if-blocks. Recurses into each branch so nested
+  // conditionals nest as nested JS if/else. Leaf steps go through generateStep unchanged (each
+  // keeps its own try/catch + result reporting); only one branch runs, so a not-taken branch's
+  // steps simply don't report (they didn't run).
+  const emitList = (list) => {
+    const parts = []
+    let i = 0
+    while (i < list.length) {
+      const s = list[i]
+      if (DEAD_MARKERS.includes(s.action)) { i++; continue }
+      if (s.action === 'ifStart') {
+        let depth = 1, j = i + 1, elseAt = -1
+        while (j < list.length && depth > 0) {
+          const a = list[j].action
+          if (a === 'ifStart') depth++
+          else if (a === 'ifEnd') { depth--; if (depth === 0) break }
+          else if (a === 'elseStart' && depth === 1) elseAt = j
+          j++
+        }
+        const thenList = list.slice(i + 1, elseAt === -1 ? j : elseAt)
+        const elseList = elseAt === -1 ? [] : list.slice(elseAt + 1, j)
+        parts.push(emitIf(s, emitList(thenList), emitList(elseList)))
+        i = j + 1
+      } else if (s.action === 'elseStart' || s.action === 'ifEnd') {
+        i++   // stray marker (no matching start) — ignore
+      } else {
+        parts.push(generateStep(s, globalIndex, baseUrl, { screenshotOnFail, outputDir, dataContext, settleEnabled, settleCap }))
+        globalIndex++
+        i++
+      }
+    }
+    return parts.join('\n\n')
+  }
+
+  // Wrap the then/else code in a real runtime if/else driven by __cond(). The condition's selectors
+  // ride the same self-healing chain as actions; its {{tokens}} (e.g. an expected value) resolve now.
+  const emitIf = (step, thenCode, elseCode) => {
+    const raw = typeof step.params === 'string' ? JSON.parse(step.params) : (step.params || {})
+    const cond = resolveParams(raw.cond || {}, dataContext)
+    const sels = [(cond.selector || '').trim(), ...healAlts(cond)].filter(Boolean)
+    const condLit = JSON.stringify({
+      type: cond.type || 'visible',
+      sel: sels.length ? sels : ['body'],
+      expected: cond.expected ?? '',
+      mode: cond.mode || 'contains',
+      negate: !!cond.negate,
+      timeoutMs: Number(cond.timeoutMs) > 0 ? Number(cond.timeoutMs) : 0
+    })
+    const label = (step.label || 'condition').replace(/\*\//g, '* /')
+    const elseBlock = elseCode.trim() ? ` else {\n${indent(elseCode, 2)}\n  }` : ''
+    return `
+  // If: ${label}
+  if (await __cond(${condLit})) {
+${indent(thenCode, 2)}
+  }${elseBlock}`.trim()
+  }
+
   const blocks = []
   for (const sc of scenarios) {
-    // Group/loop markers are expanded away in the runner; drop any that slip through.
-    const MARKERS = ['groupStart', 'groupEnd', 'loopStart', 'loopEnd']
-    const orderedSteps = [...(sc.steps || [])]
-      .filter(s => !MARKERS.includes(s.action))
-      .sort((a, b) => a.sort_order - b.sort_order)
-    const stepCode = orderedSteps.map(step => {
-      const code = generateStep(step, globalIndex, baseUrl, { screenshotOnFail, outputDir, dataContext, settleEnabled, settleCap })
-      globalIndex++
-      return code
-    }).join('\n\n')
+    const orderedSteps = [...(sc.steps || [])].sort((a, b) => a.sort_order - b.sort_order)
+    const stepCode = emitList(orderedSteps)
     blocks.push(
 `process.stdout.write(JSON.stringify({ type: 'scenario', id: ${JSON.stringify(sc.id || null)}, name: ${JSON.stringify(sc.name || 'Scenario')} }) + '\\n');
 try {
@@ -211,6 +266,32 @@ ${settleHelper}
       return fc.setFiles(filePath);
     }
     throw new Error('Upload File: could not find a file input. Set the Upload/Browse button in the step.');
+  }
+
+  // Evaluate an If-block condition. MUST NOT throw — a missing element is a false condition, not a
+  // run failure — and uses instant checks (isVisible/count), not auto-waiting, since "is it there
+  // NOW" is the semantic (with an optional timeoutMs for the appears-slowly case).
+  async function __cond(c) {
+    try {
+      let loc = page.locator(c.sel[0]);
+      for (let i = 1; i < c.sel.length; i++) loc = loc.or(page.locator(c.sel[i]));
+      loc = loc.first();
+      const t = c.timeoutMs || 0;
+      let r;
+      switch (c.type) {
+        case 'visible': r = t ? await loc.waitFor({ state: 'visible', timeout: t }).then(() => true).catch(() => false) : await loc.isVisible(); break;
+        case 'hidden':  r = t ? await loc.waitFor({ state: 'hidden', timeout: t }).then(() => true).catch(() => false) : !(await loc.isVisible()); break;
+        case 'exists':  r = (await loc.count()) > 0; break;
+        case 'text':    { const s = (await loc.innerText().catch(() => '')) || ''; r = c.mode === 'exact' ? s.trim() === c.expected : s.includes(c.expected); break; }
+        case 'value':   { const v = (await loc.inputValue().catch(() => '')) || ''; r = c.mode === 'exact' ? v === c.expected : v.includes(c.expected); break; }
+        case 'enabled': r = await loc.isEnabled().catch(() => false); break;
+        case 'checked': r = await loc.isChecked().catch(() => false); break;
+        case 'url':     r = (page.url() || '').includes(c.expected); break;
+        case 'title':   { const ti = (await page.title().catch(() => '')) || ''; r = ti.includes(c.expected); break; }
+        default:        r = false;
+      }
+      return c.negate ? !r : r;
+    } catch { return !!c.negate; }
   }
 
   try {

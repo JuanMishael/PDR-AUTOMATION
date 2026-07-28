@@ -20,6 +20,23 @@ const CATEGORY_KEYWORD = {
 // Group markers wrap a range of steps (loopStart/loopEnd are legacy repeat-group aliases).
 const isGroupStart = a => a === 'groupStart' || a === 'loopStart'
 const isGroupEnd = a => a === 'groupEnd' || a === 'loopEnd'
+// Blocks = groups OR if-conditionals. Used for depth/indent/nesting/drag so an If-block moves,
+// selects, deletes and nests as one unit just like a group. `elseStart` is depth-NEUTRAL (a divider
+// inside an if-block), so it's neither a start nor an end.
+const isBlockStart = a => isGroupStart(a) || a === 'ifStart'
+const isBlockEnd = a => isGroupEnd(a) || a === 'ifEnd'
+
+// Does the if-block opening at startIdx already have an Else divider at its own level?
+function blockHasElse(steps, startIdx) {
+  let depth = 1
+  for (let j = startIdx + 1; j < steps.length; j++) {
+    const a = steps[j].action
+    if (a === 'ifStart') depth++
+    else if (a === 'ifEnd') { depth--; if (depth === 0) return false }
+    else if (a === 'elseStart' && depth === 1) return true
+  }
+  return false
+}
 
 const KEYWORD_COLOR = {
   Given: '#3B82F6',
@@ -537,7 +554,7 @@ function SelectorChooser({ title, candidates, onUse, onFallback, onClose }) {
 
 // ─── Canvas Step ─────────────────────────────────────────────────────────────
 
-function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGroupEnd, profile, priorSteps = [], setupSteps = [], collections = [], reloadCollections = null, groupCollectionId = null, indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, dragGroupActive = false, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
+function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGroupEnd, onAddElse, onRemoveIfBlock, hasElse = false, profile, priorSteps = [], setupSteps = [], collections = [], reloadCollections = null, groupCollectionId = null, indent = 0, groupCollapsed = false, onToggleGroup, onUngroup, expanded = true, onToggleExpand, selected = false, onToggleSelect, dragId = null, overId = null, dragGroupActive = false, active = false, onDragStartStep, onDragOverStep, onDropStep, onDragEndStep, onActivate }) {
   // Drag-and-drop wiring shared by the normal card and the group cards.
   const dragging = dragId === step.id || (dragGroupActive && selected)
   const showDropLine = overId === step.id && dragId && dragId !== step.id
@@ -686,6 +703,124 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
         <button onClick={() => onRemoveGroupEnd && onRemoveGroupEnd(step.id)} title="Remove this group marker"
           style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
             fontSize: 13, padding: '0 4px', lineHeight: 1 }}>✕</button>
+      </div>
+    )
+  }
+
+  // --- If start: a conditional block. Its condition is evaluated live at run time; the body runs
+  // only when it holds (Else, if present, runs otherwise). Distinct purple styling from groups. ---
+  if (step.action === 'ifStart') {
+    const IF = '#8B5CF6'
+    const cond = params.cond || {}
+    const setCond = (patch) => updateParam('cond', { ...cond, ...patch })
+    const type = cond.type || 'visible'
+    const needsSelector = !['url', 'title'].includes(type)
+    const needsExpected = ['text', 'value', 'url', 'title'].includes(type)
+    const needsMode = ['text', 'value'].includes(type)
+    const needsWait = ['visible', 'hidden'].includes(type)
+    const ghost = { background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }
+    return (
+      <div {...dragHandlers} style={{ border: `1px solid ${IF}`, borderRadius: 8, marginBottom: 8, marginLeft: indent * 18,
+        background: 'rgba(139,92,246,0.08)', opacity: dragging ? 0.4 : (skipped ? 0.55 : 1),
+        boxShadow: showDropLine ? `0 -3px 0 -1px ${IF}` : (active ? `0 0 0 2px ${IF}` : undefined) }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', flexWrap: 'wrap' }}>
+          <span {...gripProps}>⠿</span>
+          {onToggleSelect && (
+            <input type="checkbox" checked={selected} readOnly
+              onClick={e => { e.stopPropagation(); onToggleSelect(e.shiftKey) }} title="Select the whole If-block (its steps too)"
+              style={{ width: 'auto', flexShrink: 0, cursor: 'pointer', margin: 0 }} />
+          )}
+          <button onClick={onToggleGroup} title={groupCollapsed ? 'Expand' : 'Collapse'}
+            style={{ background: 'none', border: 'none', color: IF, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+            {groupCollapsed ? '▸' : '▾'} 🔀
+          </button>
+          <span style={{ fontWeight: 800, fontSize: 13, color: IF }}>IF</span>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-muted)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!cond.negate} onChange={e => setCond({ negate: e.target.checked })} style={{ width: 'auto', margin: 0 }} /> NOT
+          </label>
+          <select value={type} onChange={e => setCond({ type: e.target.value })} style={{ fontSize: 12 }}>
+            <option value="visible">is visible</option>
+            <option value="hidden">is hidden</option>
+            <option value="exists">exists</option>
+            <option value="enabled">is enabled</option>
+            <option value="checked">is checked</option>
+            <option value="text">text</option>
+            <option value="value">input value</option>
+            <option value="url">URL</option>
+            <option value="title">page title</option>
+          </select>
+          {needsMode && (
+            <select value={cond.mode || 'contains'} onChange={e => setCond({ mode: e.target.value })} style={{ fontSize: 12 }}>
+              <option value="contains">contains</option>
+              <option value="exact">equals</option>
+            </select>
+          )}
+          {skipped && (
+            <span title="This block is skipped — none of its steps run."
+              style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', background: 'var(--surface2)',
+                border: '1px solid var(--border)', borderRadius: 999, padding: '1px 7px' }}>SKIPPED</span>
+          )}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
+            {!hasElse && (
+              <button onClick={() => onAddElse && onAddElse(step.id)} title="Add an Else branch (runs when the condition is false)" style={ghost}>＋ Else</button>
+            )}
+            <button onClick={() => onMove(step.id, 'up')} title="Move up" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '3px 5px', cursor: 'pointer' }}>↑</button>
+            <button onClick={() => onMove(step.id, 'down')} title="Move down" style={{ background: 'none', border: 'none', color: 'var(--text-muted)', padding: '3px 5px', cursor: 'pointer' }}>↓</button>
+            <button onClick={() => onRemoveIfBlock && onRemoveIfBlock(step.id)} title="Remove the If (keep the inner steps)" style={ghost}> × Remove</button>
+          </div>
+        </div>
+        {!groupCollapsed && (
+          <div style={{ padding: '0 12px 10px', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            {needsSelector && (
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center', flex: 1, minWidth: 220 }}>
+                <input value={cond.selector || ''} onChange={e => setCond({ selector: e.target.value })}
+                  placeholder=".cookie-banner" style={{ fontSize: 12, flex: 1, minWidth: 0 }} />
+                <PickButton baseUrl={profile?.base_url} browser={profile?.browser} mobile={profile?.mobile}
+                  priorSteps={priorSteps} setupSteps={setupSteps} onPicked={sel => setCond({ selector: sel })} />
+                <TestSelectorButton selector={cond.selector} baseUrl={profile?.base_url} browser={profile?.browser} mobile={profile?.mobile}
+                  priorSteps={priorSteps} setupSteps={setupSteps} onUse={sel => setCond({ selector: sel })} />
+              </div>
+            )}
+            {needsExpected && (
+              <input value={cond.expected || ''} onChange={e => setCond({ expected: e.target.value })}
+                placeholder={type === 'url' ? '/dashboard' : type === 'title' ? 'My App' : 'expected text'}
+                style={{ fontSize: 12, flex: 1, minWidth: 120 }} />
+            )}
+            {needsWait && (
+              <input type="number" value={cond.timeoutMs || ''} onChange={e => setCond({ timeoutMs: e.target.value })}
+                placeholder="wait up to (ms)" title="Optional — wait up to N ms for it to appear/disappear before deciding (default: check instantly)"
+                style={{ fontSize: 12, width: 130 }} />
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // --- Else divider: splits an if-block's then/else. Depth-neutral; rendered dedented. ---
+  if (step.action === 'elseStart') {
+    const IF = '#8B5CF6'
+    return (
+      <div {...dragHandlers} style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: indent * 18,
+        marginBottom: 8, padding: '3px 12px', borderLeft: `2px dashed ${IF}`, opacity: dragging ? 0.4 : 0.9,
+        boxShadow: showDropLine ? `0 -3px 0 -1px ${IF}` : (active ? `0 0 0 2px ${IF}` : undefined) }}>
+        <span {...gripProps}>⠿</span>
+        <span style={{ flex: 1, fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: IF }}>⎇ else</span>
+        <button onClick={() => onDelete(step.id)} title="Remove the Else divider (merges its steps into the If branch)"
+          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, padding: '0 4px', lineHeight: 1 }}>✕</button>
+      </div>
+    )
+  }
+
+  // --- If end: a thin closing marker for the conditional block. ---
+  if (step.action === 'ifEnd') {
+    const IF = '#8B5CF6'
+    return (
+      <div {...dragHandlers} style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: indent * 18,
+        marginBottom: 8, padding: '3px 12px', borderLeft: `2px dashed ${IF}`, opacity: dragging ? 0.4 : 0.75,
+        boxShadow: showDropLine ? `0 -3px 0 -1px ${IF}` : (active ? `0 0 0 2px ${IF}` : undefined) }}>
+        <span {...gripProps}>⠿</span>
+        <span style={{ flex: 1, fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase', color: IF }}>🔀 end if</span>
       </div>
     )
   }
@@ -1672,7 +1807,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   const undoStack = useRef([])                   // past step id-orders, for Ctrl+Z (reorders only)
   const lastClicked = useRef(null)               // last checkbox-clicked step id, for shift-range select
   const [collections, setCollections] = useState([])
-  const [runDataSetId, setRunDataSetId] = useState(null)  // data set to run against; null = auto (first positive)
+  const [runAllDataSetId, setRunAllDataSetId] = useState(null)      // data set for Run All; null = auto (first positive)
+  const [scenarioDataSetId, setScenarioDataSetId] = useState(null) // data set for Run scenario — independent of Run All
   const [fillMenu, setFillMenu]       = useState(false)   // "Fill form" collection picker open
   const [dataModal, setDataModal]     = useState(false)   // capture/create test data inline
   const [find, setFind]               = useState('')      // Ctrl+F find-in-steps query
@@ -1690,7 +1826,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     id: s.id, label: `${c.name} · ${s.group_type} · ${s.name}`
   })))
   // A selection from a previously-active scenario may not exist here — fall back to Auto silently.
-  const runSetId = runSetOptions.some(o => o.id === runDataSetId) ? runDataSetId : null
+  const runAllSetId = runSetOptions.some(o => o.id === runAllDataSetId) ? runAllDataSetId : null
+  const scenarioSetId = runSetOptions.some(o => o.id === scenarioDataSetId) ? scenarioDataSetId : null
 
   // Ctrl/Cmd+F opens the find bar and focuses it (overriding the browser's own find, which
   // can't see virtualized/collapsed step cards anyway). Esc closes it from inside the input.
@@ -1732,7 +1869,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   }
   // Expand/Collapse all also opens/closes every group block (not just step-card params).
   const expandAll   = () => { setExpandedIds(new Set(steps.map(s => s.id))); setCollapsedGroups(new Set()) }
-  const collapseAll = () => { setExpandedIds(new Set()); setCollapsedGroups(new Set(steps.filter(s => isGroupStart(s.action)).map(s => s.id))) }
+  const collapseAll = () => { setExpandedIds(new Set()); setCollapsedGroups(new Set(steps.filter(s => isBlockStart(s.action)).map(s => s.id))) }
 
   // Ticking a group's checkbox selects (or clears) the whole block — its inner steps and
   // any nested groups too. A plain step toggles just itself.
@@ -1755,9 +1892,9 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     }
     setSelectedIds(prev => {
       const n = new Set(prev)
-      if (idx >= 0 && isGroupStart(steps[idx].action)) {
+      if (idx >= 0 && isBlockStart(steps[idx].action)) {
         const [us, ue] = unitRange(steps, idx)
-        const selecting = !n.has(id)   // follow the group marker's own state
+        const selecting = !n.has(id)   // follow the block marker's own state
         for (let k = us; k <= ue; k++) selecting ? n.add(steps[k].id) : n.delete(steps[k].id)
       } else {
         n.has(id) ? n.delete(id) : n.add(id)
@@ -1787,8 +1924,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     // cross an existing group boundary. Nesting a group fully inside another is fine.
     let d = 0, balanced = true
     for (let k = min; k <= max; k++) {
-      if (isGroupStart(steps[k].action)) d++
-      else if (isGroupEnd(steps[k].action)) { d--; if (d < 0) { balanced = false; break } }
+      if (isBlockStart(steps[k].action)) d++
+      else if (isBlockEnd(steps[k].action)) { d--; if (d < 0) { balanced = false; break } }
     }
     if (!balanced || d !== 0) {
       await confirmDialog('That selection splits an existing group. Pick whole groups, or steps within a single group.', { confirmText: 'OK' })
@@ -1835,6 +1972,47 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     }
     await window.api.deleteStep(endId)
     if (j >= 0 && depth === 0) await window.api.deleteStep(arr[j].id)   // matched pair → drop the start too
+    setSteps(await window.api.getSteps(active.id))
+  }
+
+  // Add an Else divider to an if-block (once) — inserts elseStart just before the matching ifEnd.
+  async function addElse(ifStartId) {
+    if (active?.locked) return
+    const arr = steps
+    const i = arr.findIndex(s => s.id === ifStartId)
+    if (i < 0) return
+    let depth = 1, j = i + 1, endIdx = -1, hasElse = false
+    while (j < arr.length && depth > 0) {
+      const a = arr[j].action
+      if (a === 'ifStart') depth++
+      else if (a === 'ifEnd') { depth--; if (depth === 0) { endIdx = j; break } }
+      else if (a === 'elseStart' && depth === 1) hasElse = true
+      j++
+    }
+    if (endIdx < 0 || hasElse) return
+    const res = await window.api.saveStep({ scenario_id: active.id, action: 'elseStart', params: {}, label: '', sort_order: 0 })
+    const ids = arr.map(s => s.id).filter(id => id !== res.id)
+    const at = ids.indexOf(arr[endIdx].id)
+    await window.api.reorderSteps(active.id, [...ids.slice(0, at), res.id, ...ids.slice(at)])
+    setSteps(await window.api.getSteps(active.id))
+  }
+
+  // Remove an if-block's markers (ifStart + its elseStart + matching ifEnd), keeping inner steps.
+  async function removeIfBlock(ifStartId) {
+    if (active?.locked) return
+    const arr = steps
+    const i = arr.findIndex(s => s.id === ifStartId)
+    if (i < 0) return
+    let depth = 1, j = i + 1
+    const toDelete = [ifStartId]
+    while (j < arr.length && depth > 0) {
+      const a = arr[j].action
+      if (a === 'ifStart') depth++
+      else if (a === 'ifEnd') { depth--; if (depth === 0) { toDelete.push(arr[j].id); break } }
+      else if (a === 'elseStart' && depth === 1) toDelete.push(arr[j].id)
+      j++
+    }
+    for (const id of toDelete) await window.api.deleteStep(id)
     setSteps(await window.api.getSteps(active.id))
   }
 
@@ -1997,19 +2175,23 @@ export default function ScenarioBuilder({ navigate, ctx }) {
     if (!active || active.locked) return
     const def = ACTION_DEFS[actionKey]
     const keyword = CATEGORY_KEYWORD[def?.category] || 'When'
+    const initParams = actionKey === 'ifStart'
+      ? { _keyword: keyword, cond: { type: 'visible', selector: '', mode: 'contains', negate: false } }
+      : { _keyword: keyword }
     const res = await window.api.saveStep({
       scenario_id: active.id,
       action: actionKey,
-      params: { _keyword: keyword },
+      params: initParams,
       label: '',
       sort_order: steps.length
     })
-    // A group is always a balanced pair: adding a Group start drops in its matching End
+    // A group / if-block is always a balanced pair: adding the start drops in its matching End
     // right after it, so an orphan end can never be created from the palette.
     const newIds = [res?.id]
-    if (isGroupStart(actionKey)) {
+    if (isGroupStart(actionKey) || actionKey === 'ifStart') {
+      const endAction = actionKey === 'ifStart' ? 'ifEnd' : 'groupEnd'
       const end = await window.api.saveStep({
-        scenario_id: active.id, action: 'groupEnd', params: {}, label: '', sort_order: steps.length + 1
+        scenario_id: active.id, action: endAction, params: {}, label: '', sort_order: steps.length + 1
       })
       newIds.push(end?.id)
     }
@@ -2138,8 +2320,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   function groupsBalanced(arr) {
     let depth = 0
     for (const s of arr) {
-      if (isGroupStart(s.action)) depth++
-      else if (isGroupEnd(s.action) && --depth < 0) return false
+      if (isBlockStart(s.action)) depth++
+      else if (isBlockEnd(s.action) && --depth < 0) return false
     }
     return depth === 0
   }
@@ -2148,20 +2330,20 @@ export default function ScenarioBuilder({ navigate, ctx }) {
   // if idx is a group marker, otherwise just the single step. Used for block-aware moves.
   function unitRange(arr, idx) {
     const s = arr[idx]
-    if (isGroupStart(s.action)) {
+    if (isBlockStart(s.action)) {
       let depth = 1, j = idx + 1
       while (j < arr.length && depth > 0) {
-        if (isGroupStart(arr[j].action)) depth++
-        else if (isGroupEnd(arr[j].action)) { depth--; if (depth === 0) break }
+        if (isBlockStart(arr[j].action)) depth++
+        else if (isBlockEnd(arr[j].action)) { depth--; if (depth === 0) break }
         j++
       }
       return [idx, Math.min(j, arr.length - 1)]
     }
-    if (isGroupEnd(s.action)) {
+    if (isBlockEnd(s.action)) {
       let depth = 1, j = idx - 1
       while (j >= 0 && depth > 0) {
-        if (isGroupEnd(arr[j].action)) depth++
-        else if (isGroupStart(arr[j].action)) { depth--; if (depth === 0) break }
+        if (isBlockEnd(arr[j].action)) depth++
+        else if (isBlockStart(arr[j].action)) { depth--; if (depth === 0) break }
         j--
       }
       return [Math.max(j, 0), idx]
@@ -2186,7 +2368,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       newIds = [...ids.slice(0, ps), ...ids.slice(us, ue + 1), ...ids.slice(ps, us), ...ids.slice(ue + 1)]
     } else {
       if (ue >= arr.length - 1) return
-      if (isGroupEnd(arr[ue + 1].action)) return   // next is our parent's close marker → boundary
+      if (isBlockEnd(arr[ue + 1].action)) return   // next is our parent's close marker → boundary
       const [ns, ne] = unitRange(arr, ue + 1)
       newIds = [...ids.slice(0, us), ...ids.slice(ns, ne + 1), ...ids.slice(us, ue + 1), ...ids.slice(ne + 1)]
     }
@@ -2227,10 +2409,10 @@ export default function ScenarioBuilder({ navigate, ctx }) {
       return
     }
 
-    // Dragging an END-group marker resizes the group: move ONLY the marker (don't carry the whole
-    // group), so the tester can pull adjacent steps in/out. Reject if the result unbalances markers
-    // (e.g. dropping the end above its start), which would invert the group.
-    if (isGroupEnd(arr[di].action)) {
+    // Dragging an END marker (group or if) resizes the block: move ONLY the marker (don't carry the
+    // whole block), so the tester can pull adjacent steps in/out. Reject if the result unbalances
+    // markers (e.g. dropping the end above its start), which would invert the block.
+    if (isBlockEnd(arr[di].action)) {
       if (dragStepId === beforeId) return
       const ids = arr.map(s => s.id)
       const without = ids.filter(id => id !== dragStepId)
@@ -2445,8 +2627,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                 style={{ background: 'none', border: 'none', color: 'var(--ink-soft)', fontSize: 16, cursor: 'pointer', lineHeight: 1, flexShrink: 0 }}>×</button>
             </div>
           )}
-          <RunDataPicker options={runSetOptions} value={runSetId} onChange={setRunDataSetId} />
-          <button className="btn-primary" onClick={() => navigate('run', { profileId, dataSetId: runSetId })}
+          <RunDataPicker options={runSetOptions} value={runAllSetId} onChange={setRunAllDataSetId} />
+          <button className="btn-primary" onClick={() => navigate('run', { profileId, dataSetId: runAllSetId })}
             title="Run all scenarios in order, in one continuous browser session (state carries over)">
             ▶ Run All
           </button>
@@ -2617,8 +2799,8 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     {steps.length} step{steps.length !== 1 ? 's' : ''}
                   </span>
                   <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <RunDataPicker options={runSetOptions} value={runSetId} onChange={setRunDataSetId} compact />
-                    <button className="btn-primary" onClick={() => navigate('run', { profileId, scenarioId: active.id, scenarioName: active.name, dataSetId: runSetId })}
+                    <RunDataPicker options={runSetOptions} value={scenarioSetId} onChange={setScenarioDataSetId} compact />
+                    <button className="btn-primary" onClick={() => navigate('run', { profileId, scenarioId: active.id, scenarioName: active.name, dataSetId: scenarioSetId })}
                       title="Run just this scenario (with its 'Run needs' prerequisite) in a fresh browser"
                       style={{ padding: '5px 12px', fontSize: 12 }}>
                       ▶ Run scenario
@@ -2749,11 +2931,13 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                       const stack = []
                       const top = () => stack.slice().reverse().find(Boolean) || null
                       for (const s of steps) {
-                        if (isGroupStart(s.action)) {
+                        if (isBlockStart(s.action)) {
                           enclosingCol[s.id] = top()
                           const sp = stepParams(s)
-                          stack.push(sp.repeat ? (sp.collectionId || null) : null)
-                        } else if (isGroupEnd(s.action)) {
+                          // Only a repeating GROUP contributes a collection; an if-block pushes null
+                          // so nesting stays balanced without surfacing a collection.
+                          stack.push(isGroupStart(s.action) && sp.repeat ? (sp.collectionId || null) : null)
+                        } else if (isBlockEnd(s.action)) {
                           stack.pop(); enclosingCol[s.id] = top()
                         } else {
                           enclosingCol[s.id] = top()
@@ -2768,10 +2952,12 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                     let hideDepth = null      // depth to return to before un-hiding (nest-aware)
                     const out = []
                     steps.forEach((step, i) => {
-                      const start = isGroupStart(step.action), end = isGroupEnd(step.action)
+                      const start = isBlockStart(step.action), end = isBlockEnd(step.action)
                       let indent = depth
                       if (start) depth++
                       else if (end) { depth = Math.max(0, depth - 1); indent = depth }
+                      // Else divider is depth-neutral but renders dedented, aligned with its If header.
+                      else if (step.action === 'elseStart') indent = Math.max(0, depth - 1)
 
                       // Inside a collapsed group: hide everything (incl. nested) until its end
                       // marker brings depth back to where the collapse began.
@@ -2788,6 +2974,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
                           opacity: q && !hit ? 0.35 : 1 }}>
                         <CanvasStep step={step} index={i} total={steps.length} indent={indent}
                           onChange={updateStep} onDelete={deleteStep} onMove={moveStep} onRemoveGroupEnd={removeGroupEnd}
+                          onAddElse={addElse} onRemoveIfBlock={removeIfBlock} hasElse={step.action === 'ifStart' && blockHasElse(steps, i)}
                           profile={profile} priorSteps={steps.slice(0, i)} setupSteps={prereqSteps} collections={collections} reloadCollections={refreshCollections}
                           groupCollectionId={enclosingCol[step.id]}
                           groupCollapsed={collapsedGroups.has(step.id)} onToggleGroup={() => toggleGroupCollapse(step.id)}

@@ -270,6 +270,17 @@ export const ACTION_DEFS = {
   // or the "⊞ Group" button) so a stray, un-paired end can't be created from the menu.
   groupEnd: { label: 'Group end', category: 'Flow', hidden: true, params: [] },
 
+  // ifStart..ifEnd wrap steps that run only when a live condition holds; an optional elseStart
+  // splits then/else. The condition is evaluated at RUN time (unlike groups, which expand
+  // statically), rendered specially in CanvasStep. Added as a balanced pair from the palette.
+  ifStart: {
+    label: 'If (condition)', category: 'Flow',
+    summary: p => condSummary(p.cond),
+    params: []   // custom condition editor rendered in CanvasStep
+  },
+  elseStart: { label: 'Else', category: 'Flow', hidden: true, params: [] },
+  ifEnd: { label: 'End If', category: 'Flow', hidden: true, params: [] },
+
   // --- Util ---
   screenshot: {
     label: 'Take Screenshot', category: 'Util',
@@ -339,6 +350,16 @@ export const ACTION_DEFS = {
     params: [{ key: 'ms', label: 'Milliseconds', type: 'number', placeholder: '1000' }]
   },
   screenshotEl: { label: 'Take Screenshot', category: 'Util', platform: 'android', params: [] }
+}
+
+// Human-readable one-liner for an If-block's condition (used in the collapsed summary).
+export function condSummary(cond) {
+  if (!cond || !cond.type) return 'set a condition'
+  const not = cond.negate ? 'NOT ' : ''
+  const tgt = cond.selector || cond.expected || ''
+  const withExp = ['text', 'value', 'url', 'title'].includes(cond.type) && cond.expected
+    ? ` "${cond.expected}"` : ''
+  return `${not}${cond.type}: ${tgt}${withExp}`.trim()
 }
 
 export const ACTION_CATEGORIES = ['Navigation', 'Interaction', 'Mouse', 'Assertions', 'Waits', 'Flow', 'Util']

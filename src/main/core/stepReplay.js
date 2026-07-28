@@ -208,29 +208,80 @@ async function settle(page) {
   try { await page.waitForLoadState('networkidle', { timeout: REPLAY_SETTLE_CAP }) } catch { /* proceed */ }
 }
 
-export async function replaySteps(page, steps, baseUrl, dataContext = null) {
-  let ranSteps = 0
+// Evaluate an If-block condition against the live page — mirrors __cond in scriptGenerator so
+// replay takes the same branch a real run would. Never throws (missing element = false condition).
+async function evalCond(page, cond) {
+  try {
+    const sels = [(cond.selector || '').trim(), ...healAlts(cond)].filter(Boolean)
+    const arr = sels.length ? sels : ['body']
+    let loc = page.locator(arr[0])
+    for (let i = 1; i < arr.length; i++) loc = loc.or(page.locator(arr[i]))
+    loc = loc.first()
+    const t = Number(cond.timeoutMs) > 0 ? Number(cond.timeoutMs) : 0
+    const exp = cond.expected ?? ''
+    let r
+    switch (cond.type || 'visible') {
+      case 'visible': r = t ? await loc.waitFor({ state: 'visible', timeout: t }).then(() => true).catch(() => false) : await loc.isVisible(); break
+      case 'hidden':  r = t ? await loc.waitFor({ state: 'hidden', timeout: t }).then(() => true).catch(() => false) : !(await loc.isVisible()); break
+      case 'exists':  r = (await loc.count()) > 0; break
+      case 'text':    { const s = (await loc.innerText().catch(() => '')) || ''; r = cond.mode === 'exact' ? s.trim() === exp : s.includes(exp); break }
+      case 'value':   { const v = (await loc.inputValue().catch(() => '')) || ''; r = cond.mode === 'exact' ? v === exp : v.includes(exp); break }
+      case 'enabled': r = await loc.isEnabled().catch(() => false); break
+      case 'checked': r = await loc.isChecked().catch(() => false); break
+      case 'url':     r = (page.url() || '').includes(exp); break
+      case 'title':   { const ti = (await page.title().catch(() => '')) || ''; r = ti.includes(exp); break }
+      default:        r = false
+    }
+    return cond.negate ? !r : r
+  } catch { return !!cond.negate }
+}
+
+// Block-aware replay: runs a flat step list, taking the live branch at each If-block (so "test up
+// to here" reaches the element the real run would). counter.n tracks state-changing steps actually run.
+async function replayBlock(page, steps, baseUrl, dataContext, counter) {
   for (let i = 0; i < steps.length; i++) {
-    const action = steps[i].action
-    if (!REPLAYABLE.has(action)) continue
+    const s = steps[i]
+    if (s.action === 'ifStart') {
+      let depth = 1, j = i + 1, elseAt = -1
+      while (j < steps.length && depth > 0) {
+        const a = steps[j].action
+        if (a === 'ifStart') depth++
+        else if (a === 'ifEnd') { depth--; if (depth === 0) break }
+        else if (a === 'elseStart' && depth === 1) elseAt = j
+        j++
+      }
+      const thenList = steps.slice(i + 1, elseAt === -1 ? j : elseAt)
+      const elseList = elseAt === -1 ? [] : steps.slice(elseAt + 1, j)
+      const raw = parseParams(s.params)
+      const cond = dataContext ? resolveParams(raw.cond || {}, dataContext) : (raw.cond || {})
+      const branch = (await evalCond(page, cond)) ? thenList : elseList
+      const res = await replayBlock(page, branch, baseUrl, dataContext, counter)
+      if (!res.ok) return res
+      i = j
+      continue
+    }
+    if (s.action === 'elseStart' || s.action === 'ifEnd') continue
+    if (!REPLAYABLE.has(s.action)) continue
     // Resolve {{Collection.field}} / {{faker.*}} / {{unique.*}} tokens the same way a run does,
     // so replay types the real value — not the literal token text — into the page.
-    const p = dataContext ? resolveParams(parseParams(steps[i].params), dataContext) : parseParams(steps[i].params)
+    const p = dataContext ? resolveParams(parseParams(s.params), dataContext) : parseParams(s.params)
     try {
-      await replayStep(page, action, p, baseUrl)
+      await replayStep(page, s.action, p, baseUrl)
       await settle(page)   // wait for this step's network to quiet before the next
-      ranSteps++
+      counter.n++
     } catch (e) {
       const detail = (e.message || '').split('\n')[0].slice(0, 100)
       return {
-        ok: false,
-        setupFailed: true,
-        failedIndex: i,
-        failedAction: action,
-        ranSteps,
-        error: `Setup step ${i + 1} (${action}) failed before reaching your element — ${detail}`
+        ok: false, setupFailed: true, failedIndex: counter.n, failedAction: s.action, ranSteps: counter.n,
+        error: `Setup step ${counter.n + 1} (${s.action}) failed before reaching your element — ${detail}`
       }
     }
   }
-  return { ok: true, ranSteps }
+  return { ok: true }
+}
+
+export async function replaySteps(page, steps, baseUrl, dataContext = null) {
+  const counter = { n: 0 }
+  const res = await replayBlock(page, steps, baseUrl, dataContext, counter)
+  return res.ok ? { ok: true, ranSteps: counter.n } : res
 }

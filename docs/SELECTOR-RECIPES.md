@@ -114,3 +114,49 @@ genuinely never showed. Many of these messages are hardcoded on a success branch
 (`if (FEATID != "") { ... show toast ... }`) with inner errors swallowed, so the toast can be
 skipped while everything returns 200. In that case assert the **network response** in the
 per-step network trace instead of the toast — it's the real signal.
+
+---
+
+## Sometimes-present elements (cookie banner, "new feature" popup)
+
+**Symptom:** An element shows up *some* runs but not others — a cookie consent bar, a
+"what's new" modal, an interstitial. A plain **Click** on it fails hard the runs it isn't there,
+and you can't just delete the step because it *is* there sometimes.
+
+Use an **If block** (Flow category) so the click only runs when the thing is actually present:
+
+```
+🔀 IF ( visible: .cookie-banner )
+      Click   .cookie-banner button:has-text("Accept")
+⎇ END IF
+Fill  #user-name = {{Login.user-name}}
+```
+
+- The condition is evaluated **live** at run time — a missing element is simply *false*, never an
+  error, so the body is skipped cleanly and the run continues.
+- Add **⎇ Else** only if you need the other branch (e.g. a different path when a trial banner shows).
+- For an element that renders a beat late, set the condition's **wait-for (ms)** so it polls briefly
+  before deciding, instead of checking the instant the page loads.
+- It's **binary** on purpose — one condition, run/skip. Nest If-blocks for compound logic rather than
+  reaching for a third branch.
+
+---
+
+## Brittle selectors that drift between builds → self-healing
+
+**Symptom:** A selector that worked last sprint stops matching after a front-end change — a
+class got renamed, a wrapper `div` was added, an `id` changed — even though the element is
+visibly right there.
+
+When you capture a selector with **🎯 Pick**, the tool now also stores a few *validated*
+alternative selectors for the same element (a `🩹 N self-healing fallbacks` badge shows under
+the field). At run time the primary is tried **alongside** those fallbacks, so if the primary
+drifts, an alternative (by id / test-id / name / aria / text / structure) still finds the element.
+It applies to clicks **and** fill/type/select.
+
+- Nothing to configure — just **Pick** rather than hand-typing, and the chain is captured for you.
+- You can still add a manual **Alt Selector** on click steps; it's tried first, ahead of the auto chain.
+- Prefer the **✎ edit-data** popover on a `{{token}}` value to change *what a step types*; self-healing
+  is about *finding the element*, not the data.
+- Caveat: healing recovers silently. If a step only passes because a fallback caught it, the primary
+  is quietly rotting — worth re-**Pick**ing occasionally so your primary stays current.

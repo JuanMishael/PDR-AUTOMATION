@@ -21,7 +21,7 @@ PDR-AUTOMATION (Electron desktop app)
 │   │                          requests (SOAP/REST), {{var}} store, click-to-extract response tree,
 │   │                          auth/token policy, WSDL import, run collection
 │   ├── ScenarioBuilder      → THE CORE: build a test visually (forks to ApiWorkspace when type='api')
-│   │     ├── Step Library (left)   — 30+ actions in 7 categories (incl. Flow: group/loop)
+│   │     ├── Step Library (left)   — 30+ actions in 7 categories (Flow: group/loop + If/Else)
 │   │     ├── Scenario list (left)  — drag (⠿) to reorder; ⋯ menu = rename / duplicate / delete;
 │   │     │                           filter box when there are many
 │   │     ├── Canvas (right)        — collapsible step cards; drag (⠿) to reorder / into groups
@@ -30,6 +30,12 @@ PDR-AUTOMATION (Electron desktop app)
 │   │     ├── ● Record              — record clicks/typing (Pause/Resume + ✓ Assert mode)
 │   │     ├── ⊞ Group / 🔁 loop      — group steps (nestable); flip "repeat for each data set"
 │   │     │                           (the ONLY data-driven path — no top-level shortcut)
+│   │     ├── 🔀 If / ⎇ Else          — conditional block: run its steps only when a live
+│   │     │                           condition holds (binary — 1/0, never a third branch)
+│   │     ├── 🧪 Run-against picker    — pick which data set a run uses (independent per
+│   │     │                           Run All / Run scenario button); Auto = first positive
+│   │     ├── ✎ Edit data inline      — edit a {{Collection.field}} token's value across all
+│   │     │                           its sets in a popover, no trip to Test Data
 │   │     ├── ☑ Select              — group-aware: ticking a group selects its whole block
 │   │     ├── ⧉ Copy to scenario    — append selected steps into another scenario
 │   │     ├── 💾 Capture / { } token — make test data from steps; insert {{Collection.field}}
@@ -51,7 +57,10 @@ PDR-AUTOMATION (Electron desktop app)
 └── MAIN (Node.js backend — the engine)
     ├── core/
     │   ├── db.js              → SQLite via sql.js (WASM, no native build)
-    │   ├── scriptGenerator.js → turns scenarios → ONE Playwright JS script (in memory)
+    │   ├── scriptGenerator.js → turns scenarios → ONE Playwright JS script (in memory);
+    │   │                        emits runtime if/else for If-blocks + self-healing locators
+    │   ├── healChain.js       → self-healing selector chain: primary + manual Alt + auto-captured
+    │   │                        fallbacks, OR'd at run time so a drifted selector still resolves
     │   ├── webRunner.js       → spawns system Node to run the generated script
     │   ├── stepReplay.js      → replays steps against a live page (picker/recorder/tester)
     │   ├── tokenResolver.js   → resolve {{Collection.field}}/{{faker.*}}/{{unique.*}} at gen-time
@@ -93,6 +102,9 @@ Profile  (a site/app under test: base URL + browser config)
                   └── may contain {{Collection.field}} / {{faker.*}} / {{unique.*}} tokens
         └── groupStart…groupEnd  (markers wrapping a step range into a named, nestable group;
               a group can "repeat for each data set" → it becomes a data-driven loop)
+        └── ifStart…[elseStart]…ifEnd  (a conditional block: its body runs only when the
+              condition holds at run time; an optional Else branch runs otherwise. Binary —
+              evaluated live, NOT statically unrolled like a data-set loop)
 
 Test Data Library (separate, global — shared across profiles)
   └── Collection  (a form's shape: "Login")
@@ -160,15 +172,33 @@ suffixed and every reference inside the copied steps is rewritten — collection
   point — the old top-level "🔁 Run across" scenario shortcut and its `runner:runDataDriven`
   IPC path were removed entirely.
 
-**Test data & tokens:** steps reference values with `{{Collection.field}}` (resolves to the field
-**default**, or — inside a repeating group — that iteration's set value), `{{faker.*}}` (generated),
+**Test data & tokens:** steps reference values with `{{Collection.field}}`, `{{faker.*}}` (generated),
 or `{{unique.*}}` (fresh-per-run, stable within a run). Tokens resolve in the MAIN process at
 generate-time (`tokenResolver.js`), so the emitted Playwright script stays plain JS with no runtime
 data dep. Group/loop blocks are expanded (`runner.js` → `expandGroups`) *before* generation: a
 repeating group unrolls its body once per set with that set's tokens; non-repeating groups just
-inline. There is **no global data-set picker** — both Run All and a single-scenario run start
-immediately; data comes from group bindings + field defaults. (An older pre-run "Choose Test Data"
-gate was removed as redundant with repeating groups.)
+inline.
+
+**How a plain `{{Collection.field}}` resolves** (`buildDataContext`): each collection is seeded with its
+**representative set** — its first *positive* set, else its first — so a plain fill step types the value
+the tester actually entered, not an empty field default (the old behaviour, which read as "the field
+didn't fill"). A field no set defines keeps its `default_token` (e.g. a `{{faker.*}}` default survives).
+When a run **binds a specific set** (see picker below, or a repeating group's per-iteration set) that set
+*owns* its collection — including fields it leaves blank, so negative-testing an empty field works — while
+every *other* collection the scenario touches keeps its representative set. Repeating groups still bind a
+specific set per iteration, independent of the run pick.
+
+**🧪 Run-against data-set picker:** each Run button (Run All, Run scenario) has its **own** picker,
+scoped to the collections that scenario actually references, defaulting to **Auto** (first positive).
+Pick `Login-SauceDemo · negative · negative set 1` and that run binds that set — a quick negative pass
+without wrapping anything in a repeating group. The two pickers are independent (choosing one doesn't
+change the other).
+
+**⚠ Unresolved-token warning:** before the browser opens, the runner scans the scenarios for
+`{{Collection.field}}` tokens pointing at a **missing** collection/field (a rename or typo) and logs a
+warning naming each — because an unresolved token is otherwise typed into the page *literally*
+(`{{Login.usernam}}`), which reads to a tester as "the field didn't fill." Generator namespaces
+(`faker`/`unique`/`now`) always resolve, so they're never flagged.
 
 **Pass/fail is PER SCENARIO** (`scriptGenerator.js` wraps each scenario in its own try/catch):
 
@@ -218,7 +248,7 @@ gate was removed as redundant with repeating groups.)
 | **Mouse** | Click at Position, Drag by Offset, Zoom / Scroll Wheel (for maps/canvas) |
 | **Assertions** | Assert Visible, Hidden, Text, Input Value, URL, Title, Enabled/Disabled, Checked |
 | **Waits** | Wait for Element, Wait (ms), Wait for Network Idle |
-| **Flow** | Group start / Group end (wrap a range; optional "repeat for each data set" = loop) |
+| **Flow** | Group start / Group end (wrap a range; optional "repeat for each data set" = loop); **If / Else / End If** (conditional block — run a range only when a live condition holds) |
 | **Util** | Take Screenshot, Execute JS |
 
 Each step card also has: **Gherkin keyword badge** (Given/When/Then), a **⠿ drag grip**,
@@ -239,7 +269,7 @@ spec. **Assert Text** also has a **Max wait (ms)** field to poll longer for slow
 | Decision | Why |
 |---|---|
 | **sql.js (WASM), not better-sqlite3** | Zero native compilation — no Python/MSVC pain on Windows |
-| **Step-card list, not n8n-style node graph** | Sequential UX is cleaner for non-technical QA; a test is a straight line |
+| **Step-card list, not n8n-style node graph** | Sequential UX is cleaner for non-technical QA; a test is a straight line. Conditionals were added as **If/Else block step types** (on the existing group machinery), *not* a visual canvas — keeps the straight-line model |
 | **In-memory script generation** | No script files litter the disk; built fresh from step data each run |
 | **One browser per RUN, not per scenario** | Scenarios form a module journey — state (login, created records) must carry over |
 | **Continue past a failing scenario; verdict PER scenario** | A run reports which scenarios passed/failed, not just one overall result — far more actionable on the dashboard. Within a scenario it still stops at the first failed step |
@@ -248,7 +278,7 @@ spec. **Assert Text** also has a **Max wait (ms)** field to poll longer for slow
 | **Own lightweight recorder, not `playwright codegen`** | Codegen emits code; we need step-card data. Parsing generated code is brittle |
 | **Spawn SYSTEM Node, not `process.execPath`** | Electron's binary as the runner crashes the main process |
 | **`ignoreHTTPSErrors: true` everywhere** | Target sites may use self-signed SSL certs (common in internal/QA environments) |
-| **Alt Selector fallback** (`.or()`) on clicks | Handles flaky element matching in one step, no extra waits |
+| **Self-healing selector chain** (`healChain.js`) | The picker auto-captures a few *validated* alternative selectors (`selectorChain`); at run time the primary is `.or()`'d with the manual Alt Selector + that chain, on clicks **and** fill/type/select — so a drifted selector still re-finds the element. Zero AI; generalises the old one-level Alt Selector |
 | **"Wait before click (ms)"** | For modal animations and slow UI transitions |
 | **Pluggable runner layer** | WebRunner (Playwright) live; MobileRunner (Appium) slot reserved for Phase 2 |
 
@@ -322,6 +352,21 @@ breakdown, recent-runs streak).
 - Import rows (CSV/Excel paste); export/import a collection (json/csv) to share with other QA
 - 🔁 Step groups — named, collapsible, **nestable**; flip "repeat for each data set" → loop
   (runs a step range once per row, e.g. login→logout per credential)
+- **Representative-set resolution** — a plain `{{Collection.field}}` step fills the collection's
+  first positive set (not an empty default); a bound set owns its collection, others keep their rep set
+- 🧪 **Run-against picker** — pick a data set per Run button (independent), scoped to the scenario's
+  collections; Auto = first positive. Negative pass without a repeating group
+- ✎ **Inline data editing** — edit a token's value across all its sets in a popover, no trip to Test Data
+- ⚠ **Unresolved-token warning** — a `{{token}}` with no matching collection/field is named in the run
+  log before the browser opens (it would otherwise type in literally)
+
+**Control flow (done):**
+- 🔀 **If / Else conditional blocks** — a step range that runs only when a live condition holds (binary,
+  never a third branch). Condition types: visible/hidden/exists/enabled/checked/text/value/url/title, with
+  NOT + contains/equals + optional wait-for. Real runtime `if/else` in the generated script (a missing
+  element = false, not an error) and mirrored in record/pick/test replay
+- 🩹 **Self-healing selectors** — the picker stores validated fallback selectors; a drifted primary heals
+  via the chain at run time, on clicks and fill/type/select alike (`healChain.js`)
 
 **API profiles (beta, in progress):**
 - A second profile type (`profiles.type='api'`) renders the **ApiWorkspace** instead of step-cards —
@@ -340,9 +385,15 @@ breakdown, recent-runs streak).
 
 **Setup gotcha:** `npx playwright install chromium` must be run once per machine.
 
-**Phase 2 (future):** Mobile/Appium runner, tag filtering, negative/"expected-to-fail"
-data-driven testing, self-healing selector fallbacks, "blocked" scenario marking (skip/flag
-scenarios that depend on an already-failed one via `prerequisite_id`).
+**Phase 2 (future):** Mobile/Appium runner (beta landed for native Android), tag filtering,
+negative/"expected-to-fail" data-driven testing, retries + flaky-test surfacing, a web
+**capture-value-into-variable** step (for dynamic-data verification), teardown/cleanup hooks, and
+"blocked" scenario marking (skip/flag scenarios that depend on an already-failed one via
+`prerequisite_id`).
+
+**Known follow-ups:** If-block conditions referencing `{{tokens}}` aren't yet scanned by profile
+export (`params.cond` is nested; portability walks flat params only) — a shared condition that uses
+test data won't bundle/rewrite its collection. Fix when a real case needs it.
 
 > **Known notes:** in a continuous Run All, a scenario that starts with its own *Navigate*
 > step will reload the page (you stay logged in via cookies, but in-memory SPA state resets) —

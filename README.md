@@ -13,10 +13,14 @@ Build and run browser automation scripts through a point-and-click UI — no cod
 - **Profile-based runs** — configure URL, browser, timeout, and headless mode per environment
 - **🔌 API profiles (beta)** — a second profile type that swaps the browser step-cards for a Postman/SoapUI-style **request collection** for testing **SOAP & REST** APIs. Send requests, a profile-wide **variable store** (`{{token}}`) shared across requests, **click-to-extract** values from a response tree into variables, a token **auth policy** (inject + auto re-fetch on 401), and **WSDL import** that follows the schema imports and scaffolds one SOAP request per operation (envelope + `SOAPAction` + `ServiceHeader`). *Still in progress — SOAP-fault token refresh and API-shaped reports are pending.*
 - **Scenario builder** — assemble test steps from 30+ action types (click, fill, assert, screenshot, etc.) across Navigation, Interaction, Mouse, Assertions, Waits, Flow, and Util, with collapsible step cards for a clean overview
+- **🔀 If / Else conditional blocks** — wrap a step range so it runs **only when a live condition holds** (element visible/hidden/exists/enabled/checked, or text/value/url/title compare — with NOT + contains/equals + optional wait). Binary by design (1/0, never a third branch), evaluated at run time. Great for "if the cookie banner shows, dismiss it." Added as block step types on the existing group model — no node-graph canvas
+- **🩹 Self-healing selectors** — when you Pick an element, the tool also stores a few *validated* alternative selectors; at run time the primary is tried alongside them, so if a class gets renamed or a wrapper div is added the step still finds the element. Works on clicks **and** fill/type/select. Zero AI — it just keeps more of what the picker already computed
 - **🎯 Element picker** — click "Pick", then click the real element in a live browser; a robust selector is generated for you (no CSS knowledge needed)
 - **● Recorder** — open the site, hit Start, and just *use it* — your clicks, typing, and dropdowns become step cards live. Recording survives navigations (e.g. a login redirect). **Pause/Resume** to navigate without recording, and an **✓ Assert** mode that turns the next click into a "verify this is visible" check
 - **Selector tester (from the top)** — test a selector after replaying the steps above it, so mid-flow elements (modals, post-login content) actually match instead of misreporting "0 found"
-- **🗂 Test Data Library** — define a form once as a **collection** (fields + types), then store reusable **data sets** grouped by intent (positive / negative / edge). Reference values in steps with `{{Collection.field}}` tokens, plus `{{faker.*}}` and `{{unique.*}}` for fresh-per-run values. Capture data straight from a scenario's fill steps, **import** rows from CSV/Excel, and **export** a collection (.json/.csv) to share with other QA
+- **🗂 Test Data Library** — define a form once as a **collection** (fields + types), then store reusable **data sets** grouped by intent (positive / negative / edge). Reference values in steps with `{{Collection.field}}` tokens, plus `{{faker.*}}` and `{{unique.*}}` for fresh-per-run values. Capture data straight from a scenario's fill steps, **import** rows from CSV/Excel, and **export** a collection (.json/.csv) to share with other QA. A plain `{{Collection.field}}` step fills the collection's **first positive set** by default (so it types real data, not a blank), and an **⚠ unresolved-token warning** names any `{{token}}` pointing at a missing collection/field before the run starts
+- **🧪 Run-against data set** — a picker beside each Run button chooses which data set that run uses (scoped to the scenario's collections; **Auto** = first positive). Flip it to a negative set for a quick negative pass without wrapping anything in a repeating group. The Run All and Run scenario pickers are independent
+- **✎ Inline data editing** — click the ✎ on a `{{Collection.field}}` value to edit that field across **all** its sets (positive + negative) in a popover — change what a step types without a trip to Test Data
 - **▦ Fill form / { } token insert** — drop a whole mapped form in as pre-wired fill cards, or insert a `{{token}}` into any value field from a dropdown — no need to remember the syntax
 - **🔁 Step groups & loops** — select steps → group them into a named, collapsible (and **nestable**) block; flip a group to **repeat for each data set** and it runs once per credential/row, resolving that row's tokens — login → logout → login again falls out naturally. This repeating group is now the **single** way to drive data-driven runs (the old top-level "Run across" shortcut was removed)
 - **☑ Group-aware selection** — ticking a group's checkbox selects the **whole block** — its inner steps and any nested groups — so you can group/copy/delete a unit in one click
@@ -90,7 +94,8 @@ runs execute with the Electron-bundled Node and the bundled Chromium.
 src/
   main/
     core/       # db, scriptGenerator, webRunner, stepReplay, groupExpand (group/loop → steps),
-                #   injectedScripts, tokenResolver, windowFocus, browserSession (shared login profile),
+                #   healChain (self-healing selector fallback chain), injectedScripts, tokenResolver,
+                #   windowFocus, browserSession (shared login profile),
                 #   portability (profile export/import serialize/deserialize),
                 #   apiEngine (HTTP + {{var}}/extract/token engine), wsdlImport (WSDL → SOAP collection)
     ipc/        # IPC handlers: storage, runner, apiRunner (API send/run/WSDL-import), reporter,
@@ -110,7 +115,8 @@ Key shared modules:
 - `core/groupExpand.js` — expands group/loop blocks into a flat step list; a repeating group unrolls once per data set for a run, or once against its **first set** for replay (`firstSetOnly`). Shared by `runner.js` and the replay handlers
 - `core/injectedScripts.js` — in-page scripts injected into the picker/recorder browser; **single source of truth** for selector generation (`id → data-testid → name/aria → text → CSS path`)
 - `core/scriptGenerator.js` — turns one or more scenarios into a single Playwright script (one browser per run)
-- `core/tokenResolver.js` — resolves `{{Collection.field}}` / `{{faker.*}}` / `{{unique.*}}` tokens to concrete values at generate-time, so the emitted script stays plain JS
+- `core/tokenResolver.js` — resolves `{{Collection.field}}` / `{{faker.*}}` / `{{unique.*}}` tokens to concrete values at generate-time, so the emitted script stays plain JS; seeds each collection with its representative (first-positive) set and flags unresolved tokens
+- `core/healChain.js` — assembles a step's self-healing selector fallbacks (manual Alt + auto-captured chain), `.or()`'d into the locator by `scriptGenerator`/`stepReplay`
 - `ipc/dataLibrary.js` — CRUD for the Test Data Library (collections, fields, data sets) + collection export/import
 - `core/portability.js` — serialize a profile (+ its scenarios/steps + referenced collections) into a shareable bundle and recreate it on import, remapping collection ids/names and prerequisite links so the copy is self-consistent
 - `ipc/transfer.js` — `transfer:exportProfile` / `transfer:importProfile` (file write + open dialog around `portability.js`)
@@ -140,12 +146,14 @@ A run records **a pass/fail verdict for each scenario**, not just one verdict fo
 
 ## Phase 2 (planned)
 
-- Mobile automation via Appium
+- Mobile automation via Appium (native Android has landed in beta)
 - Tag-based step filtering
 - Negative/"expected-to-fail" data-driven testing (assert a login is *rejected* per row)
-- Self-healing selector fallback chain (auto-try by-text / role+name / nearby-label on failure)
+- **Retries + flaky-test surfacing** — re-run a failing step/test N times; flag tests that don't pass consistently
+- **Capture-value-into-variable** (web) — read a runtime value into a variable to assert on dynamic data (order #, computed total)
+- Teardown / cleanup hooks so data-creating tests stay re-runnable
 - "Blocked" scenario marking — skip/flag scenarios whose prerequisite already failed
 
-**Recently shipped** (was Phase 2): assert-mode recording, smart waits, Test Data Library + data-driven loops, step groups, drag-and-drop reordering, inline scenario rename, copy steps between scenarios, group-aware selection, **calm-playback network settle** (+ per-step `_noSettle` opt-out), **per-step network trace** in results, **parallel profile runs**, **Set Checkbox** action, a per-step **Max wait** on Assert Text, **replay parity for record/pick/test** (prereq Login chain + `{{token}}` resolution + first-set groups + `ERR_ABORTED`-tolerant navigate), **enforced history retention**, and **clean-shutdown browser reaping**.
+**Recently shipped** (was Phase 2): **🔀 If/Else conditional blocks**, **🩹 self-healing selector chain** (auto-captured fallbacks, on clicks + fill/type/select), **🧪 per-run data-set picker** (independent per Run button) + representative-set resolution + ✎ inline data editing + unresolved-token warning, assert-mode recording, smart waits, Test Data Library + data-driven loops, step groups, drag-and-drop reordering, inline scenario rename, copy steps between scenarios, group-aware selection, **calm-playback network settle** (+ per-step `_noSettle` opt-out), **per-step network trace** in results, **parallel profile runs**, **Set Checkbox** action, a per-step **Max wait** on Assert Text, **replay parity for record/pick/test** (prereq Login chain + `{{token}}` resolution + first-set groups + `ERR_ABORTED`-tolerant navigate), **enforced history retention**, and **clean-shutdown browser reaping**.
 
 **In progress:** 🔌 **API profiles (beta)** — SOAP/REST request collections with a shared `{{token}}` store, click-to-extract, an auth/token policy, and WSDL import. Remaining: SOAP-fault token auto-refresh and API-shaped report formatting.

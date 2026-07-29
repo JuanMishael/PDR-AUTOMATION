@@ -5,6 +5,7 @@ import { TOKEN_GROUPS } from '../lib/tokens'
 import ApiWorkspace from './ApiWorkspace'
 import CopyToProject from '../components/CopyToProject'
 import NativePickButton from '../components/NativePickButton'
+import CodeArea from '../components/CodeArea'
 
 // Default keyword per action category
 const CATEGORY_KEYWORD = {
@@ -14,6 +15,7 @@ const CATEGORY_KEYWORD = {
   Assertions: 'Then',
   Waits: 'When',
   Flow: 'When',
+  Variables: 'When',
   Util: 'When'
 }
 
@@ -964,8 +966,15 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                 </select>
               ) : p.type === 'textarea' ? (
                 <div style={{ display: 'grid', gap: 4 }}>
+                  {p.lang ? (
+                    // Code params (Custom Code, JS expressions) get the same tinted editor as the
+                    // API body — plain prose params stay a plain textarea.
+                    <CodeArea value={params[p.key] || ''} onChange={v => updateParam(p.key, v)}
+                      kind={p.lang} placeholder={p.placeholder || ''} height={p.key === 'code' ? 160 : 72} />
+                  ) : (
                   <textarea rows={2} value={params[p.key] || ''} placeholder={p.placeholder || ''}
                     onChange={e => updateParam(p.key, e.target.value)} style={{ fontSize: 12 }} />
+                  )}
                   {collections.length > 0 && (
                     <div style={{ justifySelf: 'end' }}>
                       <TokenButton collections={collections} groupCollectionId={groupCollectionId} onInsert={tok => updateParam(p.key, (params[p.key] || '') + tok)} />

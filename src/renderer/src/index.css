@@ -265,6 +265,7 @@ label {
 .tk-str { color: var(--ok); }
 .tk-key { color: var(--accent-ink); }
 .tk-kw  { color: var(--warn); }
+.tk-num { color: var(--busy); }
 
 /* Animations */
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }

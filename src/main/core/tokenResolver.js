@@ -88,6 +88,10 @@ export function resolveString(str, ctx, depth = 0) {
     if (ns === 'faker') return resolveFaker(rest)
     if (ns === 'unique') return resolveUnique(rest, ctx)
     if (ns === 'now') return resolveNow(rest)
+    // {{var.x}} is captured live by a Capture Value / Custom Code step, so it can't be resolved
+    // here — leave it for the runtime __sub() in the generated script (and subVars in replay).
+    // Explicit, not incidental: a data collection literally named "var" must not shadow it.
+    if (ns === 'var') return match
 
     // Collection.field — value may itself contain tokens (e.g. a default of {{faker.x}}).
     const val = ctx.tokens.get(key(ns, rest))
@@ -171,7 +175,7 @@ export function findUnresolvedTokens(scenarios, ctx) {
           const raw = m[1].trim()
           const dot = raw.indexOf('.')
           const ns = (dot === -1 ? raw : raw.slice(0, dot)).toLowerCase()
-          if (ns === 'faker' || ns === 'unique' || ns === 'now') continue
+          if (ns === 'faker' || ns === 'unique' || ns === 'now' || ns === 'var') continue
           const rest = dot === -1 ? '' : raw.slice(dot + 1).trim()
           if (!ctx.tokens.has(key(ns, rest))) out.add(m[0])
         }

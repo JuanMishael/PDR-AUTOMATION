@@ -8,21 +8,12 @@ import { writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { build } from 'esbuild'
+import { bundleCore } from './bundle-core.mjs'
 
 const dir = join(tmpdir(), 'pdr-ifelse-test')
 mkdirSync(dir, { recursive: true })
 
-// scriptGenerator uses vite-style extensionless imports, which plain node can't resolve — bundle it
-// with the esbuild that already ships under vite instead of teaching node a resolver.
-const core = (n) => resolve(import.meta.dirname, '..', 'src', 'main', 'core', n)
-await build({
-  entryPoints: [core('scriptGenerator.js'), core('stepReplay.js')],
-  bundle: true, format: 'esm', platform: 'node', logLevel: 'warning', outdir: dir,
-  outExtension: { '.js': '.mjs' }
-})
-const { generateScript } = await import(pathToFileURL(join(dir, 'scriptGenerator.mjs')).href)
-const { replaySteps } = await import(pathToFileURL(join(dir, 'stepReplay.mjs')).href)
+const { generateScript, replaySteps } = await bundleCore(['scriptGenerator.js', 'stepReplay.js'])
 
 // #promo only exists when the URL hash says so — one fixture, both condition outcomes.
 const fixture = join(dir, 'fixture.html')

@@ -106,9 +106,11 @@ export function generateScript({ profile, scenarios = [], settings = {}, outputD
     })
     const label = (step.label || 'condition').replace(/\*\//g, '* /')
     const elseBlock = elseCode.trim() ? ` else {\n${indent(elseCode, 2)}\n  }` : ''
+    // condLit is inlined as an object LITERAL (not parsed JSON), so wrapVars' __sub() calls are
+    // valid inside it — a condition can compare against a captured {{var.x}}.
     return `
   // If: ${label}
-  if (await __cond(${condLit})) {
+  if (await __cond(${wrapVars(condLit)})) {
 ${indent(thenCode, 2)}
   }${elseBlock}`.trim()
   }
@@ -239,6 +241,14 @@ const { expect } = require('playwright/test');
 (async () => {
   const results = [];
   let browser, context, page;
+
+  // Run-scoped variables. Capture Value and Custom Code write here; every later step reads them
+  // through __sub() below. Deliberately NOT persisted — a value scraped off the UI is only true
+  // for this run, and a stale one would make a broken test look green.
+  const __vars = {};
+  const __sub = (s) => typeof s === 'string'
+    ? s.replace(/\\{\\{\\s*var\\.([^{}]+?)\\s*\\}\\}/g, (m, n) => (__vars[n.trim()] !== undefined ? __vars[n.trim()] : m))
+    : s;
 ${netDecls}
 ${settleHelper}
 
@@ -326,6 +336,18 @@ function browserLaunchExpr(profile) {
   return `${browser}.launch({ headless: ${headless} })`
 }
 
+// {{var.x}} can't be resolved at generate time like the other tokens — the value doesn't exist
+// until the run reaches the Capture Value step. Every param is emitted into the script as a JSON
+// string literal, so rewriting just the literals that carry a var token routes them through
+// __sub() at runtime. One pass here covers every action instead of touching ~40 emit sites.
+// ponytail: regex over emitted code, not an AST — safe because JSON.stringify escapes quotes and
+// newlines, so a literal never spans lines. Swap for an AST pass only if emission stops using it.
+const VAR_TOKEN = /\{\{\s*var\./
+function wrapVars(code) {
+  if (!VAR_TOKEN.test(code)) return code
+  return code.replace(/"(?:[^"\\]|\\.)*"/g, (lit) => VAR_TOKEN.test(lit) ? `__sub(${lit})` : lit)
+}
+
 function generateStep(step, index, baseUrl, { screenshotOnFail = false, outputDir = '', dataContext = null, settleEnabled = false, settleCap = 3000 } = {}) {
   const rawParams = typeof step.params === 'string' ? JSON.parse(step.params) : step.params
   // Resolve {{Collection.field}} / {{faker.*}} / {{unique.*}} to concrete values now, so the
@@ -347,7 +369,7 @@ function generateStep(step, index, baseUrl, { screenshotOnFail = false, outputDi
   const stepMarker = step.action === 'comment' ? ''
     : `_curStep = { label: ${JSON.stringify(label)}, trace: ${p._netTrace === true}, n: 0 };\n    `
 
-  const body = settlePre + stepMarker + actionToCode(step.action, p, baseUrl)
+  const body = settlePre + stepMarker + wrapVars(actionToCode(step.action, p, baseUrl))
 
   const perStepSsBlock = perStepScreenshot ? `
     try {
@@ -646,6 +668,36 @@ function actionToCode(action, p, baseUrl) {
       // so it can never break out into the Node runner. eval keeps the expression behaviour
       // of the old raw interpolation; if it evaluates to a function (e.g. `() => ...`) we call it.
       return `await page.evaluate((__s) => { const __r = eval(__s); return typeof __r === 'function' ? __r() : __r; }, ${JSON.stringify(p.script ?? '')});`
+
+    // --- Variables ---
+    case 'captureValue': {
+      // Read something off the page NOW and stash it as {{var.name}} for later steps — the
+      // copy/paste a tester does by hand (order number, generated ID, computed total).
+      const name = JSON.stringify(String(p.name || '').trim() || 'value')
+      const from = p.from || 'text'
+      const expr =
+        from === 'value'     ? `await ${loc}.inputValue()`
+      : from === 'attribute' ? `await ${loc}.getAttribute(${JSON.stringify(p.attr || 'value')})`
+      : from === 'url'       ? `page.url()`
+      : from === 'js'        ? `await page.evaluate((__s) => { const __r = eval(__s); return typeof __r === 'function' ? __r() : __r; }, ${JSON.stringify(p.script ?? '')})`
+      :                        `await ${loc}.innerText()`
+      // Trimmed: UI text arrives with layout whitespace, and a value with a stray \\n breaks the
+      // next step's fill/compare in a way that's very hard to see in a log.
+      return `__vars[${name}] = String((${expr}) ?? '').trim();
+    process.stdout.write(JSON.stringify({ type: 'capture', name: ${name}, value: __vars[${name}] }) + '\\n');`
+    }
+
+    case 'runScript':
+      // ADVANCED escape hatch: the tester's own Playwright code, inlined verbatim into this
+      // script — `page`, `context`, `expect` and `vars` are in scope, and the step's try/catch
+      // reports pass/fail like any other. Unlike executeScript (page context, sandboxed) this
+      // runs in the RUNNER, on purpose: it's the only way to reach downloads, extra tabs,
+      // context.request, etc. A syntax error here breaks the whole generated script — that's the
+      // trade for not wrapping it in eval, which would cost the debuggable stack trace.
+      return `{
+      const vars = __vars;
+${indent(String(p.code || '').replace(/\r\n/g, '\n'), 6)}
+    }`
 
     // --- Notes ---
     case 'comment':

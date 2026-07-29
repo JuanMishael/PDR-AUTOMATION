@@ -291,7 +291,31 @@ export const ACTION_DEFS = {
   },
   executeScript: {
     label: 'Execute JS', category: 'Util',
-    params: [{ key: 'script', label: 'JavaScript Expression', type: 'textarea', placeholder: '() => document.title' }]
+    params: [{ key: 'script', label: 'JavaScript Expression', type: 'textarea', lang: 'js', placeholder: '() => document.title' }]
+  },
+
+  // --- Variables ---
+  // Read a value off the page and reuse it later as {{var.name}} — the copy/paste a tester
+  // otherwise does by hand (order number, generated ID, a total). Run-scoped, never saved.
+  captureValue: {
+    label: 'Capture Value', category: 'Variables',
+    summary: p => `{{var.${p.name || 'name'}}} ← ${p.from || 'text'}${p.selector ? ` of ${p.selector}` : ''}`,
+    params: [
+      { key: 'name', label: 'Variable name', placeholder: 'orderId — then use {{var.orderId}} in later steps' },
+      { key: 'from', label: 'Take the', type: 'select', options: ['text', 'value', 'attribute', 'url', 'js'], default: 'text' },
+      { key: 'selector', label: 'Selector', placeholder: '.order-number  (not needed for url/js)' },
+      { key: 'selector2', label: 'Alt Selector (fallback)', placeholder: 'optional fallback' },
+      { key: 'attr', label: 'Attribute name (for "attribute")', placeholder: 'data-id' },
+      { key: 'script', label: 'JS expression (for "js")', type: 'textarea', lang: 'js', placeholder: '() => document.title' }
+    ]
+  },
+  runScript: {
+    label: 'Custom Code (advanced)', category: 'Variables',
+    summary: p => (p.code || '').split('\n')[0].slice(0, 60) || 'custom Playwright code',
+    params: [
+      { key: 'code', label: 'Playwright code — page, context, expect, vars in scope', type: 'textarea', lang: 'js',
+        placeholder: "vars.orderId = await page.locator('.order-no').innerText()" }
+    ]
   },
 
   // --- Notes ---
@@ -362,7 +386,7 @@ export function condSummary(cond) {
   return `${not}${cond.type}: ${tgt}${withExp}`.trim()
 }
 
-export const ACTION_CATEGORIES = ['Navigation', 'Interaction', 'Mouse', 'Assertions', 'Waits', 'Flow', 'Util']
+export const ACTION_CATEGORIES = ['Navigation', 'Interaction', 'Mouse', 'Assertions', 'Waits', 'Flow', 'Variables', 'Util']
 
 // platform: web actions have none (default 'web'); 'android' shows only for android profiles;
 // 'any' (e.g. Comment) shows for both. Filtered per-profile in the builder palette.

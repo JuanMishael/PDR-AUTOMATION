@@ -18,7 +18,11 @@ export const REPLAYABLE = new Set([
   'click', 'dblclick', 'rightClick', 'hover', 'focus', 'selectOption',
   'fill', 'type', 'clearInput', 'pressKey', 'uploadFile', 'dragAndDrop',
   'dragByOffset', 'clickAt', 'zoom', 'pinCoordinate', 'mapZoom',
-  'waitForSelector', 'waitForTimeout', 'waitForNetworkIdle'
+  'waitForSelector', 'waitForTimeout', 'waitForNetworkIdle',
+  // Replayable because they change state the later steps depend on: a captured {{var.x}} that
+  // never got captured would replay as the literal token, and custom code is often the thing that
+  // navigates. Skipping them would make pick/test land somewhere the real run never is.
+  'captureValue', 'runScript'
 ])
 
 export function parseParams(p) {
@@ -68,7 +72,23 @@ async function smartUpload(page, p) {
   throw new Error('Upload File: could not find a file input. Set the Upload/Browse button in the step.')
 }
 
-export async function replayStep(page, action, p, baseUrl) {
+// Fill {{var.x}} from the run-scoped store — the replay-side twin of __sub() in the generated
+// script. Unknown names are left visible (same as an unknown data token) rather than blanked.
+const VAR_RE = /\{\{\s*var\.([^{}]+?)\s*\}\}/g
+export function subVars(params, vars) {
+  if (!vars || !params || typeof params !== 'object') return params
+  const out = Array.isArray(params) ? [] : {}
+  for (const [k, v] of Object.entries(params)) {
+    out[k] = typeof v === 'string'
+      ? v.replace(VAR_RE, (m, n) => (vars[n.trim()] !== undefined ? vars[n.trim()] : m))
+      : v
+  }
+  return out
+}
+
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+
+export async function replayStep(page, action, p, baseUrl, vars = {}) {
   switch (action) {
     case 'navigate': {
       // Mirror the generated run's navigate so replay behaves the same way:
@@ -186,6 +206,31 @@ export async function replayStep(page, action, p, baseUrl) {
       return undefined
     }
 
+    // --- Variables --- mirrors the captureValue/runScript emission in scriptGenerator so replay
+    // ends up with the same vars, and the same page state, a real run would have.
+    case 'captureValue': {
+      const name = String(p.name || '').trim() || 'value'
+      const from = p.from || 'text'
+      const raw =
+        from === 'value'     ? await locator(page, p).inputValue()
+      : from === 'attribute' ? await locator(page, p).getAttribute(p.attr || 'value')
+      : from === 'url'       ? page.url()
+      // indirect (0,eval): runs in the PAGE's global scope, same as the generated script — and
+      // keeps the bundler from warning about direct eval capturing this module's scope.
+      : from === 'js'        ? await page.evaluate((s) => { const r = (0, eval)(s); return typeof r === 'function' ? r() : r }, p.script ?? '')
+      :                        await locator(page, p).innerText()
+      vars[name] = String(raw ?? '').trim()
+      return undefined
+    }
+
+    case 'runScript': {
+      // Same code the generated script inlines, run here as a function body instead. `expect` is
+      // imported lazily so the main process doesn't pull in playwright/test until someone uses it.
+      const { expect } = await import('playwright/test')
+      const fn = new AsyncFunction('page', 'context', 'expect', 'vars', String(p.code || ''))
+      return fn(page, page.context(), expect, vars)
+    }
+
     case 'waitForSelector':    return page.waitForSelector(p.selector, { state: p.state || 'visible' })
     case 'waitForTimeout':     return page.waitForTimeout(Number(p.ms) || 1000)
     case 'waitForNetworkIdle': return page.waitForLoadState('networkidle')
@@ -238,7 +283,7 @@ async function evalCond(page, cond) {
 
 // Block-aware replay: runs a flat step list, taking the live branch at each If-block (so "test up
 // to here" reaches the element the real run would). counter.n tracks state-changing steps actually run.
-async function replayBlock(page, steps, baseUrl, dataContext, counter) {
+async function replayBlock(page, steps, baseUrl, dataContext, counter, vars) {
   for (let i = 0; i < steps.length; i++) {
     const s = steps[i]
     if (s.action === 'ifStart') {
@@ -253,9 +298,9 @@ async function replayBlock(page, steps, baseUrl, dataContext, counter) {
       const thenList = steps.slice(i + 1, elseAt === -1 ? j : elseAt)
       const elseList = elseAt === -1 ? [] : steps.slice(elseAt + 1, j)
       const raw = parseParams(s.params)
-      const cond = dataContext ? resolveParams(raw.cond || {}, dataContext) : (raw.cond || {})
+      const cond = subVars(dataContext ? resolveParams(raw.cond || {}, dataContext) : (raw.cond || {}), vars)
       const branch = (await evalCond(page, cond)) ? thenList : elseList
-      const res = await replayBlock(page, branch, baseUrl, dataContext, counter)
+      const res = await replayBlock(page, branch, baseUrl, dataContext, counter, vars)
       if (!res.ok) return res
       i = j
       continue
@@ -264,9 +309,10 @@ async function replayBlock(page, steps, baseUrl, dataContext, counter) {
     if (!REPLAYABLE.has(s.action)) continue
     // Resolve {{Collection.field}} / {{faker.*}} / {{unique.*}} tokens the same way a run does,
     // so replay types the real value — not the literal token text — into the page.
-    const p = dataContext ? resolveParams(parseParams(s.params), dataContext) : parseParams(s.params)
+    // …then fill {{var.x}} from anything captured earlier in THIS replay pass.
+    const p = subVars(dataContext ? resolveParams(parseParams(s.params), dataContext) : parseParams(s.params), vars)
     try {
-      await replayStep(page, s.action, p, baseUrl)
+      await replayStep(page, s.action, p, baseUrl, vars)
       await settle(page)   // wait for this step's network to quiet before the next
       counter.n++
     } catch (e) {
@@ -282,6 +328,7 @@ async function replayBlock(page, steps, baseUrl, dataContext, counter) {
 
 export async function replaySteps(page, steps, baseUrl, dataContext = null) {
   const counter = { n: 0 }
-  const res = await replayBlock(page, steps, baseUrl, dataContext, counter)
+  const vars = {}   // fresh per replay pass — same lifetime as a run's __vars
+  const res = await replayBlock(page, steps, baseUrl, dataContext, counter, vars)
   return res.ok ? { ok: true, ranSteps: counter.n } : res
 }

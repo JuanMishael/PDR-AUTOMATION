@@ -160,3 +160,42 @@ It applies to clicks **and** fill/type/select.
   is about *finding the element*, not the data.
 - Caveat: healing recovers silently. If a step only passes because a fallback caught it, the primary
   is quietly rotting — worth re-**Pick**ing occasionally so your primary stays current.
+
+---
+
+## Values the app generates for you (order #, reference, computed total)
+
+**Symptom:** The app creates a value you can't know in advance — a reference number on the
+confirmation screen — and a later step (or a search, or an assertion) needs *that* value.
+There's nothing to hard-code and nothing in Test Data that can hold it.
+
+Use **📌 Capture Value** (Variables category), then use the variable like any token:
+
+```
+Click        button:has-text("Submit")
+📌 Capture   orderId  ←  text of  .confirmation .ref-no
+Navigate     /orders
+Fill         #search = {{var.orderId}}
+Assert Text  .order-header = {{var.orderId}}
+```
+
+- **Take the**: `text` (element text), `value` (what's in an input), `attribute` (+ attribute name),
+  `url`, or `js` for an expression. Whitespace is trimmed — page text arrives full of layout newlines.
+- The run log shows `📌 {{var.orderId}} = ORD-1234`, so you can see what was captured, not guess.
+- Works in **If conditions** too — capture a value, then branch on whether the page still shows it.
+- A typo'd `{{var.ordreId}}` is left **visible** in the field rather than silently blanking, which is
+  how you spot it in the log instead of debugging an empty search box.
+- Variables live for **one run**. That's deliberate: a value scraped off the UI is only true right
+  now, and a saved-and-stale one would let a broken test pass. (The API profile's variable store *is*
+  persistent — different job: tokens outlive a request.)
+
+If the value needs real computing — string surgery, arithmetic across two elements — use
+**⚡ Custom Code** and write to the same store:
+
+```js
+const total = await page.locator('.grand-total').innerText()
+vars.total = String(Number(total.replace(/[^0-9.]/g, '')) * 100)
+```
+
+Keep that rare. A **Capture Value** card is readable by a tester who doesn't write code; a code block
+is only readable by whoever wrote it — and a syntax error in one fails the whole run, not just its step.

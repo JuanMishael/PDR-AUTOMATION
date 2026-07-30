@@ -21,7 +21,8 @@ PDR-AUTOMATION (Electron desktop app)
 │   │                          requests (SOAP/REST), {{var}} store, click-to-extract response tree,
 │   │                          auth/token policy, WSDL import, run collection
 │   ├── ScenarioBuilder      → THE CORE: build a test visually (forks to ApiWorkspace when type='api')
-│   │     ├── Step Library (left)   — 30+ actions in 7 categories (Flow: group/loop + If/Else)
+│   │     ├── Step Library (left)   — 30+ actions in 8 categories (Flow: group/loop + If/Else;
+│   │     │                           Variables: Capture Value + Custom Code)
 │   │     ├── Scenario list (left)  — drag (⠿) to reorder; ⋯ menu = rename / duplicate / delete;
 │   │     │                           filter box when there are many
 │   │     ├── Canvas (right)        — collapsible step cards; drag (⠿) to reorder / into groups
@@ -58,7 +59,8 @@ PDR-AUTOMATION (Electron desktop app)
     ├── core/
     │   ├── db.js              → SQLite via sql.js (WASM, no native build)
     │   ├── scriptGenerator.js → turns scenarios → ONE Playwright JS script (in memory);
-    │   │                        emits runtime if/else for If-blocks + self-healing locators
+    │   │                        emits runtime if/else for If-blocks + self-healing locators,
+    │   │                        plus __vars/__sub() so {{var.x}} resolves at RUN time
     │   ├── healChain.js       → self-healing selector chain: primary + manual Alt + auto-captured
     │   │                        fallbacks, OR'd at run time so a drifted selector still resolves
     │   ├── webRunner.js       → spawns system Node to run the generated script
@@ -279,6 +281,9 @@ spec. **Assert Text** also has a **Max wait (ms)** field to poll longer for slow
 | **Spawn SYSTEM Node, not `process.execPath`** | Electron's binary as the runner crashes the main process |
 | **`ignoreHTTPSErrors: true` everywhere** | Target sites may use self-signed SSL certs (common in internal/QA environments) |
 | **Self-healing selector chain** (`healChain.js`) | The picker auto-captures a few *validated* alternative selectors (`selectorChain`); at run time the primary is `.or()`'d with the manual Alt Selector + that chain, on clicks **and** fill/type/select — so a drifted selector still re-finds the element. Zero AI; generalises the old one-level Alt Selector |
+| **Run-scoped variables, not a persisted store** | `{{var.x}}` lives for one run only. The API side persists (`api_variables`) because a token outlives a request; a UI-scraped value doesn't — a stale one would make a broken test pass |
+| **Custom Code inlined, not `eval`'d** | The tester's code goes straight into the generated script so a stack trace points at *their* line. Trade-off: a syntax error breaks the whole script (fatal) instead of failing one step |
+| **One shared code editor** (`components/CodeArea.jsx`) | The API body editor's transparent-textarea-over-highlighted-`<pre>` trick, with a `js` mode added, reused for Custom Code / JS expressions. Regex tinting, no highlighter dependency |
 | **"Wait before click (ms)"** | For modal animations and slow UI transitions |
 | **Pluggable runner layer** | WebRunner (Playwright) live; MobileRunner (Appium) slot reserved for Phase 2 |
 
@@ -368,6 +373,25 @@ breakdown, recent-runs streak).
 - 🩹 **Self-healing selectors** — the picker stores validated fallback selectors; a drifted primary heals
   via the chain at run time, on clicks and fill/type/select alike (`healChain.js`)
 
+**Variables (done):**
+- 📌 **Capture Value** — reads element text / input value / an attribute / the URL / a JS expression into
+  `{{var.name}}` (trimmed), logged in the run as `📌 {{var.orderId}} = …`. Every later step, If-condition
+  and assertion can use it
+- ⚡ **Custom Code (advanced)** — the tester's own Playwright code, inlined verbatim into the generated
+  script with `page`/`context`/`expect`/`vars` in scope. Distinct from **Execute JS**, which is sandboxed
+  to the *page*; this runs in the **runner**, so downloads / extra tabs / `context.request` are reachable
+- **Why the plumbing looks the way it does:** all other tokens resolve at *generate* time, before the
+  script string exists — a captured value doesn't exist yet. So the script carries `__vars` + `__sub()`,
+  and `wrapVars()` rewrites only the emitted string literals that contain a var token into `__sub()`
+  calls. One pass covers every action (and If-conditions, since `__cond` receives an object *literal*)
+  instead of touching ~40 emit sites. `var` is an explicit namespace in `tokenResolver` (so a collection
+  named "var" can't shadow it) and is exempt from the unresolved-token warning
+- **Run-scoped, never persisted** — the API profile's `api_variables` store is a DB table on purpose
+  (a token outlives one request); a value scraped off the UI is only true for this run, and keeping it
+  would let a stale value make a broken test look green
+- Both steps are **REPLAYABLE**, so record/pick/test lands where a real run would: replay mirrors the
+  capture and runs custom code through `AsyncFunction` against its live page (`subVars` = replay's `__sub`)
+
 **API profiles (beta, in progress):**
 - A second profile type (`profiles.type='api'`) renders the **ApiWorkspace** instead of step-cards —
   a Postman/SoapUI-style **request collection** for **SOAP & REST** APIs.
@@ -386,14 +410,15 @@ breakdown, recent-runs streak).
 **Setup gotcha:** `npx playwright install chromium` must be run once per machine.
 
 **Phase 2 (future):** Mobile/Appium runner (beta landed for native Android), tag filtering,
-negative/"expected-to-fail" data-driven testing, retries + flaky-test surfacing, a web
-**capture-value-into-variable** step (for dynamic-data verification), teardown/cleanup hooks, and
-"blocked" scenario marking (skip/flag scenarios that depend on an already-failed one via
+negative/"expected-to-fail" data-driven testing, retries + flaky-test surfacing, teardown/cleanup
+hooks, and "blocked" scenario marking (skip/flag scenarios that depend on an already-failed one via
 `prerequisite_id`).
 
 **Known follow-ups:** If-block conditions referencing `{{tokens}}` aren't yet scanned by profile
 export (`params.cond` is nested; portability walks flat params only) — a shared condition that uses
-test data won't bundle/rewrite its collection. Fix when a real case needs it.
+test data won't bundle/rewrite its collection. Fix when a real case needs it. A **syntax error in a
+Custom Code step is fatal to the whole run** (it breaks the generated script), not a single red step —
+wrappable, at the cost of the stack trace pointing at the tester's own line.
 
 > **Known notes:** in a continuous Run All, a scenario that starts with its own *Navigate*
 > step will reload the page (you stay logged in via cookies, but in-memory SPA state resets) —

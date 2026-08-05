@@ -285,6 +285,11 @@ export async function initDb() {
   // Native Android profile (type='android'): base_url holds the app package; app_activity is the
   // optional launch activity (blank = let Appium resolve the main one). Driven via Appium, not Playwright.
   try { _db.run('ALTER TABLE profiles ADD COLUMN app_activity TEXT NOT NULL DEFAULT \'\'') } catch { /* already migrated */ }
+  // WSDL re-sync: remember the service URL on the profile, and keep the pristine scaffold we
+  // generated for each request. On a re-sync we can then tell an untouched envelope (safe to
+  // regenerate) from one you filled in (never overwritten) — see api:importWsdl.
+  try { _db.run('ALTER TABLE profiles ADD COLUMN wsdl_url TEXT NOT NULL DEFAULT \'\'') } catch { /* already migrated */ }
+  try { _db.run('ALTER TABLE api_requests ADD COLUMN wsdl_envelope TEXT NOT NULL DEFAULT \'\'') } catch { /* already migrated */ }
 
   persist()
   seedDefaultSettings()

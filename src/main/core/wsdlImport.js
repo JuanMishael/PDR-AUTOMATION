@@ -191,6 +191,33 @@ export async function buildWsdlCollection(url) {
   return { endpoint, targetNs: tns, operations }
 }
 
+// ── re-sync planning ─────────────────────────────────────────────────────────
+// Decide what a (re-)import does to a collection that may already hold requests. Matching is by
+// operation name, so an existing row is UPDATED in place — its id survives and everything hanging
+// off it (test data, extracts, assertions, auth wiring) stays attached. A body you edited is kept;
+// only a pristine scaffold (still equal to the wsdl_envelope we stored, or empty) is regenerated.
+// Pure — smoke-tested by scripts/test-wsdl-sync.mjs.
+export function planWsdlSync(existing, operations, endpoint) {
+  const byName = new Map(existing.map(r => [r.name, r]))
+  const live = new Set(operations.map(o => o.name))
+  const inserts = [], updates = []
+  for (const op of operations) {
+    const row = byName.get(op.name)
+    if (!row) { inserts.push(op); continue }
+    const untouched = !String(row.body || '').trim() || row.body === row.wsdl_envelope
+    updates.push({
+      id: row.id, name: op.name, url: endpoint, soapAction: op.soapAction,
+      body: untouched ? op.envelope : row.body, wsdlEnvelope: op.envelope,
+      refreshed: untouched,
+      // you edited it AND the service changed the shape → worth a look
+      review: !untouched && row.wsdl_envelope !== op.envelope
+    })
+  }
+  // Only ever reported, never deleted — and only for rows we scaffolded ourselves.
+  const removed = existing.filter(r => r.wsdl_envelope && !live.has(r.name)).map(r => r.name)
+  return { inserts, updates, removed }
+}
+
 function buildEnvelope(ns, prefix, headerLines, bodyLines) {
   const header = headerLines.length
     ? `\n  <soapenv:Header>\n${headerLines.join('\n')}\n  </soapenv:Header>`

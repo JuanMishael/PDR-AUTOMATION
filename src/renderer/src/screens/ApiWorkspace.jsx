@@ -179,6 +179,7 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
   const [copied, setCopied] = useState(false)
   const [run, setRun] = useState(null)             // { logs:[], summary }
   const [wsdl, setWsdl] = useState(null)           // { url, busy, msg } when the import modal is open
+  const [wsdlUrl, setWsdlUrl] = useState(profile.wsdl_url || '')  // last synced service, for the Re-sync button
   const [exporting, setExporting] = useState(false)
   const saveTimer = useRef(null)
 
@@ -396,9 +397,13 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
     }
     const reqs = await window.api.getApiRequests(profile.id)
     setRequests(reqs)
-    setWsdl({ url, busy: false, msg: `✓ Imported ${res.count} operation${res.count === 1 ? '' : 's'} from ${res.endpoint || 'service'}` })
+    setWsdlUrl(url)
+    const bits =[`${res.added.length} new`, `${res.refreshed.length} refreshed`]
+    if (res.kept.length) bits.push(`${res.kept.length} changed but kept your body (${res.kept.join(', ')})`)
+    if (res.removed.length) bits.push(`${res.removed.length} no longer in the WSDL (${res.removed.join(', ')})`)
+    setWsdl({ url, busy: false, msg: `✓ ${res.endpoint || 'service'} — ${bits.join(' · ')}` })
     // Jump to the first newly-imported request.
-    const created = reqs.find(r => r.name === res.operations?.[0])
+    const created = reqs.find(r => r.name === (res.added[0] || res.operations?.[0]))
     if (created) select(created)
   }
 
@@ -427,8 +432,9 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
           </p>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button className="btn-ghost" title="Generate a collection from a WCF/SOAP service's ?wsdl URL"
-            onClick={() => setWsdl({ url: '', busy: false, msg: null })}>⬇ Import WSDL</button>
+          <button className="btn-ghost" title="Generate a collection from a WCF/SOAP service's ?wsdl URL — run it again to re-sync after the service changes"
+            onClick={() => setWsdl({ url: wsdlUrl || '', busy: false, msg: null })}>
+            {wsdlUrl ? '⟳ Re-sync WSDL' : '⬇ Import WSDL'}</button>
           <button className="btn-ghost" disabled={!requests.length || exporting}
             title="Export to a Postman collection — implicit headers (Content-Type/SOAPAction) and one request per test-data row are materialized"
             onClick={exportPostman}>{exporting ? '… Exporting' : '⬆ Export Postman'}</button>
@@ -650,10 +656,13 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(43,43,43,.35)', zIndex: 60,
           display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => !wsdl.busy && setWsdl(null)}>
           <div className="card" style={{ width: 520, padding: 20 }} onClick={e => e.stopPropagation()}>
-            <div className="eyebrow" style={{ marginBottom: 6 }}>Import from WSDL</div>
+            <div className="eyebrow" style={{ marginBottom: 6 }}>{wsdlUrl ? 'Re-sync from WSDL' : 'Import from WSDL'}</div>
             <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 0 }}>
               Paste a WCF/SOAP service's WSDL URL (usually ends in <code>?wsdl</code>). One request per operation
               is scaffolded with a skeleton SOAP envelope you can fill in.
+              {' '}Run it again after the service changes: matching operations are updated <b>in place</b> — the new
+              endpoint and SOAPAction are applied, your test data, extracts and assertions stay attached, and an
+              envelope you've already filled in is never overwritten.
             </p>
             <input value={wsdl.url} autoFocus disabled={wsdl.busy}
               onChange={e => setWsdl(w => ({ ...w, url: e.target.value }))}
@@ -668,7 +677,7 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
                 {wsdl.msg?.startsWith('✓') ? 'Close' : 'Cancel'}
               </button>
               <button className="btn-primary" onClick={importWsdl} disabled={wsdl.busy || !wsdl.url.trim()}>
-                {wsdl.busy ? 'Importing…' : '⬇ Import'}
+                {wsdl.busy ? 'Fetching…' : (wsdlUrl ? '⟳ Re-sync' : '⬇ Import')}
               </button>
             </div>
           </div>

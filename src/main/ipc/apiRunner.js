@@ -4,7 +4,7 @@ import { join } from 'path'
 import { writeFileSync, mkdirSync } from 'fs'
 import { getDb } from '../core/db'
 import { substitute, sendRequest, applyExtractions, checkAssertions, runWithAuth } from '../core/apiEngine'
-import { buildWsdlCollection } from '../core/wsdlImport'
+import { buildWsdlCollection, planWsdlSync } from '../core/wsdlImport'
 import { buildPostmanCollection } from '../core/postmanExport'
 import { buildDataContext, resolveString } from '../core/tokenResolver'
 
@@ -219,7 +219,12 @@ export function registerApiRunnerHandlers() {
     return summary
   })
 
-  // Import a WSDL: scaffold one SOAP request per operation into the collection.
+  // Import — or RE-SYNC — a WSDL: one SOAP request per operation. Running it again against the
+  // same profile matches operations by name and UPDATES those rows in place, so the request id
+  // survives: linked test data, extracts, assertions and auth wiring stay attached while the
+  // endpoint URL + SOAPAction follow the new WSDL. An envelope you edited is never overwritten
+  // (we keep the pristine scaffold in wsdl_envelope to tell yours from ours); operations that
+  // vanished from the WSDL are reported, never deleted.
   ipcMain.handle('api:importWsdl', async (_event, profileId, wsdlUrl) => {
     const db = getDb()
     const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId)
@@ -229,20 +234,34 @@ export function registerApiRunnerHandlers() {
       const { operations, endpoint } = await buildWsdlCollection(wsdlUrl)
       if (!operations.length) return { error: 'No SOAP operations found in that WSDL' }
 
-      const start = db.prepare('SELECT COUNT(*) AS c FROM api_requests WHERE profile_id = ?').get(profileId)?.c || 0
+      const existing = db.prepare('SELECT * FROM api_requests WHERE profile_id = ?').all(profileId)
+      const { inserts, updates, removed } = planWsdlSync(existing, operations, endpoint)
       const insert = db.prepare(`
         INSERT INTO api_requests (id, profile_id, name, description, method, url, headers, query,
-          body, body_type, soap_action, extract, assertions, sort_order)
-        VALUES (?, ?, ?, ?, 'POST', ?, '[]', '[]', ?, 'soap', ?, '[]', '[]', ?)
+          body, body_type, soap_action, extract, assertions, wsdl_envelope, sort_order)
+        VALUES (?, ?, ?, ?, 'POST', ?, '[]', '[]', ?, 'soap', ?, '[]', '[]', ?, ?)
+      `)
+      const update = db.prepare(`
+        UPDATE api_requests SET url = ?, soap_action = ?, body_type = 'soap', body = ?, wsdl_envelope = ?
+        WHERE id = ?
       `)
       const tx = db.transaction(() => {
-        operations.forEach((op, i) => {
+        inserts.forEach((op, i) => {
           insert.run(randomUUID(), profileId, op.name, `SOAP operation · ${op.name}`,
-            endpoint, op.envelope, op.soapAction, start + i)
+            endpoint, op.envelope, op.soapAction, op.envelope, existing.length + i)
         })
+        for (const u of updates) update.run(u.url, u.soapAction, u.body, u.wsdlEnvelope, u.id)
+        db.prepare('UPDATE profiles SET wsdl_url = ? WHERE id = ?').run(wsdlUrl, profileId)
       })
       tx()
-      return { ok: true, count: operations.length, endpoint, operations: operations.map(o => o.name) }
+
+      return {
+        ok: true, count: operations.length, endpoint, removed,
+        added: inserts.map(o => o.name),
+        refreshed: updates.filter(u => u.refreshed).map(u => u.name),
+        kept: updates.filter(u => u.review).map(u => u.name),
+        operations: operations.map(o => o.name)
+      }
     } catch (e) {
       return { error: e?.message || String(e) }
     }

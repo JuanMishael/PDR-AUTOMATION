@@ -162,7 +162,7 @@ function KeyValueEditor({ rows, onChange, placeholder = ['key', 'value'] }) {
   )
 }
 
-export default function ApiWorkspace({ profile, profileName, navigate }) {
+export default function ApiWorkspace({ profile, profileName, project, navigate }) {
   const [requests, setRequests] = useState([])
   const [collections, setCollections] = useState([])
   const [activeId, setActiveId] = useState(null)
@@ -423,6 +423,10 @@ export default function ApiWorkspace({ profile, profileName, navigate }) {
     <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 80px)', overflow: 'hidden' }}>
       {/* Top bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexShrink: 0 }}>
+        <button className="btn-ghost btn-sm" onClick={() => navigate('dashboard', { projectId: project?.id, projectName: project?.name })}
+          title={project ? `Back to project ${project.name}` : 'Back to projects'} style={{ flexShrink: 0 }}>
+          ← {project?.name || 'Projects'}
+        </button>
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 800 }}>
             API Workspace <span className="badge badge-warn" style={{ fontSize: 10, verticalAlign: 'middle' }}>BETA</span>

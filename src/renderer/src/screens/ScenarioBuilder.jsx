@@ -2571,7 +2571,7 @@ export default function ScenarioBuilder({ navigate, ctx }) {
 
   // ── API profile: a Postman/SoapUI-style request workspace, not step cards ──
   if (profile.type === 'api') {
-    return <ApiWorkspace profile={profile} profileName={profileName} navigate={navigate} />
+    return <ApiWorkspace profile={profile} profileName={profileName} project={project} navigate={navigate} />
   }
 
   // ── Main builder ──────────────────────────────────────────────────────────

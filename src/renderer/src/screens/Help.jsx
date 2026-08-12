@@ -585,13 +585,14 @@ export default function Help() {
               <Define term="Run one">Run a single scenario in a fresh browser (its "Run needs" prerequisite runs first).</Define>
               <Define term="Run All">Run every scenario in order in one continuous browser session — state (like login) carries over.</Define>
               <Define term="Live view">Watch the active run step through, with pass/fail marked as it goes.</Define>
-              <Define term="Results">Per-step outcomes, error messages, screenshots on failure, and a Playwright trace.</Define>
+              <Define term="Results">Per-step outcomes, error messages, screenshots on failure, a video of the run, and a Playwright trace.</Define>
               <Define term="History">Every past run, newest first. Click any run to reopen its full report.</Define>
-              <Define term="Retention">Old runs are pruned after the History Retention window set in Settings.</Define>
+              <Define term="Retention">Old runs are pruned after the History Retention window set in Settings — the run's saved video, trace and screenshots are deleted with it.</Define>
             </div>
             <p style={{ fontSize: 12.5, color: 'var(--ink-faint)', marginTop: 12 }}>
-              Failure screenshots and traces are controlled per app in <strong>Settings</strong>. The trace opens in
-              Playwright's Trace Viewer — a step-by-step timeline of the run.
+              Failure screenshots, traces and run videos are controlled per app in <strong>Settings</strong>. The trace
+              opens in Playwright's Trace Viewer — a step-by-step timeline of the run — and <strong>🎥 Watch Recording</strong>
+              plays back the whole run, handy to attach to a bug report.
             </p>
           </Section>
 
@@ -709,10 +710,11 @@ export default function Help() {
               <Define term="App Name">The wordmark shown in the sidebar.</Define>
               <Define term="Default Browser">Used when a profile doesn't specify one.</Define>
               <Define term="Default Timeout">Fallback step timeout (ms) for new profiles.</Define>
-              <Define term="History Retention">How many days of run history to keep before pruning.</Define>
+              <Define term="History Retention">How many days of run history to keep before pruning — the pruned runs' videos, traces and screenshots are deleted too.</Define>
               <Define term="Run headless">Whether new runs default to no visible window.</Define>
               <Define term="Screenshot on fail">Capture a screenshot whenever a step fails.</Define>
               <Define term="Trace on fail">Record a Playwright trace on failure for the Trace Viewer.</Define>
+              <Define term="Record a video">Save a video of every run — watch it from Results. Recording can't start after a step has already failed, so it covers passes and failures alike.</Define>
               <Define term="Browser Session">Clear it to log the picker/recorder browser out or switch users.</Define>
             </div>
           </Section>

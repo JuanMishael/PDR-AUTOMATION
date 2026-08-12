@@ -69,7 +69,7 @@ contextBridge.exposeInMainWorld('api', {
   // Reporter
   exportReport: (runId, format) => ipcRenderer.invoke('reporter:export', runId, format),
   exportSteps: (profileId, scenarioId) => ipcRenderer.invoke('reporter:exportSteps', profileId, scenarioId),
-  openTraceViewer: (tracePath) => ipcRenderer.invoke('reporter:openTrace', tracePath),
+  openArtifact: (path) => ipcRenderer.invoke('reporter:openPath', path),
   openNetworkLog: (runId) => ipcRenderer.invoke('reporter:openNetwork', runId),
 
   // Selector tester — opts: { url, selector, browser, steps, baseUrl, runSteps }

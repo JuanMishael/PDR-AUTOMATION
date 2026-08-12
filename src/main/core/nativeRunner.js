@@ -171,8 +171,8 @@ export async function runNative({ runId, profile, scenarios = [], dataContext = 
 
   const failed = results.filter(r => r.status === 'failed').length
   const status = fatalError || failed > 0 ? 'failed' : 'passed'
-  // tracePath/networkPath: web-only concepts; null keeps executeRun's shape identical.
-  return { status, results, scenarioResults, fatalError, tracePath: null, networkPath: null }
+  // tracePath/networkPath/videoPath: web-only concepts; null keeps executeRun's shape identical.
+  return { status, results, scenarioResults, fatalError, tracePath: null, networkPath: null, videoPath: null }
 }
 
 export function stopNativeRun(runId) {

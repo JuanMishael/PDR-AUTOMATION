@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { confirmDialog } from '../lib/confirm'
 
 const EMPTY = { name: '', type: 'web', base_url: '', browser: 'chromium', headless: false, mobile: false, timeout: 30000, app_activity: '' }
@@ -27,12 +27,22 @@ export default function ProfileConfig({ navigate, ctx = {} }) {
   const [form, setForm] = useState(EMPTY)
   const [editing, setEditing] = useState(null)
   const [saving, setSaving] = useState(false)
+  // Opened from a profile card's Edit button — jump straight into that profile's form instead of
+  // making the tester find it in the Saved Profiles list. Once only: load() also runs after every
+  // save/delete, which would otherwise drag them back into edit mode.
+  const preselect = useRef(ctx.profileId || null)
 
   useEffect(() => { load() }, [])
 
   async function load() {
     try {
-      setProfiles(await window.api.getProfiles(projectId))
+      const ps = await window.api.getProfiles(projectId)
+      setProfiles(ps)
+      if (preselect.current) {
+        const p = ps.find(x => x.id === preselect.current)
+        preselect.current = null
+        if (p) edit(p)
+      }
     } catch (e) {
       alert('Could not load profiles: ' + (e?.message || 'unknown error'))
     }

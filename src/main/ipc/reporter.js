@@ -50,10 +50,11 @@ export function registerReporterHandlers() {
     return exportStepsDocx(profile, scenario, steps, dir, baseName)
   })
 
-  ipcMain.handle('reporter:openTrace', async (_, tracePath) => {
-    if (!tracePath) return { error: 'No trace path' }
-    await shell.openPath(tracePath)
-    return { ok: true }
+  // Hand a run artifact (trace.zip, video .webm) to the OS default app.
+  ipcMain.handle('reporter:openPath', async (_, path) => {
+    if (!path) return { error: 'No path' }
+    const err = await shell.openPath(path)
+    return err ? { error: err } : { ok: true }
   })
 
   // Build + open a standalone DevTools-style network log page for a run (the XHR/fetch calls

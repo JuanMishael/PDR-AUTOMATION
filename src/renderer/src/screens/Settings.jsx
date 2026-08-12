@@ -4,7 +4,7 @@ import { confirmDialog } from '../lib/confirm'
 const DEFAULTS = {
   app_name: 'PDR-AUTOMATION', browser: 'chromium', headless: '0',
   default_timeout: '30000', history_retention_days: '30',
-  screenshot_on_fail: '1', trace_on_fail: '1',
+  screenshot_on_fail: '1', trace_on_fail: '1', record_video: '1',
   settle_before_action: '1', settle_timeout: '3000'
 }
 
@@ -92,6 +92,15 @@ export default function Settings() {
             onChange={e => set('trace_on_fail', e.target.checked ? '1' : '0')} />
           Record trace on failure (Playwright Trace Viewer)
         </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row', textTransform: 'none', letterSpacing: 'normal' }}>
+          <input type="checkbox" checked={settings.record_video !== '0'} style={{ width: 'auto' }}
+            onChange={e => set('record_video', e.target.checked ? '1' : '0')} />
+          Record a video of every run
+        </label>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '-10px 0 0 26px' }}>
+          Saves a .webm of the whole run — open it from Results → Watch Recording. Recorded for
+          passes and failures alike (recording can't start after a step has already failed).
+        </p>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexDirection: 'row', textTransform: 'none', letterSpacing: 'normal' }}>
           <input type="checkbox" checked={settings.settle_before_action === '1'} style={{ width: 'auto' }}

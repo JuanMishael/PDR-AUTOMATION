@@ -53,7 +53,7 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dat
   // Native Android profiles run through Appium; web/everything-else through the Playwright runner.
   // Both return the same shape, so the rest of executeRun is engine-agnostic.
   const engine = profile.type === 'android' ? runNative : runWeb
-  const { status, results, scenarioResults = [], fatalError, tracePath, networkPath } = await engine({
+  const { status, results, scenarioResults = [], fatalError, tracePath, networkPath, videoPath } = await engine({
     runId,
     profile,
     scenarios,
@@ -66,6 +66,7 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dat
   if (fatalError) send('runner:log', { type: 'error', text: `✗ ${fatalError}` })
   if (tracePath)  send('runner:log', { type: 'info', text: `📎 Trace saved: ${tracePath}` })
   if (networkPath) send('runner:log', { type: 'info', text: `🌐 Network log captured` })
+  if (videoPath) send('runner:log', { type: 'info', text: `🎥 Recording saved: ${videoPath}` })
 
   const finishedAt = new Date().toISOString()
   const passed = results.filter(r => r.status === 'passed').length
@@ -79,15 +80,15 @@ async function executeRun({ profile, scenarios, settings, scenarioMeta = {}, dat
   getDb().prepare(`
     INSERT INTO history (id, profile_id, profile_name, scenario_id, scenario_name, status,
       started_at, finished_at, duration_ms, steps_total, steps_passed, steps_failed,
-      scenarios_total, scenarios_passed, scenarios_failed, scenario_results, log, trace_path, network_path)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      scenarios_total, scenarios_passed, scenarios_failed, scenario_results, log, trace_path, network_path, video_path)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     historyId, profile.id, profile.name,
     scenarioMeta.scenarioId || null, scenarioMeta.scenarioName || null,
     overallStatus, startedAt, finishedAt, durationMs,
     results.length, passed, failed,
     scenarioResults.length, scenariosPassed, scenariosFailed, JSON.stringify(scenarioResults),
-    JSON.stringify(results), tracePath || null, networkPath || null
+    JSON.stringify(results), tracePath || null, networkPath || null, videoPath || null
   )
 
   const summary = {

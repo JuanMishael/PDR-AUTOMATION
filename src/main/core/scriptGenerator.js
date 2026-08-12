@@ -25,6 +25,10 @@ export function generateScript({ profile, scenarios = [], settings = {}, outputD
   const baseUrl = profile.base_url || ''
   const traceOnFail = settings.trace_on_fail === '1'
   const screenshotOnFail = settings.screenshot_on_fail === '1'
+  // Cypress-style run recording. Playwright records the whole context to .webm for free — no
+  // encoder, no extra dependency. Always-on when enabled (Playwright can't start recording
+  // retroactively once a step fails), so the file is kept whether the run passes or not.
+  const recordVideo = settings.record_video !== '0'
   // "Calm playback": before each action, wait for the page's network to go quiet so the UI
   // a prior step triggered has actually landed — instead of clicking/typing into a half-loaded
   // page. Default ON. It's a bounded best-effort settle (never fails the step), so a never-idle
@@ -32,6 +36,7 @@ export function generateScript({ profile, scenarios = [], settings = {}, outputD
   // Mobile view: emulate a phone (viewport + touch + UA) so a mobile-only web app renders right.
   const mobile = profile.mobile === 1 || profile.mobile === true
   const ctxOptions = { ignoreHTTPSErrors: true, acceptDownloads: true, ...mobileContextOptions(profile.browser, mobile) }
+  if (recordVideo) ctxOptions.recordVideo = { dir: outputDir + '/video' }
 
   const settleEnabled = settings.settle_before_action !== '0'
   // Cap on the per-step settle. 0 = no limit (wait until the network is fully idle) — only safe
@@ -153,6 +158,18 @@ ${indent(stepCode, 2)}
         process.stderr.write(JSON.stringify({ type: 'network', path: ${JSON.stringify(outputDir + '/network.json')} }) + '\\n');
       }
     } catch { /* best-effort */ }`
+
+  // Video flush. Playwright only finalizes the .webm when the CONTEXT closes, and page.video()
+  // has to be grabbed while the page object is still alive — so this runs after the network
+  // flush and instead of relying on browser.close() (the fatal path calls process.exit, which
+  // skips finally entirely, so both exit paths flush for themselves).
+  const videoStop = recordVideo ? `
+    try {
+      const _vid = page && page.video();
+      if (context) await context.close();
+      const _vidPath = _vid ? await _vid.path() : null;
+      if (_vidPath) process.stderr.write(JSON.stringify({ type: 'video', path: _vidPath }) + '\\n');
+    } catch { /* a crashed page must not fail the run over its recording */ }` : ''
 
   // Network state + helpers — declared at the IIFE top (NOT inside the try) so _settle() and the
   // finally-block flush can both see them. Capped PER STEP (one click can fan out to many
@@ -318,10 +335,12 @@ ${indent(stepBlocks, 4)}
   } catch (err) {
     ${traceStop}
     ${netStop}
+    ${videoStop}
     process.stderr.write(JSON.stringify({ type: 'fatal', message: err.message }) + '\\n');
     process.exit(1);
   } finally {
     ${netStop}
+    ${videoStop}
     if (browser) await browser.close();
   }
 

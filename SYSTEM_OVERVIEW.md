@@ -11,11 +11,12 @@
 PDR-AUTOMATION (Electron desktop app)
 │
 ├── RENDERER (React UI — what the QA tester sees)
-│   ├── Dashboard            → a card per profile: scenario count, last-run status/time,
-│   │                          "X/Y scenarios passed" breakdown, recent-runs streak;
+│   ├── Dashboard            → a card per profile: scenario count, last-run time,
+│   │                          "X/Y scenarios passed" breakdown, ✎ edit the profile;
 │   │                          most-recently-run profile floats to top; search; per-card
 │   │                          ⬆ Share a profile / ⬇ Import a shared profile bundle
 │   ├── ProfileConfig        → define a "site under test" (base URL, browser, headless, timeout);
+│   │                          opens straight into a profile's form when given ctx.profileId
 │   │                          Web vs 🔌 API profile type chooser
 │   ├── ApiWorkspace (beta)   → for type='api' profiles: Postman/SoapUI-style request collection —
 │   │                          requests (SOAP/REST), {{var}} store, click-to-extract response tree,
@@ -45,11 +46,11 @@ PDR-AUTOMATION (Electron desktop app)
 │   ├── TestData             → Test Data Library: collections (form shape) + data sets
 │   │                          (positive/negative/edge) + tokens; import (CSV) / export (json,csv)
 │   ├── ActiveRun            → live log streaming while a test runs
-│   ├── Results              → pass/fail per step, screenshots, export
+│   ├── Results              → pass/fail per step, screenshots, video, trace, export
 │   ├── History              → past runs, status, duration, re-export
 │   ├── HealthCheck          → is Node.js + Playwright browsers installed?
 │   ├── ParallelRun          → fire several profiles AT ONCE, a live card per profile
-│   └── Settings             → global defaults (browser, retention, screenshots,
+│   └── Settings             → global defaults (browser, retention, screenshots, video,
 │                              calm-playback settle toggle + settle cap)
 │
 ├── PRELOAD (secure bridge)
@@ -152,7 +153,8 @@ suffixed and every reference inside the copied steps is rewritten — collection
    playback", bounded, per-step `_noSettle` opt-out), and can capture that step's requests/
    responses (per-step **network trace**)
         ↓
-6. Results saved to History; screenshots/traces captured on failure; network log via View Network Log
+6. Results saved to History; screenshots/traces captured on failure; network log via View Network Log;
+   the whole run recorded to a .webm via Watch Recording
         ↓
 7. User exports a report (HTML / CSV / Word) from Results or History
 ```
@@ -284,6 +286,8 @@ spec. **Assert Text** also has a **Max wait (ms)** field to poll longer for slow
 | **Run-scoped variables, not a persisted store** | `{{var.x}}` lives for one run only. The API side persists (`api_variables`) because a token outlives a request; a UI-scraped value doesn't — a stale one would make a broken test pass |
 | **Custom Code inlined, not `eval`'d** | The tester's code goes straight into the generated script so a stack trace points at *their* line. Trade-off: a syntax error breaks the whole script (fatal) instead of failing one step |
 | **One shared code editor** (`components/CodeArea.jsx`) | The API body editor's transparent-textarea-over-highlighted-`<pre>` trick, with a `js` mode added, reused for Custom Code / JS expressions. Regex tinting, no highlighter dependency |
+| **Video always recorded, never "on failure"** | Playwright can't start recording retroactively once a step has failed, so an on-failure video is impossible — it's the whole run or nothing. Kept on both outcomes rather than deleting passes (Cypress's default): the clip of a *passing* run is the "demonstrate, don't declare" evidence you hand someone |
+| **Run artifacts swept by folder age** | Videos/traces/screenshots outlived the history row that pointed at them. The folder is named for the run's own uuid (not the history id), so retention sweeps `%TEMP%/pdr-runs/` by age instead of per-row — which also clears orphans from runs that died before a row was written |
 | **"Wait before click (ms)"** | For modal animations and slow UI transitions |
 | **Pluggable runner layer** | WebRunner (Playwright) live; MobileRunner (Appium) slot reserved for Phase 2 |
 
@@ -318,7 +322,7 @@ spec. **Assert Text** also has a **Max wait (ms)** field to poll longer for slow
 **UI (done):** Hand-drawn **"Sketchbook"** theme (warm paper, ink borders, offset shadows,
 hand fonts) — friendlier for non-technical QA. See [docs/DESIGN.md](docs/DESIGN.md) before any
 UI change. Dashboard rebuilt as profile cards (scenario count, last run, per-scenario
-breakdown, recent-runs streak).
+breakdown, ✎ edit).
 
 **"Demonstrate, don't declare" layer (done):**
 - 🎯 Element picker — click the real element, get a robust selector
@@ -343,10 +347,17 @@ breakdown, recent-runs streak).
 - 🐢 **Calm playback** — each step waits for the prior step's network to quiet before acting
   (bounded, never fails the step); global toggle + settle cap in Settings, per-step `_noSettle` opt-out
 - 🌐 **Per-step network trace** — capture a step's requests/responses; review via View Network Log in Results
+- 🎥 **Run video recording** — Playwright's own `recordVideo` on the context; Watch Recording in Results.
+  The `.webm` is only finalized when the CONTEXT closes and `page.video()` has to be read while the page
+  is alive, so the flush sits in *both* exits of the generated script — the fatal path `process.exit`s,
+  which skips `finally`, and a crashed run is exactly the one worth watching
 - ⚡ **Parallel runs** — fire several profiles at once, each an independent browser process (ParallelRun)
 - ⏱ **Assert Text Max wait** — per-step poll window above the 5s default, for slow/transient content
 - 🧹 **History retention enforced** — on startup, run rows older than `history_retention_days`
-  (Settings) are pruned, so the full-serialize sql.js saves + startup reads stay bounded
+  (Settings) are pruned, so the full-serialize sql.js saves + startup reads stay bounded. The run's
+  **artifacts go with it**: `pruneRunArtifacts()` sweeps `%TEMP%/pdr-runs/` on the same window, by
+  folder age (the folder is named for the run's own uuid, not the history id — going by age also
+  clears orphans from runs that died before a row existed)
 - 🧯 **Clean shutdown** — app quit / Stop reaps in-flight run *and* interactive-tool browsers
   (Windows tree-kill), so nothing is orphaned in the background
 

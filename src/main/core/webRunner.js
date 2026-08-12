@@ -77,6 +77,7 @@ export async function runWeb({ runId, profile, scenarios = [], settings = {}, da
     let fatalError = null
     let tracePath = null
     let networkPath = null
+    let videoPath = null
 
     proc.stdout.on('data', (chunk) => {
       const lines = chunk.toString().split('\n').filter(Boolean)
@@ -118,6 +119,7 @@ export async function runWeb({ runId, profile, scenarios = [], settings = {}, da
           if (msg.type === 'fatal') fatalError = msg.message
           else if (msg.type === 'trace') tracePath = msg.path
           else if (msg.type === 'network') networkPath = msg.path
+          else if (msg.type === 'video') videoPath = msg.path
         } catch {
           onLog({ type: 'raw', text: line })
         }
@@ -145,6 +147,7 @@ export async function runWeb({ runId, profile, scenarios = [], settings = {}, da
         fatalError,
         tracePath,
         networkPath,
+        videoPath,
         stepsTotal: results.length,
         stepsPassed: passed,
         stepsFailed: failed,
@@ -154,7 +157,7 @@ export async function runWeb({ runId, profile, scenarios = [], settings = {}, da
         exitCode: code
       })
 
-      resolve({ status, results, scenarioResults, fatalError, tracePath, networkPath })
+      resolve({ status, results, scenarioResults, fatalError, tracePath, networkPath, videoPath })
     })
   })
 }

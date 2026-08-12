@@ -12,11 +12,30 @@ import { pathToFileURL } from 'node:url'
 const ROOT = resolve(import.meta.dirname, '..')
 const OUT = join(ROOT, 'node_modules', '.pdr-test')
 
+// Core modules that touch electron (db.js) can't be imported by plain node — the real electron
+// package resolves to a path string, not the API. Swapped for a stub with just the bits these
+// self-checks reach; anything else stays undefined and fails loudly rather than silently.
+const electronStub = {
+  name: 'electron-stub',
+  setup(b) {
+    b.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'electron-stub' }))
+    b.onLoad({ filter: /.*/, namespace: 'electron-stub' }, () => ({
+      contents: `export const app = {
+        getPath: (n) => require('node:path').join(require('node:os').tmpdir(), 'pdr-test-' + n),
+        getAppPath: () => process.cwd(),
+        isPackaged: false
+      }`,
+      loader: 'js'
+    }))
+  }
+}
+
 export async function bundleCore(names) {
   await build({
     entryPoints: names.map(n => join(ROOT, 'src', 'main', 'core', n)),
     bundle: true, format: 'esm', platform: 'node', logLevel: 'warning',
-    external: ['electron', 'playwright', 'playwright/test'],
+    external: ['playwright', 'playwright/test'],
+    plugins: [electronStub],
     outdir: OUT, outExtension: { '.js': '.mjs' }
   })
   const mods = {}

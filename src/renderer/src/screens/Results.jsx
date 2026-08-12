@@ -124,8 +124,14 @@ export default function Results({ ctx, navigate }) {
       <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
         {run.trace_path && (
           <button className="btn-ghost"
-            onClick={() => window.api.openTraceViewer(run.trace_path)}>
+            onClick={() => window.api.openArtifact(run.trace_path)}>
             🔍 Open Trace Viewer
+          </button>
+        )}
+        {run.video_path && (
+          <button className="btn-ghost"
+            onClick={() => window.api.openArtifact(run.video_path)}>
+            🎥 Watch Recording
           </button>
         )}
         {run.network_path && (

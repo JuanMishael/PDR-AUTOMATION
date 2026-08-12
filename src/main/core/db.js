@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, rmSync, statSync } from 'fs'
 
 let _db       // sql.js Database instance
 let _dbPath   // path to the .db file on disk
@@ -270,6 +270,8 @@ export async function initDb() {
   // Network log: path to the captured XHR/fetch calls (network.json) for this run, shown in
   // Results and the HTML report (the DevTools-style "controller interactions" view).
   try { _db.run('ALTER TABLE history ADD COLUMN network_path TEXT') } catch { /* already migrated */ }
+  // Run recording: path to the .webm Playwright recorded for this run (Settings → Record video).
+  try { _db.run('ALTER TABLE history ADD COLUMN video_path TEXT') } catch { /* already migrated */ }
   // A data field can remember WHERE it goes on the page (selector picked once), so a
   // whole form can be dropped into a scenario as pre-wired fill steps (Test Data Phase 2).
   try { _db.run('ALTER TABLE data_fields ADD COLUMN selector TEXT NOT NULL DEFAULT \'\'') } catch { /* already migrated */ }
@@ -308,6 +310,26 @@ function pruneHistory() {
   // started_at is stored as an ISO string (…T…Z); wrap in datetime() so both sides are the
   // same normalized format and the comparison isn't a raw string mismatch.
   db.prepare(`DELETE FROM history WHERE datetime(started_at) < datetime('now', ?)`).run(`-${days} days`)
+  pruneRunArtifacts(join(app.getPath('temp'), 'pdr-runs'), days)
+}
+
+// Every run writes its screenshots, trace.zip, network.json and video into
+// %TEMP%/pdr-runs/<runId>/ — and nothing ever deleted them, so the files outlived the history
+// row that pointed at them (harmless when it was a screenshot, less so now there's a video).
+// Swept by FOLDER AGE rather than by looking up each pruned row: a run's folder name is its
+// own uuid, not the history id, and going by age also clears orphans from runs that died
+// before a row was ever written. Exported so scripts/test-video.mjs can exercise it.
+// ponytail: runs once at startup, before any run exists — no in-flight folder to protect.
+export function pruneRunArtifacts(root, days) {
+  if (!existsSync(root)) return
+  const cutoff = Date.now() - days * 86400000
+  for (const name of readdirSync(root)) {
+    const dir = join(root, name)
+    // Each folder is independent: one that's locked (a browser still holding a video handle)
+    // must not stop the rest, and the next launch will get it.
+    try { if (statSync(dir).mtimeMs < cutoff) rmSync(dir, { recursive: true, force: true }) }
+    catch { /* in use or already gone */ }
+  }
 }
 
 // One-time migration: home every pre-projects profile under a "Default" project. Runs every
@@ -334,6 +356,7 @@ function seedDefaultSettings() {
     ['history_retention_days', '30'],
     ['screenshot_on_fail', '1'],
     ['trace_on_fail', '1'],
+    ['record_video', '1'],
     ['settle_before_action', '1'],
     ['settle_timeout', '3000']
   ]) insert.run(k, v)

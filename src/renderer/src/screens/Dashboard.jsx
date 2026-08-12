@@ -13,23 +13,6 @@ function timeAgo(iso) {
   return d.toLocaleDateString()
 }
 
-// last ~5 runs as colored dots, oldest → newest (left → right)
-function Streak({ runs }) {
-  const recent = runs.slice(0, 5).reverse()
-  if (!recent.length) return <span style={{ fontSize: 12, color: 'var(--ink-faint)' }}>No runs yet</span>
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} title="Recent runs (oldest → newest)">
-      {recent.map((r, i) => (
-        <span key={i} style={{
-          width: 9, height: 9, borderRadius: '50%',
-          background: r.status === 'passed' ? 'var(--ok)' : 'var(--bad)',
-          border: `1.5px solid ${r.status === 'passed' ? 'var(--ok-line)' : 'var(--bad-line)'}`
-        }} />
-      ))}
-    </div>
-  )
-}
-
 function ShareButton({ profileId }) {
   const [msg, setMsg] = useState(null)
   async function share(e) {
@@ -46,7 +29,7 @@ function ShareButton({ profileId }) {
   )
 }
 
-function ProfileCard({ profile, scenarioCount, runs, navigate, selected, onToggleSelect, currentProjectId, onCopied }) {
+function ProfileCard({ profile, scenarioCount, runs, navigate, selected, onToggleSelect, currentProjectId, projectName, onCopied }) {
   const last = runs[0]
   // Prefer the per-scenario breakdown; fall back to steps for runs recorded before that existed.
   const hasScenarioBreakdown = last && last.scenarios_total > 0
@@ -80,11 +63,11 @@ function ProfileCard({ profile, scenarioCount, runs, navigate, selected, onToggl
             {profile.browser} · {profile.base_url}
           </div>
         </div>
-        {last && (
-          <span className={`badge ${last.status === 'passed' ? 'badge-ok' : 'badge-bad'}`}>
-            <span className="dot" />{last.status}
-          </span>
-        )}
+        {/* Rename / retarget lives up here as an icon, not in the action row — it's the rare
+            action next to four common ones, and a fifth button wrapped the row onto two lines. */}
+        <button className="btn-ghost btn-sm" title="Edit this profile — name, URL, browser, timeout"
+          onClick={() => navigate('profile', { projectId: currentProjectId, projectName, profileId: profile.id })}
+          style={{ padding: '2px 8px', flexShrink: 0 }}>✎</button>
       </div>
 
       {/* Meta */}
@@ -100,11 +83,10 @@ function ProfileCard({ profile, scenarioCount, runs, navigate, selected, onToggl
         ) : (
           <span style={{ fontSize: 13, color: 'var(--ink-faint)' }}>Never run</span>
         )}
-        <div style={{ marginLeft: 'auto' }}><Streak runs={runs} /></div>
       </div>
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+      <div style={{ display: 'flex', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
         <button className="btn btn-sm" style={{ flex: 1, justifyContent: 'center' }}
           onClick={() => navigate('scenarios', { profileId: profile.id, profileName: profile.name })}>
           <Icon name="builder" size={16} /> Edit Scenarios
@@ -227,6 +209,7 @@ export default function Dashboard({ navigate, ctx = {} }) {
               selected={selected.has(p.id)}
               onToggleSelect={toggleSelect}
               currentProjectId={projectId}
+              projectName={projectName}
               onCopied={m => { setImportMsg(m); setTimeout(() => setImportMsg(null), 4000) }} />
           ))}
         </div>

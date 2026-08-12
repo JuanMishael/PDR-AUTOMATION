@@ -397,6 +397,56 @@ export function recorderListener() {
     catch (e) { return { x: 0, y: 0 } }
   }
 
+  // --- Map awareness -------------------------------------------------------------
+  // A recorded canvas pixel is worthless at replay: a different window size, zoom or pan
+  // puts that same pixel somewhere else entirely. So when the click lands on a live
+  // OpenLayers map we record the COORDINATE under the cursor instead (pinCoordinate), which
+  // mapHelpers.mapPickPixel projects back to a pixel at run time. This is that inverse.
+  //
+  // The map has to be reachable as a window global for replay to find it again — we scan for
+  // the duck type rather than assuming "map", and record the key we found as mapVar. No map
+  // global (bundled/module-scoped) → fall through to the old pixel behaviour.
+  var mapHit = null   // {name, map} — cached; a page rarely swaps its map global
+
+  function isMapFor(m, el) {
+    try { var vp = m.getViewport(); return !!(vp && el && vp.contains(el)) } catch (e) { return false }
+  }
+
+  function findMap(el) {
+    if (mapHit && isMapFor(mapHit.map, el)) return mapHit
+    var keys = Object.keys(window)
+    for (var i = 0; i < keys.length; i++) {
+      var v
+      try { v = window[keys[i]] } catch (e) { continue }   // some globals throw on access
+      if (v && typeof v.getEventCoordinate === 'function' && typeof v.getView === 'function' && isMapFor(v, el)) {
+        mapHit = { name: keys[i], map: v }
+        return mapHit
+      }
+    }
+    return null
+  }
+
+  // Event pixel -> WGS84 [lon, lat]. EPSG:4326 views are already lon/lat; anything else goes
+  // through ol.proj.toLonLat, falling back to the inverse Web-Mercator when the ol global
+  // isn't exposed. Mirrors the forward transform in mapHelpers.
+  function lonLatAt(map, ev) {
+    var coord
+    try { coord = map.getEventCoordinate(ev) } catch (e) { return null }
+    if (!coord) return null
+    var code = ''
+    try { code = map.getView().getProjection().getCode() } catch (e) {}
+    if (code === 'EPSG:4326' || code === 'CRS:84') return [coord[0], coord[1]]
+    if (window.ol && window.ol.proj && window.ol.proj.toLonLat) {
+      try { return window.ol.proj.toLonLat(coord, code) } catch (e) {}
+    }
+    var R = 6378137
+    return [coord[0] / R * 180 / Math.PI, (2 * Math.atan(Math.exp(coord[1] / R)) - Math.PI / 2) * 180 / Math.PI]
+  }
+
+  function mapZoomOf(hit) {
+    try { var z = hit.map.getView().getZoom(); return z == null ? null : +z.toFixed(2) } catch (e) { return null }
+  }
+
   document.addEventListener('mousedown', function (e) {
     if (!armed() || assertMode()) { down = null; return }
     if (inBar(e.target)) { down = null; return }
@@ -433,9 +483,21 @@ export function recorderListener() {
     if (dragged) { dragged = false; return }   // this click is the tail end of a drag
     maybeSmartWait(t)   // may emit a "wait for the container that just appeared" first
     if (t.tagName === 'CANVAS') {
-      var p = relPos(t, e.clientX, e.clientY)
-      send({ action: 'clickAt', selector: window.__genSelector(t), x: p.x, y: p.y,
-        label: 'Click map @ (' + p.x + ', ' + p.y + ')' })
+      // Map controls are real DOM buttons, so gating on CANVAS keeps them recording as
+      // normal clicks — only the map surface itself becomes a coordinate.
+      var hit = findMap(t), ll = hit && lonLatAt(hit.map, e)
+      if (ll) {
+        // recenter:true + the recorded zoom is what makes this resolution-independent —
+        // replay puts the point dead centre at a known level instead of hoping it's on screen.
+        var zl = mapZoomOf(hit)
+        send({ action: 'pinCoordinate', lat: +ll[1].toFixed(6), lng: +ll[0].toFixed(6),
+          zoom: zl == null ? '' : zl, recenter: true, mapVar: hit.name,
+          label: 'Pin ' + ll[1].toFixed(5) + ', ' + ll[0].toFixed(5) })
+      } else {
+        var p = relPos(t, e.clientX, e.clientY)
+        send({ action: 'clickAt', selector: window.__genSelector(t), x: p.x, y: p.y,
+          label: 'Click map @ (' + p.x + ', ' + p.y + ')' })
+      }
     } else {
       send({ action: 'click', selector: window.__genSelector(t), label: labelOf(t) })
     }
@@ -450,8 +512,16 @@ export function recorderListener() {
     wheelTimer = setTimeout(function () {
       var d = Math.round(wheelAcc); wheelAcc = 0
       if (!d || !wheelEl) return
-      send({ action: 'zoom', selector: window.__genSelector(wheelEl), deltaY: d, times: 1,
-        label: (d < 0 ? 'Zoom in' : 'Zoom out') + ' (' + d + ')' })
+      // On a map, record the LEVEL the gesture settled on, not the wheel delta: a replayed
+      // wheel zooms toward the cursor, so the same delta lands on a different view. The 450ms
+      // debounce is already past OL's 250ms zoom animation, so getZoom() has settled.
+      var hit = findMap(wheelEl), z = hit ? mapZoomOf(hit) : null
+      if (z != null) {
+        send({ action: 'mapZoom', zoom: z, mapVar: hit.name, label: 'Map zoom to level ' + z })
+      } else {
+        send({ action: 'zoom', selector: window.__genSelector(wheelEl), deltaY: d, times: 1,
+          label: (d < 0 ? 'Zoom in' : 'Zoom out') + ' (' + d + ')' })
+      }
       wheelEl = null
     }, 450)
   }, true)

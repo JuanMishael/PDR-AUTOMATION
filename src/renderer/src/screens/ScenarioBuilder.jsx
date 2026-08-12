@@ -61,6 +61,10 @@ function buildRecordedParams(p) {
   if (p.action === 'clickAt')      return { ...params, selector: p.selector, x: p.x, y: p.y }
   if (p.action === 'dragByOffset') return { ...params, selector: p.selector, dx: p.dx, dy: p.dy, x: p.x, y: p.y }
   if (p.action === 'zoom')         return { ...params, selector: p.selector, deltaY: p.deltaY, times: p.times ?? 1 }
+  // Map clicks/zooms recorded against a live OpenLayers map — a coordinate and a zoom level
+  // instead of canvas pixels, so the step survives a different window size at run time.
+  if (p.action === 'pinCoordinate') return { ...params, lat: p.lat, lng: p.lng, zoom: p.zoom ?? '', recenter: p.recenter !== false, mapVar: p.mapVar || '' }
+  if (p.action === 'mapZoom')       return { ...params, zoom: p.zoom, mapVar: p.mapVar || '' }
   // Smart wait inferred during recording — a real wait-for-visible, not a sleep.
   // Flagged _smart so the card shows it was auto-suggested (the tester can delete it).
   if (p.action === 'waitForSelector') return { ...params, selector: p.selector, state: p.state || 'visible', _smart: !!p.smart }

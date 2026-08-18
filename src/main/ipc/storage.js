@@ -230,18 +230,25 @@ export function registerStorageHandlers() {
     return db().prepare('SELECT * FROM steps WHERE scenario_id = ? ORDER BY sort_order').all(scenarioId)
   })
 
+  // getSteps hands the renderer params as the raw JSON string, and not every edit path
+  // re-parses it (editing a step's Label passes the step straight through). Stringifying a
+  // string would encode it TWICE — one parse then yields a string, so every param reads as
+  // undefined and the card shows a blank selector. Normalise here, at the one write boundary,
+  // instead of trusting every caller to hand over an object.
+  const paramsJson = (p) => typeof p === 'string' ? p : JSON.stringify(p || {})
+
   ipcMain.handle('storage:saveStep', (_, step) => {
     if (step.id) {
       db().prepare(`
         UPDATE steps SET action=?, params=?, label=?, sort_order=? WHERE id=?
-      `).run(step.action, JSON.stringify(step.params || {}), step.label || '', step.sort_order ?? 0, step.id)
+      `).run(step.action, paramsJson(step.params), step.label || '', step.sort_order ?? 0, step.id)
       return { id: step.id }
     }
     const id = randomUUID()
     db().prepare(`
       INSERT INTO steps (id, scenario_id, action, params, label, sort_order)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, step.scenario_id, step.action, JSON.stringify(step.params || {}),
+    `).run(id, step.scenario_id, step.action, paramsJson(step.params),
         step.label || '', step.sort_order ?? 0)
     return { id }
   })

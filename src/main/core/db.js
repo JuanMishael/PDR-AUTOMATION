@@ -253,6 +253,40 @@ export async function initDb() {
     );
   `)
 
+  // Repair steps.params mangled by an older build, in two stages of the same bug (see
+  // paramsJson in storage.js). Stage 1: saving a step whose params were still the raw DB
+  // string encoded them TWICE — one parse then returns a string, so every param reads as
+  // undefined and the card shows a blank selector while the step runs with none. Stage 2:
+  // editing a param on such a card spread that string into character keys ({"0":"{",...}).
+  // Both keep every character, so both are recoverable — unwrap the re-encoding, re-join the
+  // characters, and let any real key edited in while it was broken win over the recovered one.
+  try {
+    const res = _db.exec('SELECT id, params FROM steps')
+    let fixed = 0
+    for (const [id, raw] of (res.length ? res[0].values : [])) {
+      let obj
+      try { obj = JSON.parse(raw) } catch { continue }
+      for (let i = 0; i < 5 && typeof obj === 'string'; i++) {
+        try { obj = JSON.parse(obj) } catch { break }
+      }
+      if (!obj || typeof obj !== 'object') continue
+
+      const idx = Object.keys(obj).filter(k => /^\d+$/.test(k))
+      if (idx.length) {
+        let inner
+        try { inner = JSON.parse(idx.sort((a, b) => a - b).map(k => obj[k]).join('')) } catch { inner = null }
+        if (inner && typeof inner === 'object') {
+          for (const k of idx) delete obj[k]
+          obj = { ...inner, ...obj }
+        }
+      }
+
+      const json = JSON.stringify(obj)
+      if (json !== raw) { _db.run('UPDATE steps SET params = ? WHERE id = ?', [json, id]); fixed++ }
+    }
+    if (fixed) persist()
+  } catch { /* no steps table yet, or nothing to repair */ }
+
   // --- migrations (idempotent: sql.js throws on duplicate column, which we ignore) ---
   try { _db.run('ALTER TABLE scenarios ADD COLUMN prerequisite_id TEXT') } catch { /* already migrated */ }
   // A scenario can be temporarily disabled — skipped scenarios are excluded from a Run All

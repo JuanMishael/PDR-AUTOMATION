@@ -371,11 +371,29 @@ export function recorderListener() {
   function setCount(n) { try { sessionStorage.setItem('__recCount', String(n)) } catch (e) {} }
   function inBar(t) { return t && t.closest && t.closest('#__recBar') }
 
+  // What a tester would call this control. Deliberately NOT its textContent: a <select>'s
+  // textContent is every option run together, so the card read "SelectArm StagingCabinet
+  // StagingDP Stagi…" — the dropdown's contents, which looks like a list of things the tester
+  // picked and never touched.
+  function fieldName(t) {
+    if (!t.getAttribute) return ''
+    var a = t.getAttribute('aria-label'); if (a) return norm(a)
+    var by = t.getAttribute('aria-labelledby')
+    if (by) { var e = document.getElementById(by); if (e) return norm(e.textContent) }
+    if (t.id) {
+      var esc = (window.CSS && CSS.escape) ? CSS.escape(t.id) : t.id
+      try { var l = document.querySelector('label[for="' + esc + '"]'); if (l) return norm(l.textContent) } catch (err) { /* unusable id */ }
+    }
+    return norm(t.getAttribute('title') || t.getAttribute('placeholder') || t.getAttribute('name') || t.id || '')
+  }
+
   function labelOf(t) {
-    var x = norm(t.textContent || ''); if (x) return x.slice(0, 40)
-    var ph = t.getAttribute && t.getAttribute('placeholder'); if (ph) return ph.slice(0, 40)
-    var nm = t.getAttribute && t.getAttribute('name'); if (nm) return nm.slice(0, 40)
-    return (t.tagName || '').toLowerCase()
+    var tn = (t.tagName || '').toLowerCase()
+    // A form control names itself; everything else (button, link, cell) is named by its text.
+    if (tn !== 'select' && tn !== 'input' && tn !== 'textarea') {
+      var x = norm(t.textContent || ''); if (x) return x.slice(0, 40)
+    }
+    return (fieldName(t) || tn).slice(0, 40)
   }
 
   function send(step) {
@@ -567,7 +585,16 @@ export function recorderListener() {
     if (!armed() || assertMode()) return
     var t = e.target; if (inBar(t)) return
     var tn = t && t.tagName
-    if (tn === 'SELECT') { send({ action: 'selectOption', selector: window.__genSelector(t), value: t.value, label: labelOf(t) }); return }
+    if (tn === 'SELECT') {
+      // Name the option that was CHOSEN — its visible text is often not its value, and the
+      // value is already on the card, so repeating it teaches the tester nothing.
+      var opt = t.options && t.options[t.selectedIndex]
+      var chose = opt ? norm(opt.textContent) : ''
+      var fld = labelOf(t)
+      send({ action: 'selectOption', selector: window.__genSelector(t), value: t.value,
+        label: (chose ? fld + ': ' + chose : fld).slice(0, 60) })
+      return
+    }
     if (tn === 'INPUT' || tn === 'TEXTAREA') {
       var type = ((t.getAttribute('type') || 'text') + '').toLowerCase()
       if (['checkbox', 'radio', 'file', 'button', 'submit'].indexOf(type) >= 0) return

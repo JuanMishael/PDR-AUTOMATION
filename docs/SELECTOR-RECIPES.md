@@ -199,3 +199,67 @@ vars.total = String(Number(total.replace(/[^0-9.]/g, '')) * 100)
 
 Keep that rare. A **Capture Value** card is readable by a tester who doesn't write code; a code block
 is only readable by whoever wrote it — and a syntax error in one fails the whole run, not just its step.
+
+---
+
+## Elements with no id, no name, no test-id
+
+**Symptom:** The thing you need to click has nothing unique on it. Its classes are shared
+with every other button on the page, and **Pick** falls back to a long
+`div:nth-child(3) > div > button:nth-child(2)` path that breaks on the next layout tweak.
+
+```html
+<button class="btn btn-danger pull-left" onclick="Restoredef(),SESSION()" title="Restore To Default">
+<button class="btn pull-right" onclick="CloseLayer(),SESSION()">
+  <i class="fa fa-times" aria-hidden="true"></i>
+</button>
+```
+
+Both buttons share `btn`. Neither has an id. Work down this list and stop at the first one
+that's unique — the higher the rung, the longer the selector survives:
+
+| # | Anchor on | Selector | Use when |
+|---|-----------|----------|----------|
+| 1 | Visible text | `button:has-text("Save")` | The button has a text label |
+| 2 | An attribute that means something | `button[title="Restore To Default"]` | There's a `title`, `aria-label`, `placeholder`, `value`, `href`, `data-*` |
+| 3 | The inline handler | `button[onclick^="CloseLayer"]` | Legacy pages that wire `onclick=` in markup |
+| 4 | A child icon | `button:has(i.fa-times)` | Icon-only buttons (Font Awesome, Material icons) |
+| 5 | A stable parent | `#MODALLAYER button.pull-right` | The element is generic but its container isn't |
+| 6 | Position, last resort | `.modal-footer button:nth-child(2)` | Nothing above applies — expect to re-do this |
+
+For the close button above, **`button[onclick^="CloseLayer"]`** is the pick: the handler name
+is real application code, so it changes far less often than a class or a DOM position.
+
+**Attribute matching cheatsheet:**
+
+| Syntax | Means |
+|--------|-------|
+| `[onclick="CloseLayer(),SESSION()"]` | exactly this |
+| `[onclick^="CloseLayer"]` | starts with |
+| `[onclick$="SESSION()"]` | ends with |
+| `[onclick*="CloseLayer"]` | contains anywhere |
+| `[title="Save" i]` | case-insensitive |
+
+Use `^=` or `*=` on `onclick` — the full handler string often carries arguments that differ
+between rows (`Delete(42)`), and prefix matching ignores them.
+
+**Rules of thumb:**
+
+- **Target the element that carries the handler**, not what's inside it. Click the `<button>`,
+  not the `<i>` icon — and never the `::before` pseudo-element, which can't be clicked at all.
+- **Skip presentational classes.** `btn`, `pull-right`, `col-md-4`, `active` describe how it
+  looks; they get restyled. `onclick`, `name`, `title`, `data-*` describe what it *is*.
+- **Don't chain more than two levels.** `.modal > div > div > button` is a ticking clock;
+  `#MODALLAYER button[onclick^="Close"]` says the same thing and survives a wrapper `div`.
+- **Combine two weak hooks into one strong one** when neither is unique alone:
+  `button.pull-right:has(i.fa-times)`.
+- Text and `:has-text()` are **substring, case-insensitive** matches; quote for exact:
+  `button:text-is("Save")`.
+- Put your second-best guess in **Alt Selector** on the step. It's tried first if the primary
+  misses, and costs nothing when the primary works.
+- **Pick** stores self-healing fallbacks automatically — prefer it over hand-typing even here,
+  then hand-edit the primary up to a better rung if Pick chose a positional path.
+
+**Don't turn on Dispatch DOM event just because the element looks unusual.** An inline
+`onclick=` fires on a normal click. Reach for that toggle only after a plain click has
+actually failed — see the jQuery UI section above.

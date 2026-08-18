@@ -387,6 +387,42 @@ export function recorderListener() {
     lastActionTs = Date.now()   // reset the pause baseline after every emitted step
   }
 
+  // --- Typing ---------------------------------------------------------------
+  // An advanced-search / autocomplete box reacts to KEYSTROKES, not to a value being
+  // set, so these record as `type` (per-key, with a delay) rather than `fill`: a
+  // wholesale fill() never opens the suggestion dropdown the tester then clicks.
+  // We listen on 'input', not 'change', because 'change' only fires on blur — and
+  // picking a suggestion usually keeps focus in the box, so it never fires at all.
+  // Debounced so one word is one step, and flushed before any other step is emitted
+  // so the typing always lands ahead of the click that follows it.
+  var TYPE_IDLE_MS = 600
+  var typeEl = null, typeTimer = null, lastInputTs = 0
+
+  function flushType() {
+    if (typeTimer) { clearTimeout(typeTimer); typeTimer = null }
+    var el = typeEl; typeEl = null
+    if (!el) return
+    el.__recTyped = el.value   // lets a blur-time 'change' skip re-recording the same edit
+    send({ action: 'type', selector: window.__genSelector(el), value: el.value, label: labelOf(el) })
+    // The pause a smart wait measures is the one since the last KEYSTROKE, not since this
+    // flush — flushing on mousedown would otherwise swallow the gap and the suggestion
+    // dropdown that appeared while typing would never get its "wait for visible" step.
+    lastActionTs = lastInputTs
+  }
+
+  document.addEventListener('input', function (e) {
+    if (!armed() || assertMode()) return
+    var t = e.target; if (inBar(t)) return
+    if (!e.isTrusted) return   // a value the page set itself isn't typing
+    if (t.tagName !== 'INPUT' && t.tagName !== 'TEXTAREA') return
+    var ity = ((t.getAttribute('type') || 'text') + '').toLowerCase()
+    if (['checkbox', 'radio', 'file', 'button', 'submit', 'range', 'color'].indexOf(ity) >= 0) return
+    if (typeEl && typeEl !== t) flushType()   // moved to another field mid-word
+    typeEl = t; lastInputTs = Date.now()
+    if (typeTimer) clearTimeout(typeTimer)
+    typeTimer = setTimeout(flushType, TYPE_IDLE_MS)
+  }, true)
+
   // --- Map / canvas gestures: drag-to-move, wheel-zoom, positioned canvas clicks ----
   var DRAG_MIN = 8                 // px of movement before a press counts as a drag
   var down = null, dragged = false // mousedown anchor; dragged → suppress the tail click
@@ -448,6 +484,7 @@ export function recorderListener() {
   }
 
   document.addEventListener('mousedown', function (e) {
+    flushType()   // the word just typed must be recorded BEFORE the click on the suggestion
     if (!armed() || assertMode()) { down = null; return }
     if (inBar(e.target)) { down = null; return }
     down = { el: e.target, x: e.clientX, y: e.clientY }; dragged = false
@@ -534,6 +571,10 @@ export function recorderListener() {
     if (tn === 'INPUT' || tn === 'TEXTAREA') {
       var type = ((t.getAttribute('type') || 'text') + '').toLowerCase()
       if (['checkbox', 'radio', 'file', 'button', 'submit'].indexOf(type) >= 0) return
+      // Keyboard edits are already captured by the 'input' listener as a `type` step;
+      // reaching here means the value arrived another way (autofill, a date picker).
+      if (typeEl === t) { flushType(); return }
+      if (t.__recTyped === t.value) return
       send({ action: 'fill', selector: window.__genSelector(t), value: t.value, label: labelOf(t) })
     }
   }, true)
@@ -542,6 +583,7 @@ export function recorderListener() {
     if (!armed() || assertMode()) return
     var t = e.target; if (inBar(t)) return
     if (['Enter', 'Tab', 'Escape'].indexOf(e.key) >= 0) {
+      flushType()   // Enter-to-search: the typing must be recorded before the key
       send({ action: 'pressKey', selector: window.__genSelector(t), key: e.key, label: e.key })
     }
   }, true)

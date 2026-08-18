@@ -232,6 +232,19 @@ export const ACTION_DEFS = {
       { key: 'checked', label: 'Should be checked?', type: 'boolean' }
     ]
   },
+  // For things that never land in the DOM — a map layer, a tile service, a background save.
+  // A map draws on canvas, so no selector can prove the layer arrived; the request behind it can.
+  // Checks the RESPONSE TYPE, not just the status: a WMS server returns 200 with an XML error
+  // body when a layer is wrong or the token expired, which a status check reads as success.
+  assertRequest: {
+    label: 'Assert Request Succeeded', category: 'Assertions',
+    summary: p => `${p.urlContains || '?'} → ${p.expect || 'image'}`,
+    params: [
+      { key: 'urlContains', label: 'Request URL contains', placeholder: 'GetMap' },
+      { key: 'expect', label: 'Response must be', type: 'select', options: ['image', 'json', 'any'], default: 'image' },
+      { key: 'minCount', label: 'Minimum matching requests', type: 'number', placeholder: '1' }
+    ]
+  },
 
   // --- Waits ---
   waitForSelector: {

@@ -9,7 +9,7 @@
  *               dragAndDrop
  * Mouse / Map : clickAt, dragByOffset, zoom, pinCoordinate, mapZoom
  * Assertions  : assertVisible, assertHidden, assertText, assertValue,
- *               assertUrl, assertTitle, assertEnabled, assertChecked
+ *               assertUrl, assertTitle, assertEnabled, assertChecked, assertRequest
  * Waits       : waitForSelector, waitForTimeout, waitForNetworkIdle
  * Util        : screenshot, executeScript
  */
@@ -154,7 +154,8 @@ ${indent(stepCode, 2)}
     try { await Promise.allSettled(_pending); } catch { /* best-effort */ }
     try {
       if (_netlog.length) {
-        require('fs').writeFileSync(${JSON.stringify(outputDir + '/network.json')}, JSON.stringify(_netlog));
+        // _raw (un-redacted URL) and _seen (assert bookkeeping) are run-time only — never written.
+        require('fs').writeFileSync(${JSON.stringify(outputDir + '/network.json')}, JSON.stringify(_netlog, (k, v) => (k === '_raw' || k === '_seen') ? undefined : v));
         process.stderr.write(JSON.stringify({ type: 'network', path: ${JSON.stringify(outputDir + '/network.json')} }) + '\\n');
       }
     } catch { /* best-effort */ }`
@@ -171,6 +172,16 @@ ${indent(stepCode, 2)}
       if (_vidPath) process.stderr.write(JSON.stringify({ type: 'video', path: _vidPath }) + '\\n');
     } catch { /* a crashed page must not fail the run over its recording */ }` : ''
 
+  // URL fragments named by assertRequest steps. Those requests are logged even when the step that
+  // FIRES them never ticked "include network trace" — otherwise a tester would have to know which
+  // step triggers the tile fan-out before the assert could see anything. Keeps the log small:
+  // only what an assert actually asks about, plus whatever a step opted into.
+  const assertPats = [...new Set(scenarios
+    .flatMap((sc) => sc.steps || [])
+    .filter((s) => s.action === 'assertRequest')
+    .map((s) => { try { const q = typeof s.params === 'string' ? JSON.parse(s.params) : (s.params || {}); return String(q.urlContains || '').trim() } catch { return '' } })
+    .filter(Boolean))]
+
   // Network state + helpers — declared at the IIFE top (NOT inside the try) so _settle() and the
   // finally-block flush can both see them. Capped PER STEP (one click can fan out to many
   // map-layer calls) and overall as a safety net.
@@ -179,35 +190,58 @@ ${indent(stepCode, 2)}
   const _netlog = [], _pending = [];
   const _NET_MAX = 2000, _PER_STEP_MAX = 50, _BODY_CAP = 4096;
   const _reqStart = new Map();
+  const _assertPats = ${JSON.stringify(assertPats)};
   const _cap = (t) => !t ? '' : (t.length > _BODY_CAP ? t.slice(0, _BODY_CAP) + '\\u2026[truncated]' : t);
+  const _isImg = (ct) => /^image\\//i.test(ct || '');
+  // A GIS tile URL carries the session token as a query param and network.json ships with the run
+  // artifacts — the credential must never reach disk.
+  const _redact = (u) => String(u).replace(/([?&](?:token|api[_-]?key|apikey|auth|signature|password)=)[^&#]*/gi, '$1[redacted]');
   const _settleEnd = (req) => { _inflight = Math.max(0, _inflight - 1); _lastNetTs = Date.now(); };
-  // Should this request be logged against the current step? (xhr/fetch, step opted in, under caps.)
-  const _take = (m) => { const s = _curStep; return (m && (m.type === 'xhr' || m.type === 'fetch') && s && s.trace && s.n < _PER_STEP_MAX && _netlog.length < _NET_MAX) ? s : null; };`
+  // Should this request be logged against the current step? xhr/fetch/image, and either the step
+  // opted in or an assertRequest asked about this URL. Images are the tile fan-out (80+ on a single
+  // map pan) so they count against the per-step cap — but a non-image or failed response is the
+  // rare row that EXPLAINS a failure, so it's kept even once the cap is spent.
+  const _take = (m, url, ctype) => {
+    const s = _curStep;
+    if (!s || !m) return null;
+    if (m.type !== 'xhr' && m.type !== 'fetch' && m.type !== 'image') return null;
+    if (!s.trace && !_assertPats.some((x) => url.includes(x))) return null;
+    if (_netlog.length >= _NET_MAX) return null;
+    if (s.n >= _PER_STEP_MAX && _isImg(ctype)) return null;
+    return s;
+  };`
 
   // Network instrumentation: attach the context listeners (needs `context`, so it lives in the try).
   // Counting covers ALL requests so a settle waits for document/script loads too; the LOG is
-  // filtered to xhr/fetch and only records while a step that opted in (_curStep.trace) is running.
+  // filtered by _take and only records while a step opted in (_curStep.trace) or an assertRequest
+  // named the URL.
   const netInstrument = `
     context.on('request', (req) => { _inflight++; _reqStart.set(req, { t: Date.now(), type: req.resourceType() }); });
     context.on('requestfinished', _settleEnd);
     context.on('requestfailed', (req) => {
       _settleEnd(req);
       const m = _reqStart.get(req); _reqStart.delete(req);
-      const s = _take(m);
-      if (s) { s.n++; _netlog.push({ step: s.label, method: req.method(), url: req.url(), type: m.type, status: 0, ok: false, ms: Date.now() - m.t, payload: _cap(req.postData()), error: (req.failure() && req.failure().errorText) || 'failed' }); }
+      const s = _take(m, req.url(), '');
+      if (s) { s.n++; _netlog.push({ step: s.label, method: req.method(), url: _redact(req.url()), type: m.type, ctype: '', status: 0, ok: false, ms: Date.now() - m.t, payload: _cap(req.postData()), body: '', error: (req.failure() && req.failure().errorText) || 'failed' }); }
     });
     context.on('response', (res) => {
       const req = res.request();
       const m = _reqStart.get(req);
-      const s = _take(m);                 // decide + count synchronously, before the body await races
+      const ctype = ((res.headers()['content-type'] || '').split(';')[0] || '').trim();
+      const s = _take(m, res.url(), ctype);   // decide + count synchronously, before the body await races
       if (!s) return;
       s.n++;
-      const payload = _cap(req.postData());   // request body (POST/PUT) — grab now, it's sync
-      _pending.push((async () => {
-        let body = '';
-        try { body = _cap(await res.text()); } catch { /* body unavailable */ }
-        _netlog.push({ step: s.label, method: req.method(), url: res.url(), type: m.type, status: res.status(), ok: res.ok(), ms: Date.now() - m.t, payload, body });
-      })());
+      // Row is pushed NOW, body filled in later by reference — so an assertRequest reading _netlog
+      // can never race ahead of a response that already arrived.
+      // _raw keeps the un-redacted URL for a failure re-fetch; it's stripped before the log is
+      // written, so the token stays in memory and never reaches disk.
+      const row = { step: s.label, method: req.method(), url: _redact(res.url()), _raw: res.url(), type: m.type, ctype, status: res.status(), ok: res.ok(), ms: Date.now() - m.t, payload: _cap(req.postData()), body: '' };
+      _netlog.push(row);
+      // Image bodies are binary — reading them just fills network.json with noise. A NON-image body
+      // is worth keeping: on a WMS tile that came back as XML, that body is the error text. Note
+      // Chromium discards the body of a response the renderer rejected (an <img> that got XML), so
+      // this often resolves empty — assertRequest re-fetches on failure to recover the reason.
+      if (!_isImg(ctype)) _pending.push(res.text().then((t) => { row.body = _cap(t); }, () => {}));
     });`
 
   // Bounded best-effort settle: a short floor (so a just-fired XHR has time to register), then
@@ -667,6 +701,38 @@ function actionToCode(action, p, baseUrl) {
       return p.checked === false
         ? `await expect(page.locator(${sel})).not.toBeChecked();`
         : `await expect(page.locator(${sel})).toBeChecked();`
+
+    // Did the service call behind a map layer actually succeed? A WMS server answers a broken
+    // GetMap with HTTP 200 and a ServiceExceptionReport XML body, so the status code alone reads
+    // green while nothing draws — the CONTENT-TYPE is what separates a real tile from a silent
+    // failure. Reads the network log every prior step has been filling (see _take).
+    case 'assertRequest': {
+      const pat = JSON.stringify(String(p.urlContains || '').trim())
+      const min = Number(p.minCount) > 0 ? Number(p.minCount) : 1
+      const want = p.expect || 'image'
+      const okExpr = want === 'any' ? 'true' : want === 'json' ? '/json/i.test(r.ctype)' : '/^image\\//i.test(r.ctype)'
+      // Drain first: the layer's calls belong to an EARLIER step, and a tile can still be in
+      // flight when this step starts.
+      return `await _settle(3000);
+    await Promise.allSettled(_pending);
+    {
+      // Only calls made SINCE the last check of this kind — marking them consumed keeps a
+      // scenario's failure from re-failing every later assert in the run.
+      const _rows = _netlog.filter((r) => !r._seen && r.url.includes(${pat}));
+      _rows.forEach((r) => { r._seen = true; });
+      const _bad = _rows.filter((r) => !r.ok || !(${okExpr}));
+      if (_rows.length < ${min}) throw new Error('No matching request — nothing called a URL containing ' + ${pat} + ' (found ' + _rows.length + ', expected at least ${min}). Check the URL fragment, or that an earlier step actually triggers the call.');
+      if (_bad.length) {
+        // Recover the server's reason. Chromium throws away the body of a response the renderer
+        // rejected, so a WMS exception delivered to an <img> reads empty — one re-fetch (only ever
+        // on the failing path, reusing the run's cookies) turns "HTTP 200 text/xml" into the
+        // actual "Layer not defined" / "token expired" a tester can act on.
+        let _why = _bad[0].body;
+        if (!_why && _bad[0]._raw) { try { _why = await (await context.request.get(_bad[0]._raw)).text(); } catch { /* reason unavailable */ } }
+        throw new Error(_bad.length + ' of ' + _rows.length + ' matching requests failed — HTTP ' + _bad[0].status + ' ' + (_bad[0].ctype || 'no content-type') + ' :: ' + _bad[0].url + (_why ? '\\n' + _why.trim().slice(0, 300) : ''));
+      }
+    }`
+    }
 
     // --- Waits ---
     case 'waitForSelector':

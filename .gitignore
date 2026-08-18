@@ -9,6 +9,9 @@ dist/
 # Electron builder cache
 .cache/
 
+# NSIS scratch space — redirected off C: because packing the 550MB installer needs the room
+.buildtmp/
+
 # Data (runtime SQLite DB)
 data/*.db
 data/*.db-journal

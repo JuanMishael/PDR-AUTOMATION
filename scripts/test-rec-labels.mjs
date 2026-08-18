@@ -76,10 +76,15 @@ assert.ok(sel, 'no selectOption step recorded')
 assert.strictEqual(sel.value, 'ROUTE_ID')
 assert.strictEqual(sel.label, 'Layer: Route Identifier', `bad select label: ${sel.label}`)
 
-const click = steps.find(s => s.action === 'click' && s.selector.includes('idLayer'))
-assert.ok(click, 'no click on the select recorded')
-assert.ok(!junk.test(click.label), `click label is the option list: ${click.label}`)
-assert.strictEqual(click.label, 'Layer', `bad click label: ${click.label}`)
+// One pick, one step: opening a native select fires a click and Chromium fires another when
+// the list closes, so this used to land as three steps for a single choice.
+const selClicks = steps.filter(s => s.action === 'click' && (s.selector || '').includes('idLayer'))
+assert.strictEqual(selClicks.length, 0, `a native select recorded ${selClicks.length} extra click step(s)`)
+assert.strictEqual(steps.filter(s => s.action === 'selectOption').length, 1, 'one pick must be one step')
+
+const btn = steps.find(s => s.action === 'click' && (s.selector || '').includes('hit'))
+assert.ok(btn, 'the suggestion click was not recorded')
+assert.strictEqual(btn.label, 'MAKATI CITY', `bad click label: ${btn.label}`)
 
 const typed = find('type')
 assert.ok(typed, 'typing was not recorded — the autocomplete never fires change')

@@ -536,6 +536,11 @@ export function recorderListener() {
       return
     }
     if (dragged) { dragged = false; return }   // this click is the tail end of a drag
+    // A native <select> is recorded by its selectOption step alone. Opening the list fires a
+    // click, and Chromium fires another when it closes, so one pick used to land as three steps
+    // — and neither click does anything at replay, since selectOption picks without opening it.
+    // Custom div-based dropdowns are unaffected: they still record the clicks they need.
+    if (t.tagName === 'SELECT') return
     maybeSmartWait(t)   // may emit a "wait for the container that just appeared" first
     if (t.tagName === 'CANVAS') {
       // Map controls are real DOM buttons, so gating on CANVAS keeps them recording as

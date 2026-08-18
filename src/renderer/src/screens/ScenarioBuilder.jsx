@@ -49,25 +49,16 @@ const KEYWORD_COLOR = {
 
 // Turn a recorded action payload into step params (keyword + action-specific fields)
 function buildRecordedParams(p) {
-  const params = { _keyword: p.action === 'navigate' ? 'Given' : 'When' }
-  if (p.action === 'click')        return { ...params, selector: p.selector }
-  if (p.action === 'fill')         return { ...params, selector: p.selector, value: p.value ?? '' }
-  if (p.action === 'selectOption') return { ...params, selector: p.selector, value: p.value ?? '' }
-  if (p.action === 'pressKey')     return { ...params, selector: p.selector, key: p.key }
-  if (p.action === 'navigate')     return { ...params, url: p.url ?? '' }
-  // Assert captured in the recorder's assert mode — a "Then" check (e.g. success toast).
-  if (p.action === 'assertVisible') return { _keyword: 'Then', selector: p.selector }
-  // Map / canvas gestures captured by the recorder
-  if (p.action === 'clickAt')      return { ...params, selector: p.selector, x: p.x, y: p.y }
-  if (p.action === 'dragByOffset') return { ...params, selector: p.selector, dx: p.dx, dy: p.dy, x: p.x, y: p.y }
-  if (p.action === 'zoom')         return { ...params, selector: p.selector, deltaY: p.deltaY, times: p.times ?? 1 }
-  // Map clicks/zooms recorded against a live OpenLayers map — a coordinate and a zoom level
-  // instead of canvas pixels, so the step survives a different window size at run time.
-  if (p.action === 'pinCoordinate') return { ...params, lat: p.lat, lng: p.lng, zoom: p.zoom ?? '', recenter: p.recenter !== false, mapVar: p.mapVar || '' }
-  if (p.action === 'mapZoom')       return { ...params, zoom: p.zoom, mapVar: p.mapVar || '' }
-  // Smart wait inferred during recording — a real wait-for-visible, not a sleep.
-  // Flagged _smart so the card shows it was auto-suggested (the tester can delete it).
-  if (p.action === 'waitForSelector') return { ...params, selector: p.selector, state: p.state || 'visible', _smart: !!p.smart }
+  // The recorder's payload IS the params — everything but the keys that are transport only:
+  // the action itself, the card's label, and `smart` (which becomes the _smart flag).
+  // Copying beats a per-action whitelist, which silently dropped the params of any action
+  // nobody remembered to add a branch for: that's how `type` steps arrived on the canvas with
+  // a blank selector and nothing to type.
+  const { action, label, smart, ...rest } = p
+  const keyword = action === 'navigate' ? 'Given' : action === 'assertVisible' ? 'Then' : 'When'
+  const params = { _keyword: keyword, ...rest }
+  // Flagged _smart so the card shows the wait was auto-suggested (the tester can delete it).
+  if (action === 'waitForSelector') { params.state = p.state || 'visible'; params._smart = !!smart }
   return params
 }
 

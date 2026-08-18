@@ -6,9 +6,17 @@
 //     the box), so the search text was never recorded at all.
 // Run: node scripts/test-rec-labels.mjs
 import assert from 'node:assert'
+import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { chromium } from 'playwright'
 import { installSelectorGen, recorderListener } from '../src/main/core/injectedScripts.js'
+import { ACTION_DEFS } from '../src/renderer/src/components/actionDefs.js'
+
+// buildRecordedParams turns a recorder payload into a step's params. Lifted out of the .jsx by
+// source so the test can't drift from it — the function itself has no JSX in it.
+const jsx = readFileSync(new URL('../src/renderer/src/screens/ScenarioBuilder.jsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const fnSrc = jsx.slice(jsx.indexOf('function buildRecordedParams(p) {'))
+const buildRecordedParams = new Function('return ' + fnSrc.slice(0, fnSrc.indexOf('\n}\n') + 2))()
 
 const PAGE = `
   <label for="idLayer">Layer</label>
@@ -84,3 +92,35 @@ assert.ok(hit > steps.indexOf(typed), 'the suggestion click was recorded before 
 
 for (const s of steps) assert.ok(!junk.test(s.label || ''), `option list leaked into a label: ${s.label}`)
 console.log(`recorder labels ok — ${steps.length} steps, select/input named by their field, typing captured in order`)
+
+// Every key the recorder sends must survive into the step's params. A per-action whitelist used
+// to drop the ones nobody added a branch for, which put `type` steps on the canvas with a blank
+// selector and nothing to type — the recording looked fine, the step was empty.
+const synthetic = [
+  { action: 'pressKey', selector: '#q', key: 'Enter', label: 'Enter' },
+  { action: 'clickAt', selector: 'canvas', x: 10, y: 20, label: 'Click map' },
+  { action: 'dragByOffset', selector: '#panel', dx: -300, dy: 0, x: 5, y: 5, label: 'Drag' },
+  { action: 'zoom', selector: '#pane', deltaY: -100, times: 1, label: 'Zoom in' },
+  { action: 'pinCoordinate', lat: 14.5, lng: 121, zoom: 18, recenter: true, mapVar: 'map', label: 'Pin' },
+  { action: 'mapZoom', zoom: 17, mapVar: 'map', label: 'Map zoom' },
+  { action: 'assertVisible', selector: '.toast', label: 'Assert visible' },
+  { action: 'waitForSelector', selector: '#sug', state: 'visible', smart: true, label: 'Wait for' },
+  { action: 'navigate', url: '/dashboard', label: 'Open the app' }
+]
+
+for (const payload of [...steps, ...synthetic]) {
+  const params = buildRecordedParams(payload)
+  for (const [k, v] of Object.entries(payload)) {
+    if (k === 'action' || k === 'label' || k === 'smart') continue
+    assert.deepStrictEqual(params[k], v, `${payload.action}: param "${k}" was dropped or altered`)
+  }
+  const declared = (ACTION_DEFS[payload.action] || {}).params
+  assert.ok(declared, `${payload.action} has no ACTION_DEF — it would render as a bare card`)
+}
+assert.strictEqual(buildRecordedParams(synthetic.at(-2))._smart, true, 'smart wait must be flagged')
+assert.strictEqual(buildRecordedParams(synthetic.at(-1))._keyword, 'Given', 'navigate is a Given')
+
+const typedParams = buildRecordedParams(typed)
+assert.strictEqual(typedParams.selector, typed.selector)
+assert.strictEqual(typedParams.value, 'makati', 'the typed text must reach the step')
+console.log(`recorded params ok — ${steps.length + synthetic.length} payloads, no key dropped`)

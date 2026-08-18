@@ -112,3 +112,71 @@ export async function mapSetZoom({ mapVar = 'map', zoom = null, delta = null, lo
   })
   return { zoom: view.getZoom() }
 }
+
+/**
+ * Read which layers the live map is actually carrying, and whether the matched one is visible.
+ *
+ * Why not just watch the network: toggling a layer off and back on usually fires NO request —
+ * the tiles are already cached, so an identical GetMap URL never leaves the browser. The layer
+ * tree's state lives on the map object, not on the wire, so that's where it has to be read.
+ *
+ * Identity is deliberately loose. A tester knows the layer by whatever the app's tree calls it,
+ * so every scalar property on the layer is a candidate (title, name, LAYERNAME, LAYERID …) plus
+ * each entry of the source's LAYERS param. Non-matches are returned in `names` so a failed
+ * assertion doubles as "here's what IS on the map, copy the right string".
+ *
+ * Returns { found, visible, names } or { error }.
+ */
+export async function mapLayerState({ mapVar = 'map', match = '' }) {
+  let map = window[mapVar]
+  if (!map || typeof map.getLayers !== 'function') {
+    // The global may be named anything (or bundled under a different key than the recorder saw),
+    // so duck-type a scan the way the recorder does before giving up.
+    const keys = Object.keys(window)
+    for (let i = 0; i < keys.length; i++) {
+      let v
+      try { v = window[keys[i]] } catch (e) { continue }   // some globals throw on access
+      if (v && typeof v.getLayers === 'function' && typeof v.getView === 'function') { map = v; break }
+    }
+  }
+  if (!map || typeof map.getLayers !== 'function') {
+    return { error: `No OpenLayers map found on the page (looked for window.${mapVar}, then scanned the globals) — the map may not be initialised yet` }
+  }
+
+  // Rendering/geometry properties are never how a tester names a layer; skipping them keeps the
+  // "layers found" list readable instead of a wall of numbers.
+  const SKIP = { source: 1, map: 1, opacity: 1, visible: 1, zIndex: 1, extent: 1, className: 1, preload: 1, minZoom: 1, maxZoom: 1, minResolution: 1, maxResolution: 1 }
+  const rows = []
+  const walk = (coll, parentVisible) => {
+    coll.forEach((l) => {
+      let vis = parentVisible
+      try { vis = parentVisible && l.getVisible() } catch (e) { /* keep parent's */ }
+      // A hidden GROUP hides its children even though each child still reports visible:true,
+      // so visibility is carried down rather than read per-layer.
+      if (typeof l.getLayers === 'function') return walk(l.getLayers(), vis)
+      const ids = []
+      let props = {}
+      try { props = l.getProperties ? l.getProperties() : {} } catch (e) { /* none */ }
+      for (const k in props) {
+        if (SKIP[k]) continue
+        const v = props[k]
+        if (typeof v === 'string' || typeof v === 'number') ids.push(String(v))
+      }
+      try {
+        const src = l.getSource()
+        const params = src && src.getParams ? src.getParams() : null
+        // WMS packs the real layer list into one param — a toggle usually rewrites THIS, not the
+        // OL layer list, so it's the identity that actually tracks the tree.
+        if (params && params.LAYERS != null) String(params.LAYERS).split(',').forEach((x) => ids.push(x.trim()))
+      } catch (e) { /* no source */ }
+      rows.push({ ids: ids.filter(Boolean), visible: !!vis })
+    })
+  }
+  walk(map.getLayers(), true)
+
+  const needle = String(match || '').trim().toLowerCase()
+  const names = [...new Set(rows.reduce((a, r) => a.concat(r.ids), []))].slice(0, 40)
+  if (!needle) return { found: false, visible: false, names }
+  const hits = rows.filter((r) => r.ids.some((s) => s.toLowerCase().includes(needle)))
+  return { found: hits.length > 0, visible: hits.some((r) => r.visible), names }
+}

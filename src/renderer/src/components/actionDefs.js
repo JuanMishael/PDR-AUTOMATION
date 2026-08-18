@@ -232,6 +232,19 @@ export const ACTION_DEFS = {
       { key: 'checked', label: 'Should be checked?', type: 'boolean' }
     ]
   },
+  // The layer-tree check. Use this one for a toggle: switching a layer off and back on usually
+  // fires no request at all (cached tiles, identical URL), so assertRequest goes silent on exactly
+  // the interaction being tested. Reads the live map instead. Name it however the app's tree does —
+  // title, LAYERNAME, LAYERID, or a WMS LAYERS entry all match, and a failure lists what IS there.
+  assertMapLayer: {
+    label: 'Assert Map Layer', category: 'Assertions',
+    summary: p => `${p.layer || '?'} ${p.visible === false ? 'off' : 'on'}`,
+    params: [
+      { key: 'layer', label: 'Layer name or id', placeholder: 'FOC PRIMARY AERIAL' },
+      { key: 'visible', label: 'Should be showing on the map', type: 'boolean', default: true },
+      { key: 'mapVar', label: 'Map global name (advanced)', placeholder: 'map' }
+    ]
+  },
   // For things that never land in the DOM — a map layer, a tile service, a background save.
   // A map draws on canvas, so no selector can prove the layer arrived; the request behind it can.
   // Checks the RESPONSE TYPE, not just the status: a WMS server returns 200 with an XML error

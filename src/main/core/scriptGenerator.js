@@ -16,7 +16,7 @@
 
 import { resolveParams } from './tokenResolver'
 import { findDragHandleRect, synthDrag } from './dragHelpers'
-import { mapPickPixel, mapSetZoom } from './mapHelpers'
+import { mapPickPixel, mapSetZoom, mapLayerState } from './mapHelpers'
 import { mobileContextOptions } from './deviceProfile'
 import { healAlts } from './healChain'
 
@@ -701,6 +701,27 @@ function actionToCode(action, p, baseUrl) {
       return p.checked === false
         ? `await expect(page.locator(${sel})).not.toBeChecked();`
         : `await expect(page.locator(${sel})).toBeChecked();`
+
+    // Is the layer ON THE MAP right now? The companion to assertRequest, and the one to use for a
+    // layer-tree toggle: switching a layer off and back on usually fires no request at all (the
+    // tiles are cached, so the identical GetMap URL never leaves the browser), which makes the
+    // network silent on exactly the interaction a tester is checking.
+    case 'assertMapLayer': {
+      const match = JSON.stringify(String(p.layer || '').trim())
+      const mapVar = (p.mapVar || 'map').trim() || 'map'
+      const wantOn = p.visible !== false
+      return `{
+      const _r = await page.evaluate((${mapLayerState.toString()}), { mapVar: ${JSON.stringify(mapVar)}, match: ${match} });
+      if (_r.error) throw new Error(_r.error);
+      const _on = ${wantOn};
+      // The layer list rides along on every failure — a wrong name is the likeliest mistake, and
+      // this turns the error into "here is what IS on the map, copy one of these".
+      const _avail = _r.names.length ? '\\nLayers on the map: ' + _r.names.join(', ') : '';
+      if (_on && !_r.found) throw new Error('Layer ' + ${match} + ' is not on the map.' + _avail);
+      if (_on && !_r.visible) throw new Error('Layer ' + ${match} + ' is on the map but hidden — the toggle did not turn it on.' + _avail);
+      if (!_on && _r.visible) throw new Error('Layer ' + ${match} + ' is still visible — expected the toggle to turn it off.' + _avail);
+    }`
+    }
 
     // Did the service call behind a map layer actually succeed? A WMS server answers a broken
     // GetMap with HTTP 200 and a ServiceExceptionReport XML body, so the status code alone reads

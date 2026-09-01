@@ -73,6 +73,29 @@ export function installSelectorGen() {
     return null
   }
 
+  // Meaningful attributes — rungs 2-3 of docs/SELECTOR-RECIPES.md. An icon-only button (a
+  // glyphicon/fa <button> with no text, no id, no name) otherwise falls straight through to a
+  // class combo every other button on the page shares, or to a positional path. A legacy app's
+  // inline onclick= is real application code: it outlives any class or DOM position.
+  function attrSelectors(el, tag) {
+    var out = []
+    var get = function (n) { var v = el.getAttribute && el.getAttribute(n); v = (v || '').trim(); return v || null }
+    var q = function (v) { return v.replace(/"/g, '\\"') }
+    var push = function (n, v) { if (v && v.length <= 60) out.push(tag + '[' + n + '="' + q(v) + '"]') }
+    push('title', get('title'))
+    var oc = get('onclick')
+    if (oc) {
+      // Prefix on the handler NAME first: the full string often carries per-row arguments
+      // (Delete(42)) that differ between otherwise identical buttons.
+      var fn = oc.match(/^[A-Za-z_$][\w$]*/)
+      if (fn) out.push(tag + '[onclick^="' + fn[0] + '"]')
+      push('onclick', oc)
+    }
+    push('placeholder', get('placeholder'))
+    push('alt', get('alt'))
+    return out
+  }
+
   window.__norm = norm
   window.__genSelector = function (el) {
     if (!el || el.nodeType !== 1) return 'body'
@@ -101,7 +124,10 @@ export function installSelectorGen() {
       var c = Array.prototype.filter.call(document.querySelectorAll(tag), function (e) { return norm(e.textContent) === text }).length
       if (c === 1) return tag + ':text-is("' + text.replace(/"/g, '\\"') + '")'
     }
-    // 5. a single unique class, then a class combo
+    // 5. a meaningful attribute (title / inline onclick / placeholder / alt)
+    var attrs = attrSelectors(el, tag)
+    for (var k = 0; k < attrs.length; k++) { if (uniq(attrs[k])) return attrs[k] }
+    // 6. a single unique class, then a class combo
     if (el.classList && el.classList.length) {
       for (var j = 0; j < el.classList.length; j++) { var sc = tag + '.' + esc(el.classList[j]); if (uniq(sc)) return sc }
       var combo = tag + '.' + Array.prototype.map.call(el.classList, esc).join('.'); if (uniq(combo)) return combo
@@ -147,6 +173,8 @@ export function installSelectorGen() {
         if (_tc > 0) { seen[_ts] = true; out.push({ selector: _ts, count: _tc, kind: 'text' }) }
       }
     }
+    var attrCands = attrSelectors(el, tag)
+    for (var k = 0; k < attrCands.length; k++) add(attrCands[k], 'attr')
     add(uniqueAncestorScope(el), 'scoped-structural')
     // Clickable ancestors: clicking the <li id> that wraps an <a> is just as valid.
     var node = el.parentElement, hops = 0
@@ -156,8 +184,12 @@ export function installSelectorGen() {
     }
     add(cssPath(el), 'css-path')
 
-    var rank = { id: 1, 'scoped-id': 2, 'test-attr': 3, 'ancestor-id': 4, 'ancestor-id-tag': 4,
-      name: 5, aria: 6, text: 7, 'scoped-structural': 8, 'css-path': 9 }
+    // An ANCESTOR is not the element: '#panel' re-finds the container, and clicking a container
+    // usually does nothing while the step still reports green. It stays on the list (clicking the
+    // <li id> that wraps an <a> is genuinely valid) but never outranks a hook on the element
+    // itself — being unique is not the same as being right.
+    var rank = { id: 1, 'scoped-id': 2, 'test-attr': 3, name: 4, aria: 5, text: 6, attr: 7,
+      'scoped-structural': 8, 'ancestor-id-tag': 9, 'ancestor-id': 10, 'css-path': 11 }
     out.sort(function (a, b) {
       var au = a.count === 1 ? 0 : 1, bu = b.count === 1 ? 0 : 1
       if (au !== bu) return au - bu                         // unique matches first

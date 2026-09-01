@@ -15,14 +15,14 @@ import { healAlts } from './healChain'
 
 export const REPLAYABLE = new Set([
   'navigate', 'reload', 'goBack', 'goForward', 'waitForUrl',
-  'click', 'dblclick', 'rightClick', 'hover', 'focus', 'selectOption',
+  'click', 'dblclick', 'rightClick', 'hover', 'focus', 'selectOption', 'setCheckbox',
   'fill', 'type', 'clearInput', 'pressKey', 'uploadFile', 'dragAndDrop',
   'dragByOffset', 'clickAt', 'zoom', 'pinCoordinate', 'mapZoom',
   'waitForSelector', 'waitForTimeout', 'waitForNetworkIdle',
   // Replayable because they change state the later steps depend on: a captured {{var.x}} that
   // never got captured would replay as the literal token, and custom code is often the thing that
   // navigates. Skipping them would make pick/test land somewhere the real run never is.
-  'captureValue', 'runScript'
+  'captureValue', 'runScript', 'executeScript'
 ])
 
 export function parseParams(p) {
@@ -30,22 +30,47 @@ export function parseParams(p) {
   try { return typeof p === 'string' ? JSON.parse(p) : p } catch { return {} }
 }
 
-function locator(page, p) {
+// Primary-preferring self-healing resolve — mirrors scriptGenerator's _loc so replay lands on
+// the same element a run would. Alts are a fallback for a rotted primary, so they only get a say
+// when the primary matches nothing; a .or() union would resolve in DOM order and let a loose alt
+// hijack the step.
+async function locator(page, p) {
   const sel = p.selector || 'body'
-  // Self-healing fallback chain — mirrors scriptGenerator.locatorExpr so replay behaves
-  // like a real run. See healChain.js for the .or().first() DOM-order caveat.
   const alts = healAlts(p)
-  if (alts.length) {
-    let l = page.locator(sel)
-    for (const a of alts) l = l.or(page.locator(a))
-    return l.first()
-  }
-  return page.locator(sel)
+  if (!alts.length) return page.locator(sel)
+  const primary = page.locator(sel)
+  try {
+    const n = await primary.count()
+    if (n === 1) return primary
+    if (n > 1) return await visibleFirst(primary)
+  } catch { /* fall through to alts */ }
+  let l = page.locator(sel)
+  for (const a of alts) l = l.or(page.locator(a))
+  return visibleFirst(l)
+}
+
+// Several matches: take the one the tester can SEE — mirrors _visible in scriptGenerator. Legacy
+// apps keep one close button per panel in the DOM at all times, so a plain .first() lands on a
+// hidden twin and the step waits out its whole timeout while the panel sits there open.
+async function visibleFirst(loc) {
+  try { const v = loc.filter({ visible: true }); if (await v.count()) return v.first() } catch { /* older engine */ }
+  return loc.first()
 }
 
 function resolveUrl(raw, baseUrl) {
   if (!raw) return baseUrl
   return (raw.startsWith('http') || raw.startsWith('file')) ? raw : (baseUrl || '') + raw
+}
+
+// Mirrors _samePage in scriptGenerator's navigate - keep the two in step.
+export function samePage(a, b) {
+  try {
+    const x = new URL(a), y = new URL(b)
+    return x.origin === y.origin && x.pathname.replace(/\/+$/, '') === y.pathname.replace(/\/+$/, '')
+      && x.search === y.search && x.hash === y.hash
+  } catch {
+    return (a || '').replace(/\/+$/, '') === (b || '').replace(/\/+$/, '')
+  }
 }
 
 // Smart file upload — mirrors the _uploadFile helper in scriptGenerator. Handles a hidden
@@ -103,8 +128,14 @@ export async function replayStep(page, action, p, baseUrl, vars = {}) {
       const navTimeout = Number(p.navTimeout) > 0 ? Number(p.navTimeout) : 0
       const opts = navTimeout ? { waitUntil, timeout: navTimeout } : { waitUntil }
       const settleState = waitUntil === 'networkidle' ? 'domcontentloaded' : waitUntil
+      const target = resolveUrl(p.url, baseUrl)
+      // Already on this exact URL -> skip, exactly as the generated run does. Chained scenarios
+      // each start with their own 'open the app', so without this the last one RELOADS the app the
+      // prerequisite chain just logged into - and an app holding its session client-side lands back
+      // on the login page. Compares origin+path+search+hash, so a real ?query/#hash move still navigates.
+      if (samePage(target, page.url())) return undefined
       try {
-        await page.goto(resolveUrl(p.url, baseUrl), opts)
+        await page.goto(target, opts)
       } catch (e) {
         if (!/ERR_ABORTED|interrupted by another navigation/i.test(e.message || '')) throw e
         await page.waitForLoadState(settleState).catch(() => {})
@@ -120,28 +151,39 @@ export async function replayStep(page, action, p, baseUrl, vars = {}) {
     case 'dblclick':
     case 'rightClick': {
       if (Number(p.waitBefore) > 0) await page.waitForTimeout(Number(p.waitBefore))
-      const loc = locator(page, p)
-      if (action === 'dblclick')   return loc.dblclick()
-      if (action === 'rightClick') return loc.click({ button: 'right' })
-      return loc.click()
+      const loc = (await locator(page, p))
+      // dispatch/force mirror scriptGenerator. They matter MORE here than in a run: the tester
+      // ticked them because a plain click doesn't work on that element (collapsed menu, JS
+      // toggle), so ignoring them makes replay hang the full action timeout and abandon the
+      // rest of the chain on a step the run does fine.
+      if (p.dispatch && action !== 'rightClick') return loc.dispatchEvent(action === 'dblclick' ? 'dblclick' : 'click')
+      const opts = p.force ? { force: true } : {}
+      if (action === 'dblclick')   return loc.dblclick(opts)
+      if (action === 'rightClick') return loc.click({ button: 'right', ...opts })
+      return loc.click(opts)
+    }
+
+    case 'setCheckbox': {
+      if (Number(p.waitBefore) > 0) await page.waitForTimeout(Number(p.waitBefore))
+      return (await locator(page, p)).setChecked(p.checked !== false)
     }
 
     // Typing/selecting goes through locator() too, so the self-healing chain applies here exactly
     // as it does in the generated run (mirrors scriptGenerator).
-    case 'hover':              return locator(page, p).hover()
-    case 'focus':              return locator(page, p).focus()
-    case 'selectOption':       return locator(page, p).selectOption(p.value)
-    case 'fill':               return locator(page, p).fill(p.value ?? '')
-    case 'type':               return locator(page, p).type(p.value ?? '', { delay: p.delay ?? 50 })
-    case 'clearInput':         return locator(page, p).fill('')
-    case 'pressKey':           return locator(page, p).press(p.key)
+    case 'hover':              return (await locator(page, p)).hover()
+    case 'focus':              return (await locator(page, p)).focus()
+    case 'selectOption':       return (await locator(page, p)).selectOption(p.value)
+    case 'fill':               return (await locator(page, p)).fill(p.value ?? '')
+    case 'type':               return (await locator(page, p)).type(p.value ?? '', { delay: p.delay ?? 50 })
+    case 'clearInput':         return (await locator(page, p)).fill('')
+    case 'pressKey':           return (await locator(page, p)).press(p.key)
     case 'uploadFile':         return smartUpload(page, p)
     case 'dragAndDrop':        return page.dragAndDrop(p.source, p.target)
 
     case 'dragByOffset': {
       // Mirror scriptGenerator: press the real drag handle, paced discrete moves, and a
       // synthetic-event fallback if the panel didn't move.
-      const el = await locator(page, p).elementHandle()
+      const el = await (await locator(page, p)).elementHandle()
       if (!el) throw new Error('Drag source not found: ' + (p.selector || ''))
       const dx = Number(p.dx) || 0, dy = Number(p.dy) || 0
       const r = await page.evaluate(findDragHandleRect, el)
@@ -165,7 +207,7 @@ export async function replayStep(page, action, p, baseUrl, vars = {}) {
 
     case 'clickAt': {
       const x = Number(p.x) || 0, y = Number(p.y) || 0
-      if (p.selector) return locator(page, p).click({ position: { x, y } })
+      if (p.selector) return (await locator(page, p)).click({ position: { x, y } })
       return page.mouse.click(x, y)
     }
 
@@ -174,7 +216,7 @@ export async function replayStep(page, action, p, baseUrl, vars = {}) {
       const times = Math.max(1, Number(p.times) || 1)
       if (p.selector) {
         // Low-level move (not hover) so an overlapping panel can't block actionability.
-        const b = await locator(page, p).boundingBox()
+        const b = await (await locator(page, p)).boundingBox()
         if (b) await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2)
       }
       for (let i = 0; i < times; i++) { await page.mouse.wheel(0, deltaY); await page.waitForTimeout(150) }
@@ -212,13 +254,13 @@ export async function replayStep(page, action, p, baseUrl, vars = {}) {
       const name = String(p.name || '').trim() || 'value'
       const from = p.from || 'text'
       const raw =
-        from === 'value'     ? await locator(page, p).inputValue()
-      : from === 'attribute' ? await locator(page, p).getAttribute(p.attr || 'value')
+        from === 'value'     ? await (await locator(page, p)).inputValue()
+      : from === 'attribute' ? await (await locator(page, p)).getAttribute(p.attr || 'value')
       : from === 'url'       ? page.url()
       // indirect (0,eval): runs in the PAGE's global scope, same as the generated script — and
       // keeps the bundler from warning about direct eval capturing this module's scope.
       : from === 'js'        ? await page.evaluate((s) => { const r = (0, eval)(s); return typeof r === 'function' ? r() : r }, p.script ?? '')
-      :                        await locator(page, p).innerText()
+      :                        await (await locator(page, p)).innerText()
       vars[name] = String(raw ?? '').trim()
       return undefined
     }
@@ -230,6 +272,10 @@ export async function replayStep(page, action, p, baseUrl, vars = {}) {
       const fn = new AsyncFunction('page', 'context', 'expect', 'vars', String(p.code || ''))
       return fn(page, page.context(), expect, vars)
     }
+
+    // Page-context JS, same sandbox as the generated run's executeScript.
+    case 'executeScript':
+      return page.evaluate((code) => { const r = (0, eval)(code); return typeof r === 'function' ? r() : r }, p.script ?? '')
 
     case 'waitForSelector':    return page.waitForSelector(p.selector, { state: p.state || 'visible' })
     case 'waitForTimeout':     return page.waitForTimeout(Number(p.ms) || 1000)
@@ -244,24 +290,68 @@ export async function replayStep(page, action, p, baseUrl, vars = {}) {
  * naming the step that broke — so the UI can say which step failed instead of
  * misreporting "0 matches" / "couldn't capture".
  */
-// Bounded best-effort settle between replayed steps — the replay equivalent of the run's
-// calm-playback wait. Lets a prior step's network/UI land before the next action so replay
-// doesn't rush and fail on slow apps. Built on Playwright's networkidle but capped + swallowed,
-// so a never-idle app (maps/polling) just proceeds after the cap instead of hanging.
-const REPLAY_SETTLE_CAP = 6000
-async function settle(page) {
-  try { await page.waitForLoadState('networkidle', { timeout: REPLAY_SETTLE_CAP }) } catch { /* proceed */ }
+// Bounded best-effort settle between replayed steps — the same calm-playback wait the run does
+// (_settle in scriptGenerator), and for the same reason: let the prior step's XHRs land before
+// the next action. It must COUNT REQUESTS, not use waitForLoadState('networkidle'): that state
+// belongs to the current document, so in an SPA (this app never re-loads the document after
+// login) it resolves instantly and replay races ahead of every XHR — while on a page that never
+// went idle it burns the whole cap. Capped and swallowed, so a polling/map app just proceeds.
+const REPLAY_SETTLE_CAP = 3000   // matches the run's default settle_timeout
+
+// Count in-flight requests for the whole context (covers popups + the document's own loads).
+function netCounter(page) {
+  const ctx = page.context()
+  let inflight = 0
+  let lastTs = Date.now()
+  const started = () => { inflight++ }
+  const ended = () => { inflight = Math.max(0, inflight - 1); lastTs = Date.now() }
+  ctx.on('request', started)
+  ctx.on('requestfinished', ended)
+  ctx.on('requestfailed', ended)
+  return {
+    quiet: () => inflight === 0 && Date.now() - lastTs >= 500,
+    detach: () => {
+      ctx.off('request', started)
+      ctx.off('requestfinished', ended)
+      ctx.off('requestfailed', ended)
+    }
+  }
+}
+
+async function settle(page, net) {
+  try {
+    await page.waitForTimeout(150)   // floor: let a just-fired XHR register
+    const start = Date.now()
+    while (Date.now() - start < REPLAY_SETTLE_CAP) {
+      if (net.quiet()) return
+      await page.waitForTimeout(100)
+    }
+  } catch { /* page gone / stopped — never fail a step on the settle */ }
+}
+
+// Why did it fail? "Timeout 8000ms exceeded" is the same message for three different problems,
+// and they need opposite fixes: nothing matched (the flow is not where the step expects), matched
+// but hidden (an earlier step already closed it), or matched and visible but covered by something
+// (the Dispatch case). Ask the page instead of leaving the tester to guess. Best-effort — a
+// diagnosis never replaces the real error.
+async function diagnose(page, p) {
+  const sel = (p.selector || '').trim()
+  if (!sel) return ''
+  try {
+    const loc = page.locator(sel)
+    const n = await loc.count()
+    if (n === 0) return ` — "${sel}" matched nothing here, so an earlier step left the page somewhere else.`
+    const visible = await loc.first().isVisible().catch(() => false)
+    if (!visible) return ` — "${sel}" matched ${n}, but it is hidden right now (already closed, or zero-size).`
+    return ` — "${sel}" matched ${n} and it IS visible, so something is covering it — try Dispatch DOM event on the step.`
+  } catch { return '' }
 }
 
 // Evaluate an If-block condition against the live page — mirrors __cond in scriptGenerator so
 // replay takes the same branch a real run would. Never throws (missing element = false condition).
 async function evalCond(page, cond) {
   try {
-    const sels = [(cond.selector || '').trim(), ...healAlts(cond)].filter(Boolean)
-    const arr = sels.length ? sels : ['body']
-    let loc = page.locator(arr[0])
-    for (let i = 1; i < arr.length; i++) loc = loc.or(page.locator(arr[i]))
-    loc = loc.first()
+    const loc = await locator(page, cond)   // same primary-preferring resolve as actions
     const t = Number(cond.timeoutMs) > 0 ? Number(cond.timeoutMs) : 0
     const exp = cond.expected ?? ''
     let r
@@ -283,7 +373,7 @@ async function evalCond(page, cond) {
 
 // Block-aware replay: runs a flat step list, taking the live branch at each If-block (so "test up
 // to here" reaches the element the real run would). counter.n tracks state-changing steps actually run.
-async function replayBlock(page, steps, baseUrl, dataContext, counter, vars) {
+async function replayBlock(page, steps, baseUrl, dataContext, counter, vars, net) {
   for (let i = 0; i < steps.length; i++) {
     const s = steps[i]
     if (s.action === 'ifStart') {
@@ -300,7 +390,7 @@ async function replayBlock(page, steps, baseUrl, dataContext, counter, vars) {
       const raw = parseParams(s.params)
       const cond = subVars(dataContext ? resolveParams(raw.cond || {}, dataContext) : (raw.cond || {}), vars)
       const branch = (await evalCond(page, cond)) ? thenList : elseList
-      const res = await replayBlock(page, branch, baseUrl, dataContext, counter, vars)
+      const res = await replayBlock(page, branch, baseUrl, dataContext, counter, vars, net)
       if (!res.ok) return res
       i = j
       continue
@@ -313,13 +403,14 @@ async function replayBlock(page, steps, baseUrl, dataContext, counter, vars) {
     const p = subVars(dataContext ? resolveParams(parseParams(s.params), dataContext) : parseParams(s.params), vars)
     try {
       await replayStep(page, s.action, p, baseUrl, vars)
-      await settle(page)   // wait for this step's network to quiet before the next
+      await settle(page, net)   // wait for this step's network to quiet before the next
       counter.n++
     } catch (e) {
       const detail = (e.message || '').split('\n')[0].slice(0, 100)
       return {
         ok: false, setupFailed: true, failedIndex: counter.n, failedAction: s.action, ranSteps: counter.n,
         error: `Setup step ${counter.n + 1} (${s.action}) failed before reaching your element — ${detail}`
+          + (await diagnose(page, p))
       }
     }
   }
@@ -329,6 +420,11 @@ async function replayBlock(page, steps, baseUrl, dataContext, counter, vars) {
 export async function replaySteps(page, steps, baseUrl, dataContext = null) {
   const counter = { n: 0 }
   const vars = {}   // fresh per replay pass — same lifetime as a run's __vars
-  const res = await replayBlock(page, steps, baseUrl, dataContext, counter, vars)
-  return res.ok ? { ok: true, ranSteps: counter.n } : res
+  const net = netCounter(page)
+  try {
+    const res = await replayBlock(page, steps, baseUrl, dataContext, counter, vars, net)
+    return res.ok ? { ok: true, ranSteps: counter.n } : res
+  } finally {
+    net.detach()   // the recorder keeps using this context after replay — don't leak listeners
+  }
 }

@@ -246,6 +246,28 @@ ${indent(stepCode, 2)}
 
   // Bounded best-effort settle: a short floor (so a just-fired XHR has time to register), then
   // wait until no requests are in flight AND the network has been quiet ~500ms — capped, never throws.
+  // Primary-preferring self-healing resolve. Alts are a FALLBACK for a rotted selector, so they
+  // only get a say when the primary matches nothing — see locatorExpr.
+  const locHelper = `
+  async function _loc(sel, alts) {
+    const _primary = page.locator(sel);
+    try {
+      const _n = await _primary.count();
+      if (_n === 1) return _primary;
+      if (_n > 1) return await _visible(_primary);
+    } catch { /* fall through to alts */ }
+    let _l = page.locator(sel);
+    for (const _a of alts) _l = _l.or(page.locator(_a));
+    return await _visible(_l);
+  }
+  // Several matches: take the one the tester can SEE. Legacy apps keep one close button per
+  // panel in the DOM at all times, so a plain .first() lands on a hidden twin and the step waits
+  // out its whole timeout while the panel it should have closed sits there open.
+  async function _visible(loc) {
+    try { const _v = loc.filter({ visible: true }); if (await _v.count()) return _v.first(); } catch {}
+    return loc.first();
+  }`
+
   const settleHelper = `
   async function _settle(capMs) {
     const unlimited = !(capMs > 0);   // capMs <= 0 → wait until fully idle, no time limit
@@ -302,6 +324,7 @@ const { expect } = require('playwright/test');
     : s;
 ${netDecls}
 ${settleHelper}
+${locHelper}
 
   // Smart file upload so testers don't have to understand hidden file inputs.
   //  - trigger set     → click that button and catch the OS file dialog it opens.
@@ -334,9 +357,7 @@ ${settleHelper}
   // NOW" is the semantic (with an optional timeoutMs for the appears-slowly case).
   async function __cond(c) {
     try {
-      let loc = page.locator(c.sel[0]);
-      for (let i = 1; i < c.sel.length; i++) loc = loc.or(page.locator(c.sel[i]));
-      loc = loc.first();
+      const loc = await _loc(c.sel[0], c.sel.slice(1));
       const t = c.timeoutMs || 0;
       let r;
       switch (c.type) {
@@ -455,16 +476,12 @@ function generateStep(step, index, baseUrl, { screenshotOnFail = false, outputDi
 
 function locatorExpr(p) {
   const sel = p.selector ? JSON.stringify(p.selector) : "'body'"
-  // Self-healing: OR the primary with the manual Alt Selector + auto-captured chain, so a
-  // drifted primary still resolves via an alternative that re-finds the same element.
-  // ponytail: .or().first() unions and picks DOM order, not primary-first — if a stale auto
-  // alt ever matches a WRONG element while the primary still exists, swap this for a
-  // primary-preferring resolve() (try primary, fall back only on 0 matches).
+  // Self-healing: fall back to the manual Alt Selector + auto-captured chain when the primary
+  // has drifted. PRIMARY-PREFERRING, not a .or() union: a union resolves in DOM order, so a
+  // loose alt matching an element ABOVE the primary silently hijacked the step — the click
+  // landed on the wrong element and the step still reported green. Fall back only on 0 matches.
   const alts = healAlts(p)
-  if (alts.length) {
-    const ors = alts.map(a => `.or(page.locator(${JSON.stringify(a)}))`).join('')
-    return `page.locator(${sel})${ors}.first()`
-  }
+  if (alts.length) return `(await _loc(${sel}, ${JSON.stringify(alts)}))`
   return `page.locator(${sel})`
 }
 

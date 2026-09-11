@@ -1,6 +1,6 @@
 {
   "name": "pdr-automation",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "PDR-AUTOMATION — Visual QA Automation Runner powered by Playwright",
   "main": "./out/main/index.js",
   "author": "PDR QA Team",

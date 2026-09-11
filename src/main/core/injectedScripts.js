@@ -398,10 +398,16 @@ export function recorderListener() {
   // (e.g. a success toast) instead of performing/recording a normal click. One-shot.
   function assertMode() { try { return sessionStorage.getItem('__recAssert') === '1' } catch (e) { return false } }
   function setAssert(v) { try { sessionStorage.setItem('__recAssert', v ? '1' : '0') } catch (e) {} }
+  // WHICH check the pending assert is: 'visible' (the element is on screen) or 'region' (that part
+  // of the screen repainted). Chosen from the Assert menu before the target is clicked — the two
+  // answer different questions, and the click alone can't say which one the tester wants.
+  function assertKind() { try { return sessionStorage.getItem('__recAssertKind') === 'region' ? 'region' : 'visible' } catch (e) { return 'visible' } }
+  function setAssertKind(k) { try { sessionStorage.setItem('__recAssertKind', k) } catch (e) {} }
   var renderBar = null   // set by buildBar so capture handlers can refresh the bar
   function getCount() { try { return parseInt(sessionStorage.getItem('__recCount') || '0', 10) } catch (e) { return 0 } }
   function setCount(n) { try { sessionStorage.setItem('__recCount', String(n)) } catch (e) {} }
-  function inBar(t) { return t && t.closest && t.closest('#__recBar') }
+  // Recorder chrome — the toolbar and the map-region grid. Never recorded as page interaction.
+  function inBar(t) { return t && t.closest && !!(t.closest('#__recBar') || t.closest('#__recGrid') || t.closest('#__recGridTip')) }
 
   // What a tester would call this control. Deliberately NOT its textContent: a <select>'s
   // textContent is every option run together, so the card read "SelectArm StagingCabinet
@@ -553,14 +559,118 @@ export function recorderListener() {
     down = null
   }, true)
 
+  // The nine boxes Assert Map Changed can watch, laid over the map so the tester picks one by
+  // pointing at it. The box decides pass/fail — a layer that draws in the corner is invisible to
+  // the centre box — so it's worth SEEING before the step is written, not typed in afterwards.
+  var REGION_NAMES = ['top-left', 'top', 'top-right', 'left', 'centre', 'right', 'bottom-left', 'bottom', 'bottom-right']
+
+  // Held outside showRegionGrid so EVERY exit can reach it — Escape, the Cancel button, a click
+  // off the map, and the toolbar's own Pause/Stop/Assert buttons. Without this the grid could be
+  // left painted over the page after assert mode had already been switched off.
+  var gridClose = null
+  function closeRegionGrid() { var f = gridClose; gridClose = null; if (f) f() }
+  // Abandon the whole pending check: boxes away, assert mode off, toolbar back to '✓ Assert'.
+  function cancelPick() { closeRegionGrid(); setAssert(false); if (renderBar) renderBar() }
+
+  function showRegionGrid(el) {
+    closeRegionGrid()
+    var r = el.getBoundingClientRect()
+    if (!r.width || !r.height) return
+
+    var wrap = document.createElement('div')
+    wrap.id = '__recGrid'
+    wrap.style.cssText = 'position:fixed;left:' + r.left + 'px;top:' + r.top + 'px;width:' + r.width + 'px;height:' + r.height +
+      'px;z-index:2147483646;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);' +
+      'font:12px system-ui,sans-serif'
+
+    // The tip is a SIBLING, not a child: inside the grid it would lay out as a tenth cell.
+    // It carries a real Cancel button — Escape alone is invisible, and a tester who wants to zoom
+    // the map first has no reason to guess at a keyboard shortcut.
+    var tip = document.createElement('div')
+    tip.id = '__recGridTip'
+    tip.style.cssText = 'position:fixed;left:' + r.left + 'px;top:' + Math.max(0, r.top - 30) +
+      'px;z-index:2147483647;background:#222;color:#fff;padding:4px 6px 4px 10px;border-radius:6px;' +
+      'font:12px system-ui,sans-serif;display:flex;align-items:center;gap:8px'
+    var tipText = document.createElement('span')
+    tipText.textContent = 'Click the part to watch'
+    var btnCancel = document.createElement('button')
+    btnCancel.id = '__recGridCancel'
+    btnCancel.textContent = '✕ Cancel'
+    btnCancel.style.cssText = 'cursor:pointer;border:none;border-radius:999px;padding:3px 10px;' +
+      'font:inherit;color:#fff;background:rgba(255,255,255,.18)'
+    btnCancel.addEventListener('click', function (ev) {
+      ev.preventDefault(); ev.stopPropagation()
+      cancelPick()
+    }, true)
+    tip.appendChild(tipText); tip.appendChild(btnCancel)
+
+    function close() {
+      wrap.remove(); tip.remove()
+      document.removeEventListener('keydown', onKey, true)
+    }
+    function onKey(ev) { if (ev.key === 'Escape') { ev.preventDefault(); cancelPick() } }
+    document.addEventListener('keydown', onKey, true)
+    gridClose = close
+
+    var idle = 'rgba(0,0,0,0.12)'
+    REGION_NAMES.forEach(function (name) {
+      var cell = document.createElement('div')
+      cell.textContent = name
+      cell.style.cssText = 'border:1px dashed rgba(255,255,255,0.85);box-shadow:inset 0 0 0 1px rgba(0,0,0,0.35);' +
+        'background:' + idle + ';color:#fff;text-shadow:0 1px 2px #000;display:flex;align-items:center;' +
+        'justify-content:center;cursor:pointer;user-select:none'
+      cell.addEventListener('mouseenter', function () { cell.style.background = 'rgba(80,160,255,0.45)' })
+      cell.addEventListener('mouseleave', function () { cell.style.background = idle })
+      cell.addEventListener('click', function (ev) {
+        ev.preventDefault(); ev.stopPropagation()
+        closeRegionGrid()
+        var msel = window.__genSelector(el)
+        send({ action: 'assertMapChanged', selector: msel, region: name,
+          label: 'Assert map changed: ' + name + ' of ' + msel })
+        setAssert(false)
+        if (renderBar) renderBar()
+      }, true)
+      wrap.appendChild(cell)
+    })
+
+    document.body.appendChild(wrap)
+    document.body.appendChild(tip)
+  }
+
   document.addEventListener('click', function (e) {
     if (!armed()) return
     var t = e.target; if (inBar(t)) return
     // Assert mode: don't perform the click — mark the target as a visibility check
     // (the success-notification case) and emit an assertVisible step. One-shot.
+    // A click anywhere else closes an open Assert menu, and is swallowed rather than recorded —
+    // dismissing a menu is not an action the tester meant to put in the script.
+    var openMenu = document.getElementById('__recAssertMenu')
+    if (openMenu && openMenu.style.display === 'flex') {
+      openMenu.style.display = 'none'
+      e.preventDefault(); e.stopPropagation()
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation()
+      return
+    }
+    // Boxes are up and the click landed somewhere else (inBar already let the grid's own clicks
+    // through): the tester wants out — to pan, to zoom, to go do something first. Cancel rather
+    // than record that click, which they only made to escape the picker.
+    if (gridClose) {
+      e.preventDefault(); e.stopPropagation()
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation()
+      cancelPick()
+      return
+    }
     if (assertMode()) {
       e.preventDefault(); e.stopPropagation()
       if (e.stopImmediatePropagation) e.stopImmediatePropagation()
+      if (assertKind() === 'region') {
+        // On a live map, watch the map CONTAINER rather than whatever child was clicked — the
+        // canvas, an overlay or a control all sit inside it, and the container is the stable
+        // element to screenshot. Anything else (a modal, a chart, a panel) is watched as itself.
+        var ahit = findMap(t)
+        showRegionGrid(ahit ? ((ahit.map.getTargetElement && ahit.map.getTargetElement()) || ahit.map.getViewport()) : t)
+        return   // stays in assert mode until a box is picked
+      }
       var asel = window.__genSelector(t)
       send({ action: 'assertVisible', selector: asel, label: 'Assert visible: ' + (labelOf(t) || asel) })
       setAssert(false)
@@ -677,6 +787,35 @@ export function recorderListener() {
     var info = document.createElement('span'); info.id = '__recCount'; info.style.cssText = 'opacity:.85;padding-right:4px'
     info.textContent = getCount() + ' steps'
 
+    // Assert opens a menu instead of arming one fixed check. It sits inside #__recBar, so inBar()
+    // already keeps its own clicks out of the recording.
+    var menu = document.createElement('div')
+    menu.id = '__recAssertMenu'
+    menu.style.cssText = 'position:absolute;bottom:calc(100% + 10px);left:50%;transform:translateX(-50%);' +
+      'display:none;flex-direction:column;gap:2px;background:#1b1b2b;color:#fff;border-radius:12px;padding:6px;' +
+      'box-shadow:0 6px 24px rgba(0,0,0,.5);min-width:250px;cursor:default;text-align:left'
+
+    function mkItem(title, sub, kind) {
+      var b = document.createElement('button')
+      b.style.cssText = 'display:block;width:100%;text-align:left;cursor:pointer;border:none;' +
+        'background:transparent;color:#fff;font:inherit;padding:8px 10px;border-radius:8px'
+      var t1 = document.createElement('div'); t1.textContent = title
+      var t2 = document.createElement('div'); t2.textContent = sub
+      t2.style.cssText = 'font-weight:400;font-size:11px;opacity:.65;margin-top:2px'
+      b.appendChild(t1); b.appendChild(t2)
+      b.addEventListener('mouseenter', function () { b.style.background = 'rgba(255,255,255,.12)' })
+      b.addEventListener('mouseleave', function () { b.style.background = 'transparent' })
+      b.addEventListener('click', function (ev) {
+        ev.preventDefault(); ev.stopPropagation()
+        setAssertKind(kind); setAssert(true)
+        menu.style.display = 'none'
+        render()
+      }, true)
+      return b
+    }
+    menu.appendChild(mkItem('✓ Element is visible', 'A message, a button, a modal — click it', 'visible'))
+    menu.appendChild(mkItem('▦ Part of the screen repainted', 'A map or panel — then pick one of nine boxes', 'region'))
+
     function render() {
       if (armed()) {
         dot.textContent = '●'; dot.style.color = '#EF4444'
@@ -688,7 +827,7 @@ export function recorderListener() {
       btnMain.style.background = '#6C63FF'
       // Assert applies only while recording; dim it when paused/stopped.
       var on = assertMode()
-      btnAssert.textContent = on ? '✓ Click target…' : '✓ Assert'
+      btnAssert.textContent = on ? (assertKind() === 'region' ? '▦ Click the area…' : '✓ Click target…') : '✓ Assert ▾'
       btnAssert.style.background = on ? '#F59E0B' : 'rgba(255,255,255,.14)'
       btnAssert.style.opacity = armed() ? '1' : '.45'
       btnStop.textContent = '■ Stop & save'; btnStop.style.background = '#EF4444'
@@ -698,20 +837,22 @@ export function recorderListener() {
     btnMain.addEventListener('click', function (ev) {
       ev.preventDefault(); ev.stopPropagation()
       setArmed(!armed())
-      if (!armed()) setAssert(false)   // leaving record mode clears a pending assert
+      if (!armed()) { setAssert(false); closeRegionGrid() }   // leaving record mode clears a pending assert
       render()
     }, true)
 
     btnAssert.addEventListener('click', function (ev) {
       ev.preventDefault(); ev.stopPropagation()
       if (!armed()) return             // assert is a recording-time check
-      setAssert(!assertMode())
+      // Already waiting for a target → this click cancels it. Otherwise offer the two checks.
+      if (assertMode()) { setAssert(false); closeRegionGrid(); menu.style.display = 'none'; render(); return }
+      menu.style.display = menu.style.display === 'flex' ? 'none' : 'flex'
       render()
     }, true)
 
     btnStop.addEventListener('click', function (ev) {
       ev.preventDefault(); ev.stopPropagation()
-      setArmed(false); setAssert(false)
+      setArmed(false); setAssert(false); closeRegionGrid()
       render(); info.textContent = '✓ ' + getCount() + ' saved'
       try { window.__recordDone() } catch (e) {}
     }, true)
@@ -737,7 +878,7 @@ export function recorderListener() {
 
     bar.appendChild(grip); bar.appendChild(dot)
     bar.appendChild(btnMain); bar.appendChild(btnAssert); bar.appendChild(btnStop)
-    bar.appendChild(info)
+    bar.appendChild(info); bar.appendChild(menu)
     document.documentElement.appendChild(bar)
     render()
   }

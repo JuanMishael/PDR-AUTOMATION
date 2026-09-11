@@ -6,6 +6,8 @@ import { launchSessionContext } from '../core/browserSession'
 import { buildDataContext } from '../core/tokenResolver'
 import { expandGroups } from '../core/groupExpand'
 import { getDb } from '../core/db'
+import { cropRegion } from '../core/imageRegion'
+import { saveBaselineBuffer } from './baselines'
 
 // During the recorder's pre-Start replay we're only repositioning the browser to the
 // current flow state — not asserting an exact element like the picker does. So cap how
@@ -13,6 +15,22 @@ import { getDb } from '../core/db'
 // seconds lets the tester take over by hand quickly, instead of stalling the full 20s.
 // It's a cap, not a floor — profiles with a shorter timeout keep their own value.
 const REPLAY_ACTION_TIMEOUT_CAP = 8000
+
+/**
+ * Screenshot the region an Assert Map Changed step just claimed, and keep it as the step's
+ * reference. Cropped by the SAME function the run uses, so the two line up pixel-for-pixel.
+ *
+ * The expectation flips to 'same' along with it: a picture taken now means "the map should still
+ * look like this", whereas the empty-reference form of the step means "it must have repainted
+ * since the last capture". Clearing the image in the step card puts it back to the latter.
+ */
+async function captureReference(page, payload) {
+  const { PNG } = await import('pngjs')
+  const shot = await page.locator(payload.selector).first().screenshot({ timeout: 5000 })
+  const png = cropRegion(PNG, shot, payload.region, 0, 0)
+  const refImage = saveBaselineBuffer(PNG.sync.write(png), `${payload.region || 'region'}-recorded`)
+  return { refImage, expect: 'same', label: `Assert map matches: ${payload.region} of ${payload.selector}` }
+}
 
 /**
  * Live recorder. Opens a headful browser, optionally replays existing steps so the
@@ -49,8 +67,16 @@ export function registerRecorderHandlers() {
       let recorded = 0
 
       // Bridges: every captured action streams to the renderer; Stop ends the session.
-      await context.exposeBinding('__recordStep', (_src, payload) => {
+      await context.exposeBinding('__recordStep', async (src, payload) => {
         recorded++
+        // An Assert Map Changed recorded by pointing at the map gets its reference captured NOW,
+        // while the tester is looking at the map they mean. Without it the step arrives with an
+        // empty Reference image and no way to fill it until after a run — and the picture the
+        // tester was looking at when they recorded is exactly the one they meant.
+        if (payload && payload.action === 'assertMapChanged') {
+          try { Object.assign(payload, await captureReference(src.page, payload)) }
+          catch { /* a capture that fails must never cost the tester the step */ }
+        }
         try { event.sender.send('recorder:step', payload) } catch { /* renderer gone */ }
       })
       await context.exposeBinding('__recordDone', () => resolveDone('stopped'))

@@ -5,6 +5,7 @@ import { TOKEN_GROUPS } from '../lib/tokens'
 import ApiWorkspace from './ApiWorkspace'
 import CopyToProject from '../components/CopyToProject'
 import NativePickButton from '../components/NativePickButton'
+import ImageDrop from '../components/ImageDrop'
 import CodeArea from '../components/CodeArea'
 
 // Default keyword per action category
@@ -959,6 +960,8 @@ function CanvasStep({ step, index, total, onChange, onDelete, onMove, onRemoveGr
                   onChange={e => updateParam(p.key, e.target.value)} style={{ fontSize: 12 }}>
                   {p.options.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
+              ) : p.type === 'image' ? (
+                <ImageDrop value={params[p.key] || ''} onChange={v => updateParam(p.key, v)} hint={p.placeholder} />
               ) : p.type === 'textarea' ? (
                 <div style={{ display: 'grid', gap: 4 }}>
                   {p.lang ? (

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 contextBridge.exposeInMainWorld('api', {
   // Runner
@@ -90,6 +90,13 @@ contextBridge.exposeInMainWorld('api', {
   offRecorderStep: () => ipcRenderer.removeAllListeners('recorder:step'),
   onRecorderNotice: (cb) => ipcRenderer.on('recorder:notice', (_, msg) => cb(msg)),
   offRecorderNotice: () => ipcRenderer.removeAllListeners('recorder:notice'),
+
+  // Reference images for Assert Map Changed. getPathForFile is the only way to a dropped file's
+  // real path — File.path was removed from the web File object in Electron 32.
+  pathForFile: (file) => webUtils.getPathForFile(file),
+  saveBaselineImage: (srcPath) => ipcRenderer.invoke('baseline:save', srcPath),
+  pickBaselineImage: () => ipcRenderer.invoke('baseline:pick'),
+  readBaselineImage: (path) => ipcRenderer.invoke('baseline:read', path),
 
   // Storage — Test Data Library
   getCollections: () => ipcRenderer.invoke('data:getCollections'),

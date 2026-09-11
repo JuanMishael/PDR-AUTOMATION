@@ -24,6 +24,7 @@ import { registerNativePickerHandlers } from './ipc/nativePicker'
 import { registerRecorderHandlers } from './ipc/recorder'
 import { registerDataLibraryHandlers } from './ipc/dataLibrary'
 import { registerTransferHandlers } from './ipc/transfer'
+import { registerBaselineHandlers } from './ipc/baselines'
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -72,6 +73,7 @@ app.whenReady().then(async () => {
   registerNativePickerHandlers()
   registerRecorderHandlers()
   registerDataLibraryHandlers()
+  registerBaselineHandlers()
   registerTransferHandlers()
 
   // Renderer asks for this after a native confirm/alert dismisses — Chromium leaves the

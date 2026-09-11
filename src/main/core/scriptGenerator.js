@@ -17,6 +17,7 @@
 import { resolveParams } from './tokenResolver'
 import { findDragHandleRect, synthDrag } from './dragHelpers'
 import { mapPickPixel, mapSetZoom, mapLayerState } from './mapHelpers'
+import { cropRegion } from './imageRegion'
 import { mobileContextOptions } from './deviceProfile'
 import { healAlts } from './healChain'
 
@@ -126,6 +127,10 @@ ${indent(thenCode, 2)}
     const stepCode = emitList(orderedSteps)
     blocks.push(
 `process.stdout.write(JSON.stringify({ type: 'scenario', id: ${JSON.stringify(sc.id || null)}, name: ${JSON.stringify(sc.name || 'Scenario')} }) + '\\n');
+// Map baselines are per-scenario. Carrying one across would make a scenario's first Assert Map
+// Changed compare against a DIFFERENT scenario's map — its verdict would depend on what ran
+// before it, which is the same poisoning the network log avoids by consuming rows.
+__shots.clear();
 try {
 ${indent(stepCode, 2)}
 } catch (_scErr) {
@@ -326,6 +331,52 @@ ${netDecls}
 ${settleHelper}
 ${locHelper}
 
+  // --- Map pixel comparison (Assert Map Changed) --------------------------------------------
+  // Compares a REGION of the map element, never the page: the sidebar, the layer tree and the
+  // checkbox the tester just ticked are all pixel changes that say nothing about whether the layer
+  // drew. Map furniture (zoom buttons, scale bar, attribution, north arrow) lives at the EDGES, so
+  // the default centre box also stops a permanently-animating widget from turning every diff green.
+  //
+  // What this can and cannot answer: it detects that the map REPAINTED, not that a particular layer
+  // is present. That only means "the layer drew" when the toggle is the ONLY thing that changed
+  // between the two captures — a zoom in between re-renders every pixel and passes for the wrong
+  // reason. Use assertMapLayer / assertRequest for anything that spans a zoom or a resize.
+  const __shots = new Map();
+  // Inlined from core/imageRegion so the run and the RECORDER crop identically — a reference
+  // captured while recording has to line up pixel-for-pixel with what the run captures later.
+  const _cropRegion = ${cropRegion.toString()};
+  const _crop = (buf, region, boxW, boxH) => _cropRegion(require('pngjs').PNG, buf, region, boxW, boxH);
+  // The live capture is ALWAYS written to the run artifacts: it's the evidence the report already
+  // carries, and copying that file is how a tester makes a reference image without having to know
+  // what crop the step took.
+  async function _mapDiff(o) {
+    const fs = require('fs'), { PNG } = require('pngjs'), pixelmatch = require('pixelmatch');
+    const _el = page.locator(o.sel).first();
+    if (!(await _el.count())) throw new Error('Map element not found on the page: ' + o.sel);
+    const now = _crop(await _el.screenshot(), o.region, o.boxW, o.boxH);
+    fs.writeFileSync(o.shotPath, PNG.sync.write(now));
+    let base;
+    if (o.refPath) {
+      // Used as-is, never re-cropped: a reference is normally a copy of an earlier run's capture,
+      // which is already the box.
+      if (!fs.existsSync(o.refPath)) throw new Error('Reference image not found: ' + o.refPath);
+      base = PNG.sync.read(fs.readFileSync(o.refPath));
+    } else {
+      base = __shots.get(o.key);
+      __shots.set(o.key, now);
+      if (!base) return { baseline: true, shotPath: o.shotPath };
+    }
+    if (base.width !== now.width || base.height !== now.height) {
+      throw new Error('Cannot compare — the two captures are different sizes (' + base.width + 'x' + base.height + ' vs ' + now.width + 'x' + now.height + '). The map was resized between them, or the reference image came from a different region or window size. Recapture the reference from ' + o.shotPath + '.');
+    }
+    // pixelmatch ignores anti-aliased pixels and measures perceptual (YIQ) distance, so map labels
+    // and tile-edge fringing don't count as change. The diff PNG marks what did, in red.
+    const diff = new PNG({ width: now.width, height: now.height });
+    const n = pixelmatch(base.data, now.data, diff.data, now.width, now.height, { threshold: 0.1 });
+    fs.writeFileSync(o.diffPath, PNG.sync.write(diff));
+    return { pct: n / (now.width * now.height) * 100, shotPath: o.shotPath, diffPath: o.diffPath };
+  }
+
   // Smart file upload so testers don't have to understand hidden file inputs.
   //  - trigger set     → click that button and catch the OS file dialog it opens.
   //  - selector is a real <input type=file> → set the file directly on it.
@@ -443,7 +494,7 @@ function generateStep(step, index, baseUrl, { screenshotOnFail = false, outputDi
   const stepMarker = step.action === 'comment' ? ''
     : `_curStep = { label: ${JSON.stringify(label)}, trace: ${p._netTrace === true}, n: 0 };\n    `
 
-  const body = settlePre + stepMarker + wrapVars(actionToCode(step.action, p, baseUrl))
+  const body = settlePre + stepMarker + wrapVars(actionToCode(step.action, p, baseUrl, { outputDir, index }))
 
   const perStepSsBlock = perStepScreenshot ? `
     try {
@@ -485,7 +536,7 @@ function locatorExpr(p) {
   return `page.locator(${sel})`
 }
 
-function actionToCode(action, p, baseUrl) {
+function actionToCode(action, p, baseUrl, { outputDir = '', index = 0 } = {}) {
   const sel = p.selector ? JSON.stringify(p.selector) : "'body'"
   const loc = locatorExpr(p)
   const url = p.url
@@ -737,6 +788,45 @@ function actionToCode(action, p, baseUrl) {
       if (_on && !_r.found) throw new Error('Layer ' + ${match} + ' is not on the map.' + _avail);
       if (_on && !_r.visible) throw new Error('Layer ' + ${match} + ' is on the map but hidden — the toggle did not turn it on.' + _avail);
       if (!_on && _r.visible) throw new Error('Layer ' + ${match} + ' is still visible — expected the toggle to turn it off.' + _avail);
+    }`
+    }
+
+    // Did the map actually REPAINT? The one check that looks at what a tester looks at — pixels —
+    // for the case no model can answer: the layer is in the tree and the tiles returned 200, but
+    // nothing drew. Compares a configurable box (default the centre ninth, away from the map
+    // furniture at the edges) against either the previous capture of the same box or a reference
+    // image the tester saved from an earlier run.
+    case 'assertMapChanged': {
+      const mapSel = JSON.stringify(String(p.selector || '').trim() || '#map')
+      const region = JSON.stringify(String(p.region || 'centre'))
+      const boxW = Number(p.boxW) > 0 ? Number(p.boxW) : 0
+      const boxH = Number(p.boxH) > 0 ? Number(p.boxH) : 0
+      const want = p.expect === 'same' ? 'same' : 'changed'
+      // Defaults differ by direction: "changed" needs enough movement to mean something, "same"
+      // allows a sliver for compression and sub-pixel label jitter.
+      const thr = Number(p.threshold) > 0 ? Number(p.threshold) : (want === 'same' ? 0.5 : 2)
+      // An image is its own instruction: set one and it's the reference, leave it empty and the
+      // previous capture of the same box is.
+      const ref = String(p.refImage || '').trim() ? JSON.stringify(String(p.refImage).trim()) : 'null'
+      // Keyed by what defines the box, so two maps — or two regions of one map — keep separate
+      // baselines instead of overwriting each other.
+      const key = JSON.stringify(`${String(p.selector || '#map')}|${p.region || 'centre'}|${boxW}|${boxH}`)
+      const base = `${outputDir}/step-${index + 1}-map`
+      return `{
+      const _d = await _mapDiff({ sel: ${mapSel}, region: ${region}, boxW: ${boxW}, boxH: ${boxH},
+        key: ${key}, refPath: ${ref},
+        shotPath: ${JSON.stringify(base + '.png')}, diffPath: ${JSON.stringify(base + '-diff.png')} });
+      if (_d.baseline) {
+        // First capture of this box — nothing to compare against yet, so it's the reference the
+        // NEXT one is measured from. Reported, not silently passed.
+        process.stdout.write(JSON.stringify({ type: 'raw', text: 'Map baseline captured: ' + _d.shotPath }) + '\\n');
+      } else {
+        const _pct = _d.pct.toFixed(2);
+        process.stdout.write(JSON.stringify({ type: 'raw', text: _pct + '% of the box changed — ' + _d.diffPath }) + '\\n');
+        ${want === 'same'
+          ? `if (_d.pct > ${thr}) throw new Error('The map changed when it should not have — ' + _pct + '% of the box differs (allowed ${thr}%). Red pixels in ' + _d.diffPath + ' show what moved.');`
+          : `if (_d.pct < ${thr}) throw new Error('The map did not repaint — only ' + _pct + '% of the box changed (expected at least ${thr}%). The layer may not have drawn, or it draws outside the box being watched: ' + _d.shotPath);`}
+      }
     }`
     }
 

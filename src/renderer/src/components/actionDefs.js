@@ -245,6 +245,31 @@ export const ACTION_DEFS = {
       { key: 'mapVar', label: 'Map global name (advanced)', placeholder: 'map' }
     ]
   },
+  // The pixel check — the only one that looks at what the tester looks at. Use it when the layer is
+  // in the tree and the tiles came back 200 but you still want proof something DREW.
+  // Compares a box on the map, not the page: the sidebar and the checkbox just ticked are pixel
+  // changes that say nothing about the layer, and map furniture (zoom buttons, scale bar,
+  // attribution) sits at the edges — hence the centre box by default.
+  // Only meaningful when the toggle is the ONLY thing that changed between two captures. A zoom in
+  // between repaints everything and passes for the wrong reason; use Assert Map Layer for that.
+  assertMapChanged: {
+    label: 'Assert Map Changed', category: 'Assertions',
+    summary: p => `${p.region || 'centre'} box ${p.expect === 'same' ? 'same as' : 'differs from'} ${p.refImage ? 'reference image' : 'previous capture'}`,
+    params: [
+      { key: 'selector', label: 'Map element', placeholder: '#map' },
+      { key: 'region', label: 'Which part of the map to watch', type: 'select',
+        options: ['centre', 'top-left', 'top', 'top-right', 'left', 'right', 'bottom-left', 'bottom', 'bottom-right', 'whole map'], default: 'centre' },
+      { key: 'boxW', label: 'Box width (px) — blank = a third of the map', type: 'number', placeholder: '400' },
+      { key: 'boxH', label: 'Box height (px) — blank = a third of the map', type: 'number', placeholder: '400' },
+      // No "compare against" switch: an image here IS the instruction to compare against it, and
+      // an empty box means the previous capture. Every run writes its capture to step-N-map.png,
+      // so making a reference is dragging that file in — the crop then always matches.
+      { key: 'refImage', label: 'Reference image — drop a step-N-map.png from a good run', type: 'image',
+        placeholder: 'Drop a reference image here, or click to browse' },
+      { key: 'expect', label: 'Result must be', type: 'select', options: ['changed', 'same'], default: 'changed' },
+      { key: 'threshold', label: '% of the box that must differ (blank = 2%, or 0.5% for "same")', type: 'number', placeholder: '2' }
+    ]
+  },
   // For things that never land in the DOM — a map layer, a tile service, a background save.
   // A map draws on canvas, so no selector can prove the layer arrived; the request behind it can.
   // Checks the RESPONSE TYPE, not just the status: a WMS server returns 200 with an XML error

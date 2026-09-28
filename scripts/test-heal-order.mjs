@@ -56,16 +56,18 @@ const proc = spawn(process.execPath, [scriptPath], {
   cwd: dir,
   env: { ...process.env, NODE_PATH: process.env.NODE_PATH ? `${nodeModules};${process.env.NODE_PATH}` : nodeModules }
 })
-const failed = []
+const failed = [], healed = []
 let stderr = ''
 proc.stdout.on('data', (c) => {
   for (const line of c.toString().split('\n').filter(Boolean)) {
-    try { const m = JSON.parse(line); if (m.type === 'step' && m.status === 'failed') failed.push(`${m.label}: ${m.error}`) } catch { /* chatter */ }
+    try { const m = JSON.parse(line); if (m.type === 'step' && m.status === 'failed') failed.push(`${m.label}: ${m.error}`); if (m.type === 'healed') healed.push(m) } catch { /* chatter */ }
   }
 })
 proc.stderr.on('data', (c) => { stderr += c.toString() })
 await new Promise((done) => proc.on('close', done))
 assert.deepEqual(failed, [], `no step should fail:\n${failed.join('\n')}\n${stderr}`)
+// Only the rotted step heals, and it says which fallback carried it — a healthy primary stays quiet.
+assert.deepEqual(healed.map(h => [h.step, h.n, h.used]), [['rotted', 1, '#fallback']], 'heal must be reported, once, for the rotted step only')
 
 // --- replay path (recorder pre-Start playback / picker / selector tester)
 const { chromium } = await import('playwright')

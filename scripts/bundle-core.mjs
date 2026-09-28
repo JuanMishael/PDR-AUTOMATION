@@ -20,8 +20,10 @@ const electronStub = {
   setup(b) {
     b.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'electron-stub' }))
     b.onLoad({ filter: /.*/, namespace: 'electron-stub' }, () => ({
-      contents: `export const app = {
-        getPath: (n) => require('node:path').join(require('node:os').tmpdir(), 'pdr-test-' + n),
+      contents: `import { join as __j } from 'node:path'; import { tmpdir as __t } from 'node:os'
+      export const ipcMain = { handle() {}, on() {} }, shell = {}, dialog = {}
+      export const app = {
+        getPath: (n) => __j(__t(), 'pdr-test-' + n),
         getAppPath: () => process.cwd(),
         isPackaged: false
       }`,
@@ -34,7 +36,7 @@ export async function bundleCore(names) {
   await build({
     entryPoints: names.map(n => join(ROOT, 'src', 'main', 'core', n)),
     bundle: true, format: 'esm', platform: 'node', logLevel: 'warning',
-    external: ['playwright', 'playwright/test'],
+    external: ['playwright', 'playwright/test', 'sql.js'],
     plugins: [electronStub],
     outdir: OUT, outExtension: { '.js': '.mjs' }
   })

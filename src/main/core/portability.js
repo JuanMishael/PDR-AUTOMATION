@@ -17,6 +17,14 @@ function parseParams(p) {
   try { return JSON.parse(p) } catch { return {} }
 }
 
+// Every string anywhere in a step's params. If-blocks nest their condition under params.cond, so a
+// flat Object.values() walk missed the {{Collection.field}} tokens in it.
+function paramStrings(v) {
+  if (typeof v === 'string') return [v]
+  if (v && typeof v === 'object') return Object.values(v).flatMap(paramStrings)
+  return []
+}
+
 function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
 
 // Collection names referenced by {{Name.field}} tokens in a string (skips faker/unique helpers).
@@ -50,7 +58,7 @@ export function collectReferencedCollectionIds(db, profileId) {
     for (const st of steps) {
       const p = parseParams(st.params)
       if (isGroupStart(st.action) && p.collectionId) found.add(p.collectionId)
-      for (const v of Object.values(p)) for (const n of tokenCollectionNames(v)) addByName(n)
+      for (const v of paramStrings(p)) for (const n of tokenCollectionNames(v)) addByName(n)
     }
   }
 
@@ -287,15 +295,17 @@ function importProfileEntry(db, entry, projectId, idMap, renameRegexes) {
 
 // Rewrite a step's params for the new machine: remap a group's collectionId (old → new) and rewrite
 // {{OldName.field}} tokens to {{NewName.field}} for every collection that got renamed on import.
+// Recurses so nested params (an If-block's cond) get the same token rewrite.
 function rewriteParams(params, idMap, renameRegexes) {
+  const walk = v => {
+    if (typeof v === 'string') return renameRegexes.reduce((s, { re, to }) => s.replace(re, to), v)
+    if (Array.isArray(v)) return v.map(walk)
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]))
+    return v
+  }
   const out = {}
   for (const [k, v] of Object.entries(params || {})) {
-    if (k === 'collectionId' && typeof v === 'string' && idMap.has(v)) { out[k] = idMap.get(v); continue }
-    if (typeof v === 'string') {
-      let s = v
-      for (const { re, to } of renameRegexes) s = s.replace(re, to)
-      out[k] = s
-    } else out[k] = v
+    out[k] = k === 'collectionId' && typeof v === 'string' && idMap.has(v) ? idMap.get(v) : walk(v)
   }
   return out
 }

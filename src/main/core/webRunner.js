@@ -100,6 +100,8 @@ export async function runWeb({ runId, profile, scenarios = [], settings = {}, da
             onLog({ type: 'info', text: `▶ Scenario: ${msg.name}` })
           } else if (msg.type === 'capture') {
             onLog({ type: 'info', text: `📌 {{var.${msg.name}}} = ${msg.value}` })
+          } else if (msg.type === 'healed') {
+            onLog({ type: 'info', text: `🩹 ${msg.step || 'Step'}: selector ${msg.primary} matched nothing, healed via fallback #${msg.n} (${msg.used}). Update the step's selector.` })
           } else if (msg.type === 'download') {
             onLog({ type: 'info', text: `⬇ Saved download: ${msg.name} → ${msg.path}` })
           } else if (msg.type === 'done') {

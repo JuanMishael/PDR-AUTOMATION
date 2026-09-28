@@ -192,6 +192,7 @@ ${indent(stepCode, 2)}
   // map-layer calls) and overall as a safety net.
   const netDecls = `
   let _inflight = 0, _lastNetTs = Date.now(), _curStep = null;
+  const _healed = new Set();
   const _netlog = [], _pending = [];
   const _NET_MAX = 2000, _PER_STEP_MAX = 50, _BODY_CAP = 4096;
   const _reqStart = new Map();
@@ -261,6 +262,21 @@ ${indent(stepCode, 2)}
       if (_n === 1) return _primary;
       if (_n > 1) return await _visible(_primary);
     } catch { /* fall through to alts */ }
+    // Say so when an alt carries the step — silent healing hides selector rot until every alt rots too.
+    // ponytail: instant count() only, so an element that hasn't rendered yet heals unreported (the
+    // union below still waits for it). Poll here if late-rendering heals need to show up too.
+    try {
+      for (let _i = 0; _i < alts.length; _i++) {
+        if (await page.locator(alts[_i]).count()) {
+          const _k = (_curStep && _curStep.label) + '|' + sel;
+          if (!_healed.has(_k)) {
+            _healed.add(_k);
+            process.stdout.write(JSON.stringify({ type: 'healed', step: _curStep && _curStep.label, primary: sel, n: _i + 1, used: alts[_i] }) + '\\n');
+          }
+          break;
+        }
+      }
+    } catch {}
     let _l = page.locator(sel);
     for (const _a of alts) _l = _l.or(page.locator(_a));
     return await _visible(_l);
